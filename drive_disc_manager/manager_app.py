@@ -3,8 +3,8 @@ from one_dragon.base.operation.operation_node import operation_node
 from one_dragon.utils import os_utils
 from zzz_od.application.zzz_application import ZApplication
 from .drive_disc_manager_const import APP_ID, APP_NAME
-from .service import preview
-from .store import config, import_inventory, read
+from .service import preview, rule_snapshot
+from .store import import_inventory, read
 
 
 def wiki_path():
@@ -31,7 +31,8 @@ class ManagerApp(ZApplication):
         try:
             if self.ctx.current_instance_idx != self.account:
                 return self.round_fail('当前账号已改变')
-            cfg = config(self.root)
+            pinned = rule_snapshot(self.root)
+            cfg = pinned[0]
             scanner = None
             if cfg['run_scanner']:
                 exports = Path(os_utils.get_work_dir())/'.debug/inventory_exports'
@@ -55,7 +56,7 @@ class ManagerApp(ZApplication):
                 snapshot = read(self.root/'inventory.json')
                 reconcile(self.root,snapshot)
                 reconcile_scan(self.root,snapshot)
-            report = preview(self.root,wiki_path())
+            report = preview(self.root,wiki_path(),snapshot=pinned)
             if report['issues']:
                 return self.round_fail('配装待复核 · '+' / '.join(report['issues']))
             if cfg.get('fieldProfile') and scanner is None:

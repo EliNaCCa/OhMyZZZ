@@ -4,7 +4,8 @@ import re
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from .store import digest, read, save
+from .maintenance import exclusive
+from .store import config, digest, read, save
 
 GUIDE = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTj2PaPq6Py_1B5fsOPj_Moc-tN_7mut7fICczI6lz1njyEIAInTnfB7lAraX4pYCRGNbaHGlIbFZ90/pub'
 MATRIX = 'https://docs.google.com/spreadsheets/d/1ZIZa4zg0zkkPIP2TrHQaMw9XzjJLvO2iOpUAyREDFwY/export?format=csv&gid=133245023'
@@ -41,8 +42,14 @@ def matrix_fields(raw):
                 if cell.strip() not in STATS:
                     raise ValueError('未知主词条表头 '+cell)
                 columns[i] = STATS[cell.strip()]
-            if len(columns) < 6:
-                raise ValueError('主词条表缺列')
+            common = {'hp_', 'def_', 'atk_'}
+            required = {'4': common | {'crit_', 'crit_dmg_', 'anomProf'},
+                        '5': common | {'pen_', 'physical_dmg_', 'fire_dmg_', 'ice_dmg_', 'electric_dmg_', 'ether_dmg_'},
+                        '6': common | {'anomMas_', 'impact', 'energyRegen_'}}[slot]
+            actual = set(columns.values())
+            optional = {e+'_dmg_' for e in ELEMENTS} if slot == '5' else set()
+            if len(columns) != len(actual) or not required <= actual <= required | optional:
+                raise ValueError(f'{slot} 号主词条表缺列、重复或错位')
             continue
         if not columns:
             raise ValueError('缺少表头')
@@ -131,13 +138,17 @@ def sources():
     if not {'Physical','Fire','Ice','Electric','Ether'}.issubset({name for name,_ in tabs}):
         raise ValueError('攻略表页签变化')
     fields = matrix_fields(fetch(MATRIX))
-    fields.update(build_fields(fetch(MATRIX.rsplit('=',1)[0]+'='+BUILDS_GID)))
+    origins = {key:['Set+Main'] for key in fields}
+    builds = build_fields(fetch(MATRIX.rsplit('=',1)[0]+'='+BUILDS_GID))
+    fields.update(builds)
+    origins.update({key:['Prydwen Builds'] for key in builds})
     with ThreadPoolExecutor(max_workers=3) as pool:
         urls = [GUIDE+'?single=true&output=csv&gid='+gid for _, gid in tabs]
-        for data in pool.map(fetch, urls):
+        for (tab, _), data in zip(tabs, pool.map(fetch, urls), strict=True):
             for key, value in guide_fields(data).items():
                 fields[key] = sorted(set(fields.get(key, [])+value))
-    return fields, dict(tabs, **{'Prydwen Builds':BUILDS_GID, 'Set+Main':'133245023'})
+                origins.setdefault(key, []).append(tab)
+    return fields, dict(tabs, **{'Prydwen Builds':BUILDS_GID, 'Set+Main':'133245023'}), origins
 
 
 def effective(remote, override=None):
@@ -151,29 +162,94 @@ def effective(remote, override=None):
     return sorted(local)
 
 
-def merge(previous, fields, overrides, tabs):
+def conflict_view(change, override):
+    if not override or override['mode'] == 'inherit':
+        return None
+    old, remote = change['old'], change['remote']
+    before, after = set(old or ()), set(remote or ())
+    local = dict(mode=override['mode'], values=sorted(set(override['values'])))
+    values = set(local['values'])
+    # Compare the upstream delta with the player's intent. Preserve only disagreements.
+    removed = (before - after) & values
+    rejected = (after - before) - values if local['mode'] == 'only' else set()
+    if not removed and not rejected:
+        return None
+    token = digest([change.get('event', change['version']), old, remote, local])
+    if override.get('acknowledged') == token:
+        return None
+    return dict(change, local=local, active=effective(remote, local), token=token)
+
+
+def current_conflicts(snapshot, overrides):
+    pending = {}
+    for key, change in snapshot.get('conflicts', {}).items():
+        conflict = conflict_view(change, overrides.get(key))
+        if conflict:
+            pending[key] = conflict
+    return pending
+
+
+def merge(previous, fields, overrides, tabs, origins=None):
     old = previous.get('fields', {})
     rev = digest(fields)
-    pending = dict(previous.get('conflicts', {}))
+    pending = current_conflicts(previous, overrides)
     for key, override in overrides.items():
         before, after = old.get(key), fields.get(key)
-        mode = override['mode']
-        values = set(override.get('values',[]))
-        if mode == 'inherit' or set(after or []) == values:
-            pending.pop(key, None)
+        if not old or before == after:
             continue
-        if old and before != after:
-            conflict = mode == 'only' or bool((set(before or []) - set(after or [])) & values)
+        # Compare to the start of an outstanding disagreement even after intervening revisions.
+        baseline = pending.pop(key, {}).get('old', before)
+        change = dict(old=baseline, remote=after, version=rev, event=time.time_ns())
+        conflict = conflict_view(change, override)
+        if conflict:
+            pending[key] = conflict
+    return dict(fields=fields, version=rev, tabs=tabs, origins=origins or {}, updated=time.time(), conflicts=pending)
+
+
+def can_merge(conflict):
+    return bool(conflict and conflict['local']['mode'] == 'only'
+                and set(conflict['remote'] or ()) - set(conflict['active']))
+
+
+def resolve_conflict(root, key, seen, action):
+    with exclusive(root/'_rules'):
+        cfg = config(root)
+        rules = read(root/'rules.json')
+        actual = current_conflicts(rules, cfg['overrides']).get(key)
+        if not actual or actual['token'] != seen['token']:
+            raise ValueError('该字段或本地覆盖已更新，请重新选择')
+        if action == 'remote':
+            cfg['overrides'].pop(key)
+        elif action == 'local':
+            cfg['overrides'][key]['acknowledged'] = actual['token']
+        elif action == 'union' and can_merge(actual):
+            # Retain only the player's own values. Future upstream recommendations can still expire.
+            override = dict(mode='add', values=actual['local']['values'])
+            conflict = conflict_view(actual, override)
             if conflict:
-                pending[key] = dict(old=before, remote=after, local=override, active=effective(after,override), version=rev)
-            else:
-                pending.pop(key,None)
-    return dict(fields=fields, version=rev, tabs=tabs, updated=time.time(), conflicts={k:v for k,v in pending.items() if k in overrides})
+                override['acknowledged'] = conflict['token']
+            cfg['overrides'][key] = override
+        else:
+            raise ValueError('此分歧无法合并')
+        # Choice and acknowledgement are committed together. A reload derives the pending list.
+        save(root/'config.json', cfg)
 
 
-def sync(root, cfg):
-    old = read(root/'rules.json', {})
-    fields, tabs = sources()
-    new = merge(old, fields, cfg['overrides'], tabs)
-    save(root/'rules.json', new)
-    return new
+def save_config(root, value, expected):
+    with exclusive(root/'_rules'):
+        if digest(config(root)) != expected:
+            raise ValueError('账号配置已更新，请重新打开设置后编辑')
+        save(root/'config.json', value)
+
+
+def sync(root):
+    # Fetch outside the brief write lock. An older download must not replace a newer snapshot.
+    start = read(root/'rules.json', {}).get('updated')
+    fields, tabs, origins = sources()
+    with exclusive(root/'_rules'):
+        previous = read(root/'rules.json', {})
+        if previous.get('updated') != start:
+            return previous
+        new = merge(previous, fields, config(root)['overrides'], tabs, origins)
+        save(root/'rules.json', new)
+        return new

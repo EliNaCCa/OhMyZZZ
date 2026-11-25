@@ -16,6 +16,7 @@ jobs:
       - run: python scripts/smoke.py
       - run: python scripts/maintenance_smoke.py
       - run: python scripts/early_smoke.py
+      - run: python scripts/subscription_smoke.py
       - run: python scripts/package_manager.py
       - env:
           GH_TOKEN: ${{ github.token }}
