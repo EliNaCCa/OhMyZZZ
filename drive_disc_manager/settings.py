@@ -66,6 +66,7 @@ class ManagerInterface(BaseInterface):
         self.button(engine_bar,'打开配装器',self.open_optimizer)
         self.engine_mode = QLabel(); engine_bar.addWidget(self.engine_mode); engine_bar.addStretch()
         self.button(engine_bar,'连接设置',self.configure_optimizer)
+        self.button(engine_bar,'分组与优先级',self.edit_allocation)
         bar = QHBoxLayout(); box.addLayout(bar)
         self.button(bar,'从配装器保存为配队',self.import_profile)
         self.button(bar,'设置满暴容差',self.edit_tolerance)
@@ -302,15 +303,18 @@ class ManagerInterface(BaseInterface):
         profiles = self.cfg['profiles']
         def pct(value):
             return '—' if value is None else f'{value:g}%'
-        def row(p):
+        from .allocation import group_indices
+        def row(index, p):
             result = self.report.get('assignments',{}).get(p['name'],{})
             reason = result.get('error') or result.get('reason') or '等待计算'
             if not p.get('enabled',True):
                 reason = '已停用'; result = {}
             title = ('出场 · ' if p['name']==self.cfg.get('fieldProfile') else '')+p['name']
-            return (title,p.get('simultaneous') or '可借盘',pct(p.get('tolerancePct',0.5)),
+            group = p.get('simultaneous')
+            label = f"{group} · 第 {group_indices(profiles, index).index(index)+1} 位" if group else '可借盘'
+            return (title,label,pct(p.get('tolerancePct',0.5)),
                     pct(result.get('effectiveCritRate',result.get('critRate'))),pct(result.get('relativeLossPct')),reason)
-        self.fill(self.teams,[row(p) for p in profiles])
+        self.fill(self.teams,[row(i,p) for i,p in enumerate(profiles)])
         self.teams.resizeColumnsToContents()
         if profiles:
             index = next((i for i,p in enumerate(profiles) if p['name']==selected),0)
@@ -344,9 +348,34 @@ class ManagerInterface(BaseInterface):
             if window.get('metric'):
                 details.append(f"{window['metric']} {window['metricValue']:g} · 暴伤 {window['critDamage']:g}% · 增伤 {window['damageBonus']:g}%")
         scope = result.get('search',{})
-        if scope: details.append(f"初选 {scope['candidateBuilds']} 套")
+        if scope:
+            details.append(f"初选 {scope['candidateBuilds']} 套")
+            if profile.get('simultaneous') and 'availableBuilds' in scope:
+                details.append(f"扣除前序占用后可选 {scope['availableBuilds']} 套")
+            if scope.get('limited'):
+                details.append('已达到联合搜索上限')
         if self.report.get('configuration') != digest(self.cfg): details.append('配置已修改 · 上次计算结果')
         self.team_score.setText('　｜　'.join(details))
+
+    def edit_allocation(self):
+        from .allocation import arrange_profile
+        profiles = self.cfg['profiles']
+        index = self.teams.currentRow()
+        if not 0 <= index < len(profiles): return
+        profile = profiles[index]
+        groups = list(dict.fromkeys(['', *(p.get('simultaneous') or '' for p in profiles)]))
+        group, ok = QInputDialog.getItem(self,'分组与优先级','同时出场组（可输入新组名，留空允许借盘）',
+                                        groups, groups.index(profile.get('simultaneous') or ''), True)
+        if not ok: return
+        group = group.strip()
+        peers = [i for i,p in enumerate(profiles) if i != index and p.get('simultaneous') == group]
+        rank = 1
+        if group and peers:
+            current = 1 + sum(i < index for i in peers) if profile.get('simultaneous') == group else len(peers)+1
+            rank, ok = QInputDialog.getInt(self,'组内分盘顺序','优先级（1 最先分盘）',current,1,len(peers)+1)
+            if not ok: return
+        self.cfg['profiles'] = arrange_profile(profiles, index, group, rank)
+        self.edit_cfg(); self.refresh_teams(profile['name'])
 
     def edit_windows(self):
         index = self.teams.currentRow()
@@ -372,7 +401,13 @@ class ManagerInterface(BaseInterface):
         index = self.teams.currentRow()
         if index < 0: return
         profile = self.cfg['profiles'][index]
-        profile['enabled'] = not profile.get('enabled',True)
+        enabled = not profile.get('enabled',True)
+        if enabled and profile.get('simultaneous'):
+            from .allocation import group_conflict
+            conflict = group_conflict(dict(p, enabled=True) if i == index else p
+                                      for i,p in enumerate(self.cfg['profiles']) if p.get('simultaneous') == profile['simultaneous'])
+            if conflict: raise ValueError(conflict)
+        profile['enabled'] = enabled
         if not profile['enabled'] and self.cfg.get('fieldProfile')==profile['name']:
             self.cfg['fieldProfile']=''
         self.edit_cfg(); self.refresh_teams(profile['name'])
@@ -506,8 +541,13 @@ class ManagerInterface(BaseInterface):
         wiki=read(wiki_path(),{})
         agent_key=next((a.get('code') or a['EN'].replace(' ','') for a in wiki.get('character',{}).values()
                         if a.get('CHS')==source['agent'] and a.get('EN')),'')
-        self.cfg['profiles'].append(dict(name=name.strip(),agentKey=agent_key,request=source['request'],
-                                         simultaneous=simultaneous.strip(),tolerancePct=0.5,sourceId=source['sourceId']))
+        profile = dict(name=name.strip(),agentKey=agent_key,request=source['request'],
+                       simultaneous=simultaneous.strip(),tolerancePct=0.5,sourceId=source['sourceId'])
+        from .allocation import group_conflict
+        peers = [p for p in self.cfg['profiles'] if p.get('simultaneous') == profile['simultaneous']]
+        conflict = group_conflict([*peers, profile])
+        if conflict: raise ValueError(conflict)
+        self.cfg['profiles'].append(profile)
         self.edit_cfg()
 
     def calculate(self):

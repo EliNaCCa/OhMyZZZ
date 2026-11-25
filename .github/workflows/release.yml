@@ -14,6 +14,7 @@ jobs:
         with:
           python-version: '3.11'
       - run: python scripts/smoke.py
+      - run: python scripts/group_priority_smoke.py
       - run: python scripts/maintenance_smoke.py
       - run: python scripts/early_smoke.py
       - run: python scripts/subscription_smoke.py

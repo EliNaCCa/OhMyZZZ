@@ -1,7 +1,7 @@
 """Produce a read-only plan from one pinned inventory, configuration and rule revision."""
 from collections import Counter, defaultdict
 from .optimizer import as_disc, candidate_pool, STATS
-from .allocation import assign_group
+from .allocation import assign_group, group_conflict
 from .store import digest, equipment_keys, fingerprint, inventory, roll_base
 from .subscriptions import effective
 from .reserve_policy import apply_reserves, development
@@ -42,6 +42,9 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     pool = [disc for disc in inputs.values() if disc and not disc['discarded']]
     for (_,group_name), members in groups.items():
         try:
+            conflict = group_conflict(p for p, _ in members)
+            if conflict:
+                raise ValueError(conflict)
             for profile,result in assign_group(members,pool,cfg['optimizer_url'],fetch_candidates):
                 name = profile['name']
                 assignments[name] = result
