@@ -54,7 +54,10 @@ def roll_base(z):
 
 def equipment_names(wiki):
     """Map a scanner setKey to its Chinese name in flat and localized wiki exports."""
-    names = {}
+    # Missing from inventory_scan 1.4.7. Exact names share a Suit ID in Enka's ZZZ store.
+    names = {'BunnyinWonderland':'雪兔梦游仙境', 'NotesFromtheChained':'囚徒手记',
+             'WutheringSalon':'呼啸沙龙', 'TheSkyAblaze':'拂晓行纪',
+             'FeatheredFate':'谶羽之誓', 'ThornedRose':'荆棘玫瑰'}
     for entry in wiki.get('equipment', {}).values():
         if not isinstance(entry, dict):
             continue
@@ -66,6 +69,16 @@ def equipment_names(wiki):
         if isinstance(en, str) and en.strip() and isinstance(zh, str) and zh.strip():
             names[en.replace(' ', '')] = zh.strip()
     return names
+
+
+def equipment_keys(names):
+    """Resolve a displayed name only when it identifies exactly one subscription key."""
+    reverse = {}
+    for key, label in names.items():
+        if isinstance(label, str) and label.strip():
+            label = label.strip()
+            reverse[label] = key if label not in reverse else None
+    return {label:key for label, key in reverse.items() if key}
 
 
 def inventory(z):

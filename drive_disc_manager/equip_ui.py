@@ -31,7 +31,10 @@ class EquipUI:
         wiki = read(wiki_path)
         self.names = {key:a['CHS'] for a in wiki['character'].values() if a.get('CHS')
                       for key in (a.get('code'),a.get('EN','').replace(' ','')) if key}
-        self.set_names = equipment_names(wiki)
+        from .store import config, equipment_keys
+        self.set_names = equipment_names(wiki) | config(app.root).get('aliases',{})
+        for label in equipment_keys(self.set_names):
+            self.set_names.setdefault(label, label)
         self.page = 'start'
 
     def guard(self):

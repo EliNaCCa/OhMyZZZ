@@ -8,7 +8,9 @@ from .store import import_inventory, read
 
 
 def wiki_path():
-    return Path(os_utils.get_work_dir())/'plugins/inventory_scan/assets/wiki_data/zzz_translation.json'
+    home = Path(os_utils.get_work_dir())
+    current = home/'plugin_data/wiki_data/zzz_translation.json'
+    return current if current.is_file() else home/'plugins/inventory_scan/assets/wiki_data/zzz_translation.json'
 
 
 class ManagerApp(ZApplication):

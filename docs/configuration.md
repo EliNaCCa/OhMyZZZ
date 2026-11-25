@@ -57,6 +57,10 @@
 
 ## 换装与恢复
 
+扫描器导出中文套装名时，OhMyZZZ 会按对应的订阅字段筛盘，继续用库存中的原始指纹识别你的单盘保护。随包补充的六套名称取自同一套装 ID 的简中和英文条目。[套装 ID](https://github.com/EnkaNetwork/API-docs/blob/26b4ddcd045a1264d0a8ef3ef5a3a3e33cbe16ce/store/zzz/equipments.json) · [名称对照](https://github.com/EnkaNetwork/API-docs/blob/26b4ddcd045a1264d0a8ef3ef5a3a3e33cbe16ce/store/zzz/locs.json)
+
+单盘冒烟使用上游归档的「谶羽之誓」五号盘两帧画面，以及一条龙 PP-OCRv6 和仓库扫描器。两帧分别读到「弃置」和「解除弃置」，对应同一实物指纹。插件用 FeatheredFate 查询该盘的订阅规则。[回放样本](e2e/recap_20261101/mark_before.jpg)
+
 在「我的配队」选一行，点「设为出场 / 取消」。启用后会同时打开本轮扫描。再次点击可取消出场。驱动盘管理运行时会给所选方案和同一「同时出场组」里的角色穿戴目标盘。仅需试换装时，可单独运行插件，保持「锁定保留盘并标记弃置」关闭。
 
 插件通过扫描器词典核实代理人姓名，读取盘详情和当前穿戴按钮。换装中断后，下次运行会按本轮库存重新计算、再读穿戴状态，已在位的盘直接跳过。账号目录中的 `equip-result.json` 保存目标角色、实物指纹、尝试的动作和最终复读的号位。
