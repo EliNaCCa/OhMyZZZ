@@ -1,7 +1,7 @@
 """Use the optimizer's existing team inputs, combat critRate and outputScore directly."""
 import http.client
 import json
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from urllib.parse import urlsplit
 from .store import fingerprint
 
@@ -88,13 +88,17 @@ def saved_targets(url):
 
 
 def number(v):
-    n = Decimal(str(v))
+    try:
+        n = Decimal(str(v))
+    except InvalidOperation as exc:
+        raise ValueError('缺少有效的配装数值') from exc
     if not n.is_finite():
         raise ValueError('配装数值异常')
     return n
 
 
 def prefer(candidates, tolerance_pct, current):
+    candidates = tuple(candidates)
     tol = number(tolerance_pct)/100
     if not 0 <= tol <= 1:
         raise ValueError('输出容差应在 0–100% 之间')
@@ -106,12 +110,25 @@ def prefer(candidates, tolerance_pct, current):
     full = [c for c in candidates if number(c['critRate']) >= 100]
     cap = max(full,key=key) if full else None
     chosen = cap if cap and key(cap)[0] >= key(best)[0]*(1-tol) else best
-    return dict(chosen, bestOutput=best['outputScore'], relativeLossPct=float(100*(1-key(chosen)[0]/key(best)[0])))
+    if cap is None:
+        reason = '候选均未满暴，选最高输出'
+    elif chosen is cap and key(chosen)[0] == key(best)[0]:
+        reason = '满暴且输出最高'
+    elif chosen is cap:
+        reason = '满暴方案的输出差距在容差内'
+    else:
+        reason = '满暴方案超出容差，选最高输出'
+    return dict(chosen, bestOutput=best['outputScore'], relativeLossPct=float(100*(1-key(chosen)[0]/key(best)[0])),
+                reason=reason, bestFullOutput=cap['outputScore'] if cap else None)
 
 
-def optimize_profile(url, profile, discs, current, request=call):
+class NoBuildCandidates(ValueError):
+    """This inventory subset cannot supply the requested six slots."""
+
+
+def candidate_pool(url, profile, discs, current, request=call):
     if not discs:
-        raise ValueError('缺少适用的驱动盘')
+        raise NoBuildCandidates('缺少适用的驱动盘')
     args = dict(profile['request'])
     if not args.get('roleSystem') or not args.get('characterName'):
         raise ValueError('配队需要配装器角色与职业配置')
@@ -122,7 +139,7 @@ def optimize_profile(url, profile, discs, current, request=call):
     by_id = {d['id']: d for d in discs}
     results = {}
     searches = [(args, g) for g in dict.fromkeys(goals)]
-    if len(current)==6 and current <= by_id.keys():
+    if direct and len(current)==6 and current <= by_id.keys():
         searches.append((dict(original_args, discs=[by_id[i] for i in sorted(current)]), 0 if direct else goals[0]))
     for inputs, goal in searches:
         response = request(url, dict(inputs,targetCritRate=goal))
@@ -134,9 +151,22 @@ def optimize_profile(url, profile, discs, current, request=call):
                 source = by_id[item['id']]
                 if any(item.get(k) != source[k] for k in ('slot','mainStat','setName','subStats')):
                     raise ValueError('配装器修正过属性，请复核实物')
-            if not direct and tuple(ids) not in results:
-                return dict(ids=ids,reason='沿用该职业的配装器排名', score=r['score'])
-            results[tuple(ids)] = dict(ids=ids, outputScore=r['outputScore'],critRate=r['critRate'])
+            if tuple(ids) not in results:
+                if direct:
+                    results[tuple(ids)] = dict(ids=ids, outputScore=r['outputScore'],critRate=r['critRate'])
+                else:
+                    results[tuple(ids)] = dict(ids=ids,reason='沿用该职业的配装器排名',score=r['score'])
     if not results:
-        raise ValueError('该组条件没有完整的六盘方案')
-    return prefer(results.values(),profile.get('tolerancePct',0.5),current)
+        raise NoBuildCandidates('该组条件没有完整的六盘方案')
+    return list(results.values())
+
+
+def select_candidate(pool, profile, current):
+    if 'outputScore' in pool[0]:
+        return prefer(pool, profile.get('tolerancePct', 0.5), current)
+    return dict(pool[0])
+
+
+def optimize_profile(url, profile, discs, current, request=call):
+    pool = candidate_pool(url, profile, discs, current, request)
+    return select_candidate(pool, profile, current)

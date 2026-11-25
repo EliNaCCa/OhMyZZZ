@@ -2,14 +2,14 @@
   "id": "drive_disc_manager",
   "name": "驱动盘管理",
   "summary": "订阅留盘规则、分配配队用盘、保留备用盘，可按游戏当前弃置标记衔接内置拆解。",
-  "version": "0.1.1",
-  "versionCode": 2,
+  "version": "0.1.2",
+  "versionCode": 3,
   "defaultGroup": false,
   "needNotify": false,
   "author": {
     "name": "EliNaCCa / upstream idk500"
   },
-  "homepage": "https://github.com/EliNaCCa/zzzod-plugin-drive-disc-manager",
+  "homepage": "https://github.com/EliNaCCa/OhMyZZZ",
   "risk": [
     "network",
     "automation"

@@ -1,0 +1,39 @@
+# OhMyZZZ 配置示例
+
+在 **驱动盘管理 → 运行设置** 可以编辑当前账号的 JSON。下面是单个配置片段，将对应字段合并到现有配置即可。套装和属性使用扫描导出的 ZOD 名称。
+
+## 给同类盘留不同的备用
+
+~~~json
+{
+  "reserve": 2,
+  "reserve_rules": [
+    {"set":"WoodpeckerElectro", "slot":"4", "main":"crit_dmg_", "purpose":"通用", "count":0},
+    {"set":"WoodpeckerElectro", "slot":"4", "main":"crit_dmg_", "purpose":"偏暴击", "stats":["crit_"], "count":3}
+  ]
+}
+~~~
+
+普通类别额外留 2 张。啄木鸟电音的 4 号暴伤主属性盘按「偏暴击」用途额外留 3 张。第一条覆盖该类别的通用名额。填写 null 表示不限，单张「始终保留」和配队占用均不消耗额外名额。
+
+## 保存配队
+
+在配装器调整角色、音擎、套装和增益并保存目标。在「我的配队」点「从配装器保存为配队」，填入配装器显示的本机地址并另存为新名称。配装器重启时可能分配新端口，可在运行设置调整 optimizer_url。
+
+~~~json
+{
+  "name":"艾莲 · 常用队",
+  "agentKey":"Ellen",
+  "simultaneous":"两队同时出场",
+  "tolerancePct":0.5,
+  "enabled":true
+}
+~~~
+
+以上字段位于 profiles 数组的单个方案中。保留导入时保存的 request 字段，其中包含该角色的配装器参数。同组方案按列表顺序决定优先级。预览同时出场的队伍时，会在候选中寻找全员都能使用的六盘组合。满暴容差也可在「我的配队」直接修改。
+
+## 订阅、早场与开发
+
+- 规则页可以按字段设置 inherit（继承）、add（额外接受）或 only（只接受）。角色攻略中的图片套装和条件词条支持在 roster 的 sets 和 mainMap 中设置个人映射。
+- 使用 EliSR 包装器时，安装早场钩子后可在「运行设置」开启「早场刷后运行」。每次运行结果保存在账号目录的 early-result.json。[早场钩子](../integration/early-hook.ps1)
+- 开发冒烟运行 `python scripts/smoke.py`。构包使用 `python scripts/package_manager.py`，在 dist 目录生成可导入的 ZIP 和 SHA-256。

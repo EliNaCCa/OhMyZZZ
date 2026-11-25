@@ -31,4 +31,16 @@ with TemporaryDirectory() as tmp:
     cases=[dict(ids=['a'],critRate=98,outputScore=100),dict(ids=['b'],critRate=100,outputScore=99.5)]
     assert prefer(cases,0.5,set())['ids']==['b']
     assert prefer(cases,0,set())['ids']==['a']
+    from drive_disc_manager.allocation import assign_group
+    members = [(dict(name='主C'),set()),(dict(name='队友'),set())]
+    options = {'主C':[dict(ids=['1','2','3','4','5','6'],critRate=100,outputScore=100),
+                      dict(ids=['7','2','3','4','5','6'],critRate=100,outputScore=99.8)],
+               '队友':[dict(ids=['1','8','9','10','11','12'],score=20,reason='职业排名')]}
+    def shortlist(url,profile,pool,current):
+        available = {item['id'] for item in pool}
+        return [c for c in options[profile['name']] if available.issuperset(c['ids'])]
+    pool = [dict(id=str(i)) for i in range(1,13)]
+    group = assign_group(members,pool,'',shortlist)
+    assert group[0][1]['ids'][0]=='7' and group[0][1]['relativeLossPct']==0.2
+    assert set(group[0][1]['ids']).isdisjoint(group[1][1]['ids'])
 print('smoke OK: two discs, one reserve, team preference')

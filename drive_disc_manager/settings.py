@@ -1,7 +1,7 @@
 import json
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QTabWidget,QWidget,QLabel,QPushButton,
     QPlainTextEdit,QTableWidget,QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView,QCheckBox)
-from .store import read,save,config,import_inventory
+from .store import read,save,config,import_inventory,digest
 from .service import preview
 from .subscriptions import sync
 from .manager_app import wiki_path
@@ -27,7 +27,7 @@ class ManagerDialog(QDialog):
         self.status = QLabel()
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
-        tabs = QTabWidget(); layout.addWidget(tabs)
+        self.tabs = tabs = QTabWidget(); layout.addWidget(tabs)
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'仓库预览')
         bar = QHBoxLayout(); box.addLayout(bar)
         for title,callback in [('导入本账号扫描',self.load_inventory),('重新计算',self.calculate),('始终保留 / 取消',self.pin),('同类备用数量',self.set_quota)]:
@@ -38,8 +38,20 @@ class ManagerDialog(QDialog):
         for title,callback in [('更新来源',self.update_rules),('保留本地',lambda:self.resolve('local')),('采用上游',lambda:self.resolve('remote')),('合并',lambda:self.resolve('union')),('编辑字段',self.edit_rule)]:
             self.button(bar,title,callback)
         self.fields = self.grid(['规则字段','远端值','本地覆盖','冲突 · 旧值 → 新值']); box.addWidget(self.fields)
-        page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'配队与配置')
-        self.button(box,'从配装器保存为配队',self.import_profile)
+        page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'我的配队')
+        bar = QHBoxLayout(); box.addLayout(bar)
+        self.button(bar,'从配装器保存为配队',self.import_profile)
+        self.button(bar,'设置满暴容差',self.edit_tolerance)
+        self.button(bar,'启用 / 停用',self.toggle_profile)
+        self.button(bar,'重新计算',self.calculate)
+        self.teams = self.grid(['方案','同时出场组','满暴容差','实战暴击','输出差距','选择依据'])
+        self.teams.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        box.addWidget(self.teams)
+        self.team_score = QLabel(); self.team_score.setWordWrap(True); box.addWidget(self.team_score)
+        self.slots = self.grid(['号位','套装','主属性','等级','当前装备者','该盘用途'])
+        box.addWidget(self.slots)
+        self.teams.itemSelectionChanged.connect(self.show_build)
+        page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'运行设置')
         flags = QHBoxLayout(); box.addLayout(flags)
         self.flags = {}
         for key,title in [('run_scanner','运行时重新扫描'),('afterEarly','早场刷后运行'),('applyMarkers','标记后按游戏当前弃置拆解')]:
@@ -83,6 +95,64 @@ class ManagerDialog(QDialog):
         self.keys=sorted((set(fields)|set(self.cfg['overrides']))-{k for k in fields if k.endswith('/known')},key=lambda k:(k not in conflicts,k))
         self.fill(self.fields,[(k,fields.get(k,''),self.cfg['overrides'].get(k,''),conflicts.get(k,'')) for k in self.keys])
         self.status.setText(f"上次预览 {self.report.get('counts',{})}　待处理规则冲突 {len(conflicts)}　"+' / '.join(self.report.get('issues',[])+self.report.get('warnings',[])))
+        self.refresh_teams()
+
+    def refresh_teams(self, selected=None):
+        profiles = self.cfg['profiles']
+        def pct(value):
+            return '—' if value is None else f'{value:g}%'
+        def row(p):
+            result = self.report.get('assignments',{}).get(p['name'],{})
+            reason = result.get('error') or result.get('reason') or '等待计算'
+            if not p.get('enabled',True):
+                reason = '已停用'; result = {}
+            return (p['name'],p.get('simultaneous') or '可借盘',pct(p.get('tolerancePct',0.5)),
+                    pct(result.get('critRate')),pct(result.get('relativeLossPct')),reason)
+        self.fill(self.teams,[row(p) for p in profiles])
+        self.teams.resizeColumnsToContents()
+        if profiles:
+            index = next((i for i,p in enumerate(profiles) if p['name']==selected),0)
+            self.teams.selectRow(index)
+        self.show_build()
+
+    def show_build(self):
+        index = self.teams.currentRow()
+        self.fill(self.slots,[])
+        self.team_score.setText('在配装器保存角色目标后，可导入为独立配队。')
+        if index < 0 or index >= len(self.cfg['profiles']): return
+        profile = self.cfg['profiles'][index]
+        result = self.report.get('assignments',{}).get(profile['name'],{})
+        if not profile.get('enabled',True) or not result.get('ids'):
+            self.team_score.setText(result.get('error') or '启用并重新计算后可查看六个号位。'); return
+        by_fp = {r['fp']:r for r in self.rows}
+        rows = [by_fp[fp] for fp in result['ids'] if fp in by_fp]
+        self.fill(self.slots,[(r['slot'],r['set'],r['main'],r['level'],r.get('location') or '背包',
+                               '、'.join(r['reasons'])) for r in rows])
+        self.slots.resizeColumnsToContents()
+        details = [profile['name']]
+        if 'outputScore' in result:
+            details += [f"所选输出 {result['outputScore']:g}",f"候选最高 {result['bestOutput']:g}"]
+        scope = result.get('search',{})
+        if scope: details.append(f"初选 {scope['candidateBuilds']} 套")
+        if self.report.get('configuration') != digest(self.cfg): details.append('配置已修改 · 上次计算结果')
+        self.team_score.setText('　｜　'.join(details))
+
+    def edit_tolerance(self):
+        index = self.teams.currentRow()
+        if index < 0: return
+        profile = self.cfg['profiles'][index]
+        value, ok = QInputDialog.getDouble(self,profile['name'],'为满暴最多接受的输出差距（%）',
+                                            profile.get('tolerancePct',0.5),0,100,4)
+        if ok:
+            profile['tolerancePct'] = value
+            self.edit_cfg(); self.refresh_teams(profile['name'])
+
+    def toggle_profile(self):
+        index = self.teams.currentRow()
+        if index < 0: return
+        profile = self.cfg['profiles'][index]
+        profile['enabled'] = not profile.get('enabled',True)
+        self.edit_cfg(); self.refresh_teams(profile['name'])
 
     def save_text(self):
         value = json.loads(self.editor.toPlainText())

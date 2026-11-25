@@ -1,6 +1,7 @@
 """Produce a read-only plan from one pinned inventory, configuration and rule revision."""
 from collections import Counter, defaultdict
-from .optimizer import as_disc, optimize_profile
+from .optimizer import as_disc, candidate_pool
+from .allocation import assign_group
 from .store import digest, fingerprint, inventory
 from .subscriptions import effective
 
@@ -36,30 +37,34 @@ def reserves(rows, cfg):
                 row['reasons'].append('备用 · '+purpose)
 
 
-def plan(z,cfg,rules,names,optimize=optimize_profile):
+def plan(z,cfg,rules,names,fetch_candidates=candidate_pool):
     ds, counts = inventory(z)
     fields = rules.get('fields',{})
     by_fp = {fingerprint(d):d for d in ds}
     inputs = {fp:as_disc(d,names) for fp,d in by_fp.items() if counts[fp]==1 and not d.get('trash') and d.get('markState')!='unknown'}
     enabled = [p for p in cfg['profiles'] if p.get('enabled',True)]
-    assignments, claims, issues = {}, defaultdict(set), []
+    assignments, groups, issues = {}, defaultdict(list), []
     used_by = defaultdict(list)
+    if len({p['name'] for p in enabled}) != len(enabled):
+        raise ValueError('配队方案名称重复')
     for p in enabled:
         name = p['name']
-        if name in assignments:
-            raise ValueError('配队方案名称重复 '+name)
-        group = p.get('simultaneous') or name
+        # Unnamed (mutually exclusive) profiles cannot collide with a named group.
+        group = ('group',p['simultaneous']) if p.get('simultaneous') else ('solo',name)
         current = {f for f,d in by_fp.items() if d.get('location') and d['location']==p.get('agentKey')}
-        pool = [d for f,d in inputs.items() if d and not d['discarded'] and f not in claims[group]]
+        groups[group].append((p,current))
+    pool = [disc for disc in inputs.values() if disc and not disc['discarded']]
+    for (_,group_name), members in groups.items():
         try:
-            result = optimize(cfg['optimizer_url'],p,pool,current)
-            assignments[name] = result
-            claims[group].update(result['ids'])
-            for fp in result['ids']:
-                used_by[fp].append('配队 · '+name)
+            for profile,result in assign_group(members,pool,cfg['optimizer_url'],fetch_candidates):
+                name = profile['name']
+                assignments[name] = result
+                for fp in result['ids']:
+                    used_by[fp].append('配队 · '+name)
         except Exception as exc:
-            issues.append(name+' · '+str(exc))
-            assignments[name] = {'error':str(exc)}
+            issues.append(group_name+' · '+str(exc))
+            for profile,_ in members:
+                assignments[profile['name']] = {'error':str(exc)}
     rows = []
     for d in ds:
         fp = fingerprint(d)
@@ -71,7 +76,7 @@ def plan(z,cfg,rules,names,optimize=optimize_profile):
         if cfg['protect15'] and d['level']==15:
             why.append('已满级')
         row = dict(fp=fp, id=d['id'], set=d['setKey'], slot=str(d['slotKey']), main=d['mainStatKey'],
-                   level=d['level'], rolls={s['key']:1+s['upgrades'] for s in d['substats']}, reasons=why, review=[])
+                   level=d['level'], location=d.get('location',''), rolls={s['key']:1+s['upgrades'] for s in d['substats']}, reasons=why, review=[])
         row['marked'] = d.get('trash') is True
         if d.get('markState')=='unknown':
             row['review'].append('现场弃置状态待核')
