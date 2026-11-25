@@ -6,5 +6,5 @@ NEED_NOTIFY = False
 
 PLUGIN_AUTHOR = "EliNaCCa / upstream idk500"
 PLUGIN_HOMEPAGE = "https://github.com/EliNaCCa/zzzod-plugin-drive-disc-manager"
-PLUGIN_VERSION = "0.1.0"
-PLUGIN_DESCRIPTION = "按账号订阅留盘规则、分配配队用盘，生成可追溯的仓库预览。"
+PLUGIN_VERSION = "0.1.1"
+PLUGIN_DESCRIPTION = "订阅留盘规则、分配配队用盘、保留备用盘，可按游戏当前弃置标记衔接内置拆解。"

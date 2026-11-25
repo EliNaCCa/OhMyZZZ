@@ -1,5 +1,5 @@
 """Produce a read-only plan from one pinned inventory, configuration and rule revision."""
-from collections import defaultdict
+from collections import Counter, defaultdict
 from .optimizer import as_disc, optimize_profile
 from .store import digest, fingerprint, inventory
 from .subscriptions import effective
@@ -40,7 +40,7 @@ def plan(z,cfg,rules,names,optimize=optimize_profile):
     ds, counts = inventory(z)
     fields = rules.get('fields',{})
     by_fp = {fingerprint(d):d for d in ds}
-    inputs = {fp:as_disc(d,names) for fp,d in by_fp.items() if counts[fp]==1}
+    inputs = {fp:as_disc(d,names) for fp,d in by_fp.items() if counts[fp]==1 and not d.get('trash') and d.get('markState')!='unknown'}
     enabled = [p for p in cfg['profiles'] if p.get('enabled',True)]
     assignments, claims, issues = {}, defaultdict(set), []
     used_by = defaultdict(list)
@@ -72,12 +72,18 @@ def plan(z,cfg,rules,names,optimize=optimize_profile):
             why.append('已满级')
         row = dict(fp=fp, id=d['id'], set=d['setKey'], slot=str(d['slotKey']), main=d['mainStatKey'],
                    level=d['level'], rolls={s['key']:1+s['upgrades'] for s in d['substats']}, reasons=why, review=[])
-        if counts[fp]>1 or d.get('setKey')=='Unknown' or d['rarity']!='S' or not 3<=len(row['rolls'])<=4 or d.get('trash'):
-            row['review'].append('身份、品级、副词条或历史弃置待核')
+        row['marked'] = d.get('trash') is True
+        if d.get('markState')=='unknown':
+            row['review'].append('现场弃置状态待核')
+        if counts[fp]>1 or d.get('setKey')=='Unknown' or d['rarity']!='S' or not 3<=len(row['rolls'])<=4:
+            row['review'].append('身份、品级或副词条待核')
         rows.append(row)
-    reserves([r for r in rows if not r['review']],cfg)
+    reserves([r for r in rows if not r['review'] and not r['marked']],cfg)
     for row in rows:
         key = 'matrix/'+row['set']+'/'+row['slot']
+        if row['marked']:
+            row.update(decision='已弃置',reasons=['游戏已标记弃置'],review=[])
+            continue
         main = row['main']
         allowed = effective(fields.get(key),cfg['overrides'].get(key))
         known = fields.get(key+'/known',[])
@@ -102,4 +108,4 @@ def plan(z,cfg,rules,names,optimize=optimize_profile):
             row['review'].append('有启用配队尚未完成计算')
         row['decision'] = '保留' if row['reasons'] else ('待复核' if row['review'] else '弃置候选')
     return dict(inventory=digest(z), rules=rules.get('version'), configuration=digest(cfg), assignments=assignments,
-                issues=issues, counts={k:sum(r['decision']==k for r in rows) for k in ('保留','待复核','弃置候选')}, discs=rows)
+                issues=issues, counts=dict(Counter(r['decision'] for r in rows)), discs=rows)

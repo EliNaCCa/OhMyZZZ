@@ -1,6 +1,6 @@
 import json
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QTabWidget,QWidget,QLabel,QPushButton,
-    QPlainTextEdit,QTableWidget,QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView)
+    QPlainTextEdit,QTableWidget,QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView,QCheckBox)
 from .store import read,save,config,import_inventory
 from .service import preview
 from .subscriptions import sync
@@ -39,6 +39,12 @@ class ManagerDialog(QDialog):
             self.button(bar,title,callback)
         self.fields = self.grid(['规则字段','远端值','本地覆盖','冲突 · 旧值 → 新值']); box.addWidget(self.fields)
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'配队与配置')
+        self.button(box,'从配装器保存为配队',self.import_profile)
+        flags = QHBoxLayout(); box.addLayout(flags)
+        self.flags = {}
+        for key,title in [('run_scanner','运行时重新扫描'),('afterEarly','早场刷后运行'),('applyMarkers','标记后按游戏当前弃置拆解')]:
+            toggle = QCheckBox(title); self.flags[key] = toggle; flags.addWidget(toggle)
+            toggle.clicked.connect(lambda checked,k=key:self.set_flag(k,checked))
         self.editor = QPlainTextEdit(); box.addWidget(self.editor)
         self.button(box,'保存配置',self.save_text)
         self.reload()
@@ -71,6 +77,7 @@ class ManagerDialog(QDialog):
     def reload(self):
         self.cfg=config(self.root); self.rules=read(self.root/'rules.json',{}); self.report=read(self.root/'preview.json',{})
         self.editor.setPlainText(pretty(self.cfg)); self.rows=self.report.get('discs',[])
+        for key,toggle in self.flags.items(): toggle.setChecked(bool(self.cfg.get(key)))
         self.fill(self.table,[(r['set'],r['slot'],r['main'],r['level'],r['decision'],'、'.join(r['reasons']+r['review'])) for r in self.rows])
         conflicts=self.rules.get('conflicts',{}); fields=self.rules.get('fields',{})
         self.keys=sorted((set(fields)|set(self.cfg['overrides']))-{k for k in fields if k.endswith('/known')},key=lambda k:(k not in conflicts,k))
@@ -85,10 +92,48 @@ class ManagerDialog(QDialog):
         validate(value)
         save(self.root/'config.json',value); self.reload()
 
+    def set_flag(self,key,checked):
+        cfg = json.loads(self.editor.toPlainText())
+        cfg[key] = checked
+        if checked and key in ('afterEarly','applyMarkers'):
+            cfg['run_scanner'] = True
+        if key=='run_scanner' and not checked:
+            cfg.update(afterEarly=False,applyMarkers=False)
+        from .validation import validate
+        validate(cfg)
+        save(self.root/'config.json',cfg); self.reload()
+
     def load_inventory(self):
         path,_=QFileDialog.getOpenFileName(self,'选择属于当前账号的 ZOD 扫描','','JSON (*.json)')
         if path:
             import_inventory(self.root,path); self.calculate()
+
+    def import_profile(self):
+        from .optimizer import saved_targets
+        url,ok=QInputDialog.getText(self,'本地配装器','配装器窗口显示的地址',text=self.cfg['optimizer_url'])
+        if not ok: return
+        choices=saved_targets(url.strip())
+        if not choices:
+            raise ValueError('请先在配装器保存角色的多角色目标')
+        labels=[f"{i+1}. {p['agent']}" for i,p in enumerate(choices)]
+        label,ok=QInputDialog.getItem(self,'选择角色','已保存的配装器配置',labels,0,False)
+        if not ok: return
+        source=choices[labels.index(label)]
+        if source['requiresClaimMapping']:
+            raise ValueError('此方案要求避让配装器中已占用的盘。导入需核对两份库存中的占用记录。')
+        name,ok=QInputDialog.getText(self,'保存配队快照','方案名称',text=source['agent']+' · 常用队')
+        if not ok: return
+        if not name.strip() or any(p['name']==name.strip() for p in self.cfg['profiles']):
+            raise ValueError('请输入新的方案名称')
+        simultaneous,ok=QInputDialog.getText(self,'同时出场','同时上场的角色填写相同分组，互斥配队可留空')
+        if not ok: return
+        wiki=read(wiki_path(),{})
+        agent_key=next((a['EN'].replace(' ','') for a in wiki.get('character',{}).values()
+                        if a.get('CHS')==source['agent'] and a.get('EN')),'')
+        self.cfg['optimizer_url']=url.strip()
+        self.cfg['profiles'].append(dict(name=name.strip(),agentKey=agent_key,request=source['request'],
+                                         simultaneous=simultaneous.strip(),tolerancePct=0.5,sourceId=source['sourceId']))
+        self.edit_cfg()
 
     def calculate(self):
         preview(self.root,wiki_path(),refresh=False); self.reload()

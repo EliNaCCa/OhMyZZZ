@@ -34,26 +34,57 @@ def as_disc(d, names):
                 equippedBy=d.get('location',''),locked=bool(d.get('lock')),discarded=bool(d.get('trash')))
 
 
-def call(url, payload):
+def loopback_json(url, route, payload=None):
     uri = urlsplit(url)
     if uri.scheme != 'http' or uri.hostname not in ('127.0.0.1','localhost','::1') or not uri.port or uri.path not in ('','/') or uri.username or uri.password or uri.query or uri.fragment:
         raise ValueError('填写配装器窗口显示的本机 HTTP 地址和端口')
     # Direct loopback connection. Never proxy or follow redirects with private inventory.
     con = http.client.HTTPConnection(uri.hostname, uri.port, timeout=60)
     try:
-        con.request('POST','/api/optimize',json.dumps(payload).encode(),{'Content-Type':'application/json'})
+        if payload is None:
+            con.request('GET',route)
+        else:
+            con.request('POST',route,json.dumps(payload).encode(),{'Content-Type':'application/json'})
         response = con.getresponse()
         if response.status != 200:
             raise ValueError(f'本地配装器 HTTP {response.status}')
         raw = response.read(16_000_001)
         if len(raw) > 16_000_000:
             raise ValueError('配装器返回超出上限')
-        data = json.loads(raw)
-        if data.get('canceled') or not isinstance(data.get('results'),list):
-            raise ValueError('配装器中断或结果格式不匹配')
-        return data
+        return json.loads(raw)
     finally:
         con.close()
+
+
+def call(url, payload):
+    data = loopback_json(url, '/api/optimize', payload)
+    if data.get('canceled') or not isinstance(data.get('results'),list):
+        raise ValueError('配装器中断或结果格式不匹配')
+    return data
+
+
+def saved_targets(url):
+    targets = loopback_json(url, '/api/character-targets')
+    state = loopback_json(url, '/api/state')
+    effects = state.get('setEffects')
+    if not isinstance(effects, list):
+        raise ValueError('配装器套装效果表不可用')
+    choices = []
+    for target in targets.get('plans') or []:
+        request = target.get('request') or {}
+        if not request.get('characterName') or not request.get('roleSystem'):
+            continue
+        if (target.get('ui') or {}).get('occupiedPolicy') == 'AVOID_OCCUPIED' and state.get('discClaims'):
+            # Upstream ids belong to a different inventory. Importing them by row
+            # number would make an occupied disc available to a second agent.
+            occupied = True
+        else:
+            occupied = False
+        request = {k:v for k,v in request.items() if k not in ('discs','setEffects')}
+        choices.append(dict(agent=target.get('characterName') or request['characterName'],
+                            request=dict(request,setEffects=effects), sourceId=target.get('id'),
+                            requiresClaimMapping=occupied))
+    return choices
 
 
 def number(v):

@@ -20,7 +20,14 @@ with TemporaryDirectory() as tmp:
     cfg=defaults(); cfg.update(auto_sync=False,reserve=1); save(root/'config.json',cfg)
     key='matrix/SwingJazz/4'; fields={key:['atk_'],key+'/known':['atk_','def_']}
     save(root/'rules.json',merge({},fields,{},{}))
-    assert preview(root)['counts']=={'保留':1,'待复核':0,'弃置候选':1}
+    assert preview(root)['counts']=={'保留':1,'弃置候选':1}
+    from drive_disc_manager.marks import mark_action
+    assert mark_action('marked',None,False)=='already-discarded'
+    assert mark_action('unmarked',None,True)=='mark'
+    assert mark_action('unmarked','marked',True)=='manual-keep'
+    z['discs'][0]['trash']=True
+    save(src,z); import_inventory(root,src)
+    assert preview(root)['counts']=={'保留':1,'已弃置':1}
     cases=[dict(ids=['a'],critRate=98,outputScore=100),dict(ids=['b'],critRate=100,outputScore=99.5)]
     assert prefer(cases,0.5,set())['ids']==['b']
     assert prefer(cases,0,set())['ids']==['a']

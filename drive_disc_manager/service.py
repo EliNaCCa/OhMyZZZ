@@ -1,7 +1,7 @@
 import time
 from pathlib import Path
 from .planner import plan
-from .store import config, read, save
+from .store import config, digest, read, save
 from .subscriptions import sync
 
 
@@ -21,7 +21,9 @@ def preview(root, wiki=None, refresh=True):
             if entry.get('EN') and entry.get('CHS'):
                 names[entry['EN'].replace(' ','')] = entry['CHS']
     names.update(cfg.get('aliases',{}))
-    report = plan(z,cfg,rules,names)
+    manual = [fp for fp, entry in read(root/'markers.json', {}).items() if entry.get('state')=='manual-keep']
+    report = plan(z,dict(cfg,pins=sorted(set(cfg['pins'])|set(manual))),rules,names)
+    report['configuration'] = digest(cfg)
     report.update(warnings=warnings,generated=time.time(), mode='preview')
     save(root/'preview.json',report)
     return report

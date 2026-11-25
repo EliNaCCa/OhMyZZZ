@@ -75,7 +75,7 @@ def inventory(z):
 
 def defaults():
     return dict(reserve=2, reserve_rules=[], pins=[], protect15=True, profiles=[], overrides={},
-                auto_sync=True, run_scanner=False, optimizer_url='', roster=[], aliases={})
+                auto_sync=True, run_scanner=False, afterEarly=False, applyMarkers=False, optimizer_url='', roster=[], aliases={})
 
 
 def config(root):

@@ -8,7 +8,7 @@ def validate(value):
     quota(cfg['reserve'])
     for key in ('reserve_rules','profiles','pins','roster'):
         if not isinstance(cfg[key],list): raise ValueError(key+' 应为数组')
-    for key in ('protect15','auto_sync','run_scanner'):
+    for key in ('protect15','auto_sync','run_scanner','afterEarly','applyMarkers'):
         if type(cfg[key]) is not bool: raise ValueError(key+' 应为布尔值')
     for r in cfg['reserve_rules']:
         quota(r['count'])
