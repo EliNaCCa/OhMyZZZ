@@ -38,6 +38,18 @@ def matching_rules(group, cfg):
     return limits, trim[1]
 
 
+def normalized_rule(rule, reverse):
+    if 'set' not in rule:
+        return rule
+    return dict(rule, set=reverse.get(rule['set'], rule['set']))
+
+
+def exact_purpose(rule, group, purpose, reverse):
+    selectors = normalized_rule(rule, reverse)
+    return ((rule.get('purpose') or '通用') == purpose
+            and all(str(selectors.get(k, '')) == str(group[k]) for k in SELECTORS))
+
+
 def apply_reserves(rows, cfg):
     groups = defaultdict(list)
     for row in rows:

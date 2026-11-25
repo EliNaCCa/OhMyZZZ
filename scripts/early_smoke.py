@@ -8,7 +8,7 @@ from uuid import uuid4
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from drive_disc_manager.early_entry import run
 from drive_disc_manager.store import read, save
-from drive_disc_manager.task_order import account_order
+from drive_disc_manager.task_order import account_order, marker_conflict
 
 
 def smoke():
@@ -48,6 +48,21 @@ def smoke():
         assert '两项本轮均执行' in account_order(ctx, 1, flags)
         item.enabled = False
         assert '等内置拆解下次实际运行' in account_order(ctx, 1, flags)
+        ctx.app_group_manager.get_group_list = lambda idx: ['one_dragon']
+        assert not marker_conflict(ctx, 1, 'one_dragon')
+        group.app_list.append(NS(app_id='disc_cleanup', enabled=True))
+        assert '旧驱动盘清理器' in marker_conflict(ctx, 1, 'one_dragon')
+        group.app_list.pop()
+        cfg_read = NS(dismantle_level='S及以下',dismantle_abandon=True)
+        ctx.run_context.get_config = lambda app_id, idx, group_id: cfg_read
+        assert '未弃置的 S 级盘' in marker_conflict(ctx, 1, 'one_dragon')
+        cfg_read.dismantle_level = '未知品级'
+        try:
+            marker_conflict(ctx, 1, 'one_dragon')
+        except ValueError as exc:
+            assert '核对内置拆解' in str(exc)
+        else:
+            raise AssertionError('Unrecognized native grade accepted')
     print('PASS early account receipt, replay, daily entry, and game exit')
 
 

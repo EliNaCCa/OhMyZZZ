@@ -20,6 +20,16 @@ jobs:
       - run: python scripts/early_smoke.py
       - run: python scripts/subscription_smoke.py
       - run: python scripts/package_manager.py
+      - name: Keep the verified package for recovery
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: OhMyZZZ-${{ github.ref_name }}-${{ github.run_attempt }}
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
       - env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" "dist/OhMyZZZ-${GITHUB_REF_NAME#manager-v}.zip" "dist/OhMyZZZ-${GITHUB_REF_NAME#manager-v}.zip.sha256" --title "OhMyZZZ ${GITHUB_REF_NAME#manager-v}" --verify-tag --generate-notes --prerelease

@@ -76,6 +76,26 @@ def smoke(root):
     assert trace['tabs']==['Set+Main'] and trace['conflict'] and trace['old']==['atk_', 'crit_']
     assert trace['remote']==['atk_', 'crit_dmg_'] and trace['active']==['crit_'] and trace['local']==['crit_']
 
+    # Saving a dialog opened before the sync must compare the field under the writer lock.
+    chosen = dict(mode='only', values=['crit_'])
+    try:
+        sub.save_field_override(root, key, seen_remote=['anomProf'], seen_local=None, override=chosen)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('editor accepted a changed upstream field')
+    unrelated = config(root)
+    unrelated['reserve'] = 7
+    save(root/'config.json', unrelated)
+    sub.save_field_override(root, key, seen_remote=['atk_'], seen_local=None, override=chosen)
+    assert config(root)['reserve'] == 7 and config(root)['overrides'][key] == chosen
+    try:
+        sub.save_field_override(root, key, seen_remote=['atk_'], seen_local=None, override=None)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('stale editor removed a newer local override')
+
 
 if __name__ == '__main__':
     with TemporaryDirectory() as temp:

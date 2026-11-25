@@ -8,30 +8,13 @@ from pathlib import Path
 
 import cv2
 from one_dragon.base.geometry.point import Point
-from one_dragon.base.geometry.rectangle import Rect
-from one_dragon.utils import os_utils, cv2_utils
+from one_dragon.utils import cv2_utils
 from .warehouse import enter_warehouse, warehouse_header
 from .store import digest, fingerprint, read, save, config
 from .marks import mark_action, owns_spare
 from .scan_marks import mark_hint, observed_grade, read_controls
 from .stat_reading import measure
-
-
-def marker_conflict(home, account, group):
-    import yaml
-    base = Path(home)/'config'/f'{account:02d}'
-    # The built-in default is false. Check all saved groups this account can run.
-    for f in base.glob('*/_group.yml'):
-        group_cfg = yaml.safe_load(f.read_text('utf-8-sig')) or {}
-        active = {item['app_id'] for item in group_cfg.get('app_list',[]) if item.get('enabled')}
-        if 'disc_cleanup' in active:
-            return '同账号应用组已启用旧驱动盘清理器'
-        opts = f.parent/'drive_disc_dismantle.yml'
-        if 'drive_disc_dismantle' in active and opts.is_file():
-            values = yaml.safe_load(opts.read_text('utf-8-sig')) or {}
-            if 'S' in str(values.get('dismantle_level','')):
-                return '内置拆解还会选择未弃置的 S 级盘 · '+f.parent.name
-    return ''
+from .task_order import marker_conflict
 
 
 def hints(ocr, screen):
@@ -216,7 +199,7 @@ class Marker:
             raise ValueError(f'{mode} 尚有 {len(todo)} 张未核实，保留现场记录')
 
     def run(self):
-        reason = marker_conflict(os_utils.get_work_dir(),self.app.account,self.app.group)
+        reason = marker_conflict(self.app.ctx,self.app.account,self.app.group)
         if reason: raise ValueError(reason)
         if self.report['issues'] or not self.report['rules']: raise ValueError('配装或规则待复核')
         if any(v.get('state') in ('pending', 'released') for v in self.history.values()):

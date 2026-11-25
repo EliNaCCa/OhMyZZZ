@@ -4,7 +4,7 @@ from .optimizer import as_disc, candidate_pool, STATS
 from .allocation import assign_group, group_conflict
 from .store import digest, equipment_keys, fingerprint, inventory, roll_base
 from .subscriptions import effective, current_conflicts
-from .reserve_policy import apply_reserves, development
+from .reserve_policy import apply_reserves, development, normalized_rule
 from .roster import compile_roster, explain, roster_catalog
 from .stat_reading import checked_values
 
@@ -163,8 +163,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         assess_rules(row, cfg, fields, reverse, by_set, unresolved, excluded)
         if issues:
             row['review'].append('有启用配队尚未完成计算')
-    quotas = [dict(rule, set=reverse.get(rule['set'], rule['set'])) if 'set' in rule else rule
-              for rule in cfg['reserve_rules']]
+    quotas = [normalized_rule(rule, reverse) for rule in cfg['reserve_rules']]
     coverage = apply_reserves(rows, dict(cfg, reserve_rules=quotas))
     for row in rows:
         if row['marked']:

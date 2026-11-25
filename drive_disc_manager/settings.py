@@ -4,12 +4,12 @@ from PySide6.QtCore import Signal, Qt
 from one_dragon_qt.widgets.base_interface import BaseInterface
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QTabWidget,QWidget,QLabel,QPushButton,
     QPlainTextEdit,QTableWidget,QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView,QCheckBox,QLineEdit)
-from .store import read,save,config,import_inventory,digest,equipment_names
+from .store import read,save,config,import_inventory,digest,equipment_names,equipment_keys
 from .service import preview
-from .subscriptions import sync, current_conflicts, can_merge, effective, resolve_conflict, save_config
+from .subscriptions import sync, current_conflicts, can_merge, effective, resolve_conflict, save_config, save_field_override
 from .manager_app import wiki_path
 from .drive_disc_manager_const import APP_ID, APP_NAME
-from .reserve_policy import DEFAULT_STATS, matching_rules, SELECTORS
+from .reserve_policy import matching_rules, normalized_rule, SELECTORS
 from .roster import roster_catalog
 from .disc_owner import owner_label
 
@@ -21,6 +21,7 @@ def pretty(value):
 class ManagerInterface(BaseInterface):
     probe_finished = Signal(object, str)
     equip_finished = Signal(str, str, str)
+    rules_finished = Signal(object, str)
 
     def __init__(self, ctx, parent=None):
         super().__init__('ohmyzzz_settings', APP_NAME, '', parent)
@@ -53,7 +54,9 @@ class ManagerInterface(BaseInterface):
         bar.addWidget(self.rule_search,1); bar.addWidget(self.only_conflicts); bar.addWidget(self.rule_total)
         self.rule_search.textChanged.connect(self.filter_rules); self.only_conflicts.toggled.connect(self.filter_rules)
         bar = QHBoxLayout(); box.addLayout(bar)
-        self.button(bar,'更新来源',self.update_rules)
+        self.rule_updates = set()
+        self.sync_button = self.button(bar,'更新来源',self.update_rules)
+        self.rules_finished.connect(self.finish_rules, Qt.ConnectionType.QueuedConnection)
         self.rule_actions = {action:self.button(bar, title, lambda a=action:self.resolve(a)) for action, title in
                         [('local','保留本地'), ('remote','采用上游'), ('union','合并')]}
         self.button(bar,'编辑字段',self.edit_rule)
@@ -146,6 +149,7 @@ class ManagerInterface(BaseInterface):
         if root != getattr(self, 'root', None):
             self.tabs.setCurrentIndex(0)
         self.root = root
+        self.sync_button.setEnabled(root not in self.rule_updates)
         self.maintenance_dir = root.parent / '_maintenance'
         self.show_maintenance()
         self.reload()
@@ -256,6 +260,7 @@ class ManagerInterface(BaseInterface):
             self.tabs.setCurrentIndex(0)
         self.cfg=config(self.root); self.rules=read(self.root/'rules.json',{}); self.report=read(self.root/'preview.json',{})
         self.config_hash = digest(self.cfg)
+        self.editor_hash = self.config_hash
         self.show_probe(read(self.root/'single-disc.json', {}))
         self.editor.setPlainText(pretty(self.cfg)); self.rows=self.report.get('discs',[])
         for key,toggle in self.flags.items(): toggle.setChecked(bool(self.cfg.get(key)))
@@ -555,7 +560,7 @@ class ManagerInterface(BaseInterface):
             raise ValueError('需要 JSON 配置对象')
         from .validation import validate
         validate(value)
-        save_config(self.root,value,self.config_hash); self.reload()
+        save_config(self.root,value,self.editor_hash); self.reload()
 
     def set_flag(self,key,checked):
         cfg = json.loads(self.editor.toPlainText())
@@ -566,7 +571,7 @@ class ManagerInterface(BaseInterface):
             cfg.update(afterEarly=False,applyMarkers=False,fieldProfile='')
         from .validation import validate
         validate(cfg)
-        save_config(self.root,cfg,self.config_hash)
+        save_config(self.root,cfg,self.editor_hash)
         if key == 'rotateSpareLocks' and (self.root/'inventory.json').is_file():
             self.calculate()
         else:
@@ -752,7 +757,9 @@ class ManagerInterface(BaseInterface):
                             stale=not probe and (report.get('rules')!=self.rules.get('version') or report.get('configuration')!=self.config_hash))
         if probe:
             criteria = {key:row[key] for key in SELECTORS}
-            limits, _ = matching_rules(criteria, self.cfg)
+            reverse = equipment_keys(self.set_names)
+            rules = [normalized_rule(rule, reverse) for rule in self.cfg['reserve_rules']]
+            limits, _ = matching_rules(criteria, dict(self.cfg, reserve_rules=rules))
             quotas = '、'.join(purpose+' '+('不限' if count is None else f'{count} 张')
                                for purpose, (_, count, _) in limits.items())
             self.detail.spares.setText('当前同类名额　'+quotas+'　｜　'+self.detail.spares.text())
@@ -828,30 +835,27 @@ class ManagerInterface(BaseInterface):
         self.calculate()
 
     def set_quota(self, r=None):
+        from .quota_editor import QuotaEditor
+        from .main_rule_editor import NAMES
         if r is None:
             index=self.table.currentRow()
             if index<0: return
             r=self.rows[index]
         selectors = {k:r[k] for k in SELECTORS}
-        limits, trim = matching_rules(selectors,self.cfg)
-        options = list(dict.fromkeys([*limits,'偏暴击','偏暴伤']))
-        purpose, ok = QInputDialog.getItem(self,'同类备用数量','这批备用盘的用途',options,0,False)
-        if not ok: return
-        current = limits.get(purpose, (0,0,()))[1]
-        count,ok=QInputDialog.getInt(self,'同类额外保留','相同套装、号位、主属性，-1 为不限',-1 if current is None else current,-1,9999)
-        if not ok: return
-        modes = ['推荐盘全部保留','推荐盘也按同类名额筛选']
-        mode,ok=QInputDialog.getItem(self,'同类备用数量','此类别的订阅推荐盘',modes,int(trim),False)
-        if not ok: return
-        stats = limits[purpose][2] if purpose in limits else {'偏暴击':['crit_'],'偏暴伤':['crit_dmg_']}[purpose]
-        rule = dict(**selectors, purpose=purpose, count=None if count<0 else count,trimRecommended=mode==modes[1])
-        if stats is not DEFAULT_STATS:
-            rule['stats'] = list(stats)
-        def replaced(old):
-            return all(str(old.get(k,''))==v for k,v in selectors.items()) and (old.get('purpose') or '通用')==purpose
-        self.cfg['reserve_rules'] = [old for old in self.cfg['reserve_rules'] if not replaced(old)] + [rule]
+        account, expected = self.root, self.config_hash
+        title = f"{self.set_names.get(r['set'],r['set'])} · {r['slot']} 号位 · {NAMES.get(r['main'], r['main'])}"
+        dialog = QuotaEditor(self, selectors, self.cfg, equipment_keys(self.set_names), title)
+        if not dialog.exec(): return
+        if self.root != account or account.name != str(self.ctx.current_instance_idx):
+            self.on_interface_shown()
+            raise ValueError('账号已切换，请在当前账号重新选择驱动盘。')
+        rules, summary = dialog.result_rules()
         before = self.coverage.get(tuple(selectors.values()))
-        self.edit_cfg()
+        save_config(account, dict(dialog.cfg, reserve_rules=rules), expected)
+        if (account/'inventory.json').is_file():
+            self.calculate()
+        else:
+            self.reload()
         match = next((i for i,item in enumerate(self.rows) if item['fp']==r['fp']),None)
         if match is not None: self.table.selectRow(match)
         after = self.coverage.get(tuple(selectors.values()))
@@ -859,38 +863,90 @@ class ManagerInterface(BaseInterface):
             change = f"调整前 {before['kept']} 张 → 调整后 {after['kept']} 张"
             self.reserve_info.setText(change+'　｜　'+self.reserve_info.text())
             return change
-        return purpose+' · 同类额外保留 '+('不限' if count < 0 else f'{count} 张')
+        return summary
 
     def update_rules(self):
-        sync(self.root)
-        if (self.root/'inventory.json').is_file():
-            self.calculate()
-        else:
-            self.reload()
+        root = self.root
+        if root in self.rule_updates: return
+        self.rule_updates.add(root)
+        self.sync_button.setEnabled(False)
+        self.status.setText('正在更新此账号的订阅来源…')
+
+        def fetch_rules():
+            error = ''
+            try:
+                sync(root)
+            except Exception as exc:
+                error = str(exc)
+            try:
+                self.rules_finished.emit(root, error)
+            except RuntimeError:
+                # OneDragon can unload the widget while the download is in progress.
+                pass
+
+        Thread(target=fetch_rules, name='OhMyZZZ rules', daemon=True).start()
+
+    def finish_rules(self, root, error):
+        self.rule_updates.discard(root)
+        if self.root != root or str(self.ctx.current_instance_idx) != root.name:
+            return
+        self.sync_button.setEnabled(True)
+        if error:
+            self.status.setText('订阅更新失败，沿用最近成功版本 · '+error)
+            return
+        # Preserve any advanced-settings draft typed while the sources were downloading.
+        draft = self.editor.toPlainText()
+        modified = draft != pretty(self.cfg)
+        draft_hash = self.editor_hash
+        try:
+            if (root/'inventory.json').is_file():
+                self.calculate()
+            else:
+                self.reload()
+            if self.conflicts:
+                self.tabs.setCurrentIndex(1)
+                self.rule_search.clear()
+                self.only_conflicts.setChecked(True)
+        except Exception as exc:
+            self.status.setText('订阅已更新，预览待重新计算 · '+str(exc))
+        finally:
+            if modified:
+                self.editor.setPlainText(draft)
+                self.editor_hash = draft_hash
 
     def edit_rule(self):
         i=self.fields.currentRow()
         if i<0: return
-        key=self.visible_keys[i]; old=self.cfg['overrides'].get(key,{'mode':'inherit','values':self.rules.get('fields',{}).get(key,[])})
+        account = self.root
+        key = self.visible_keys[i]
+        seen_remote = self.rules.get('fields', {}).get(key)
+        seen_local = self.cfg['overrides'].get(key)
+        old = seen_local or {'mode':'inherit', 'values':seen_remote or []}
+        row = self.rule_rows[key]
         modes = {'继承上游':'inherit','额外接受':'add','只接受':'only'}
         title,ok=QInputDialog.getItem(self,'字段规则','覆盖方式',list(modes),list(modes.values()).index(old['mode']),False)
         if not ok: return
         mode = modes[title]
-        if mode == 'inherit':
-            self.cfg['overrides'].pop(key,None); self.edit_cfg(); return
-        remote = self.rules.get('fields', {}).get(key) or []
         selected = old['values'] if old['mode'] != 'inherit' or mode == 'only' else []
-        if key.startswith('matrix/') and key.rsplit('/',1)[-1] in ('4','5','6'):
+        override = None
+        if mode != 'inherit' and key.startswith('matrix/') and key.rsplit('/',1)[-1] in ('4','5','6'):
             from .main_rule_editor import MainRuleEditor
-            row = self.rule_rows[key]
-            dialog = MainRuleEditor(self, row[0]+' · '+row[1], key.rsplit('/',1)[-1], mode, remote, selected)
+            dialog = MainRuleEditor(self, row[0]+' · '+row[1], key.rsplit('/',1)[-1], mode, seen_remote or [], selected)
             if not dialog.exec(): return
-            values = dialog.values()
-        else:
+            override = dict(mode=mode, values=dialog.values())
+        elif mode != 'inherit':
             text,ok=QInputDialog.getMultiLineText(self,'字段规则','每行一个值',text='\n'.join(selected))
             if not ok: return
-            values = [v.strip() for v in text.splitlines() if v.strip()]
-        self.cfg['overrides'][key]=dict(mode=mode,values=values); self.edit_cfg()
+            override = dict(mode=mode, values=[v.strip() for v in text.splitlines() if v.strip()])
+        if self.root != account or str(self.ctx.current_instance_idx) != account.name:
+            self.on_interface_shown()
+            raise ValueError('账号已切换，请在当前账号重新选择字段。')
+        try:
+            save_field_override(account, key, seen_remote=seen_remote, seen_local=seen_local, override=override)
+        finally:
+            self.reload()
+        if (account/'inventory.json').is_file():
+            self.calculate()
 
     def rule_row(self, key):
         parts = key.split('/')

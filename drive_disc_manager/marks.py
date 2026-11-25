@@ -26,7 +26,7 @@ def mark_action(live_state, previous, wants_trash):
 
 
 def reconcile_scan(root, inventory, names=None):
-    from .store import fingerprint, read, save, roll_base
+    from .store import digest, fingerprint, inventory as validate_inventory, read, save, roll_base
     from .stat_reading import checked_values
     import time
     history = read(root/'markers.json', {})
@@ -34,9 +34,22 @@ def reconcile_scan(root, inventory, names=None):
     base = roll_base(inventory)
     now = time.time()
     # A later lookalike cannot inherit an absent or ambiguous disc's automatic lock.
+    absent = []
     for fp, entry in history.items():
         if 'spareLock' in entry and counts.get(fp) != 1:
             entry.pop('spareLock')
+        if fp not in counts and entry.get('state') in ('pending', 'released') and entry.get('values'):
+            absent.append(entry)
+    if absent:
+        # A translated set name can change the fingerprint. Even a different set
+        # with the same numeric stats is enough to defer this absence inference.
+        discs, _ = validate_inventory(inventory)
+        measured = [checked_values(d, base) for d in discs]
+        if all(measured):
+            signatures = {digest(values) for values in measured}
+            for entry in absent:
+                if digest(entry['values']) not in signatures:
+                    entry.update(previousState=entry['state'], state='absent-after-rescan', observedAt=now)
     for disc in inventory['discs']:
         fp = fingerprint(disc)
         live = disc.get('markState', 'unknown')

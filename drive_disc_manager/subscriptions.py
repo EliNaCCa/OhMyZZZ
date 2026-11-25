@@ -235,6 +235,20 @@ def resolve_conflict(root, key, seen, action):
         save(root/'config.json', cfg)
 
 
+def save_field_override(root, key, *, seen_remote, seen_local, override):
+    """Apply a field edit against the values that the player actually saw."""
+    with exclusive(root/'_rules'):
+        cfg = config(root)
+        fields = read(root/'rules.json', {}).get('fields', {})
+        if fields.get(key) != seen_remote or cfg['overrides'].get(key) != seen_local:
+            raise ValueError('编辑期间该字段已更新，请查看最新值后再保存。')
+        if override is None:
+            cfg['overrides'].pop(key, None)
+        else:
+            cfg['overrides'][key] = override
+        save(root/'config.json', cfg)
+
+
 def save_config(root, value, expected):
     with exclusive(root/'_rules'):
         if digest(config(root)) != expected:

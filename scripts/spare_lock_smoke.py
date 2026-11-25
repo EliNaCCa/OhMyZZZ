@@ -122,6 +122,17 @@ def smoke(home):
             assert read(history_path)[old_id]['state'] == state
             m = scan(inventory(old))
             assert m.rows[old_id]['manualUnlock'] and not m.rows[old_id]['managedSpareLock']
+        # The interrupted item might have disappeared in an independent native run.
+        pending = {old_id: dict(state='pending', intended='mark', values=old['observedValues'])}
+        save(history_path, pending)
+        reconcile_scan(root, inventory(dict(fresh, observedValues=None)), names)
+        assert read(history_path) == pending
+        reconcile_scan(root, inventory(dict(old, setKey='摇摆爵士')), names)
+        assert read(history_path) == pending
+        reconcile_scan(root, inventory(fresh), names)
+        retired = read(history_path)[old_id]
+        assert retired['state']=='absent-after-rescan' and retired['intended']=='mark'
+        assert retired['values']==old['observedValues'] and 'spareLock' not in retired
         assert len(clicked) == 4
     print('PASS three-disc spare rotation, manual and legacy protection, identity loss and interrupted release')
 

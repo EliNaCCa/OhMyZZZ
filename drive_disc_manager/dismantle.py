@@ -1,29 +1,14 @@
 """Preview the scope of the account's independently enabled native dismantler."""
 from pathlib import Path
-import yaml
 from one_dragon.utils import os_utils
 from .store import config, digest, read, save
 from .salvage_audit import native_run, needs_review, prepare_batch, SCOPE_UNAVAILABLE
-
-
-def configured_dismantler(app):
-    home = Path(os_utils.get_work_dir())
-    group = home/'config'/f'{app.account:02d}'/'one_dragon'/'_group.yml'
-    if not group.is_file():
-        return None
-    settings = yaml.safe_load(group.read_text('utf-8-sig')) or {}
-    if not any(row.get('app_id')=='drive_disc_dismantle' and row.get('enabled') is True
-               for row in settings.get('app_list',[])):
-        return None
-    native = app.ctx.run_context.get_application('drive_disc_dismantle',app.account,'one_dragon')
-    if not native.config.dismantle_abandon:
-        return None
-    return native
+from .task_order import group_settings
 
 
 def handoff(app, report, observed):
-    native = configured_dismantler(app)
-    if native is None:
+    _, native = group_settings(app.ctx, app.account)
+    if native is None or not native.dismantle_abandon:
         return '已标记，等待游戏内拆解'
     if app.ctx.current_instance_idx != app.account or not app.ctx.run_context.is_context_running:
         raise ValueError('账号或运行状态变化，请下次从新扫描继续')
@@ -33,7 +18,7 @@ def handoff(app, report, observed):
     if needs_review(previous):
         return '已标记，上批确认结果待核。请查看运行设置的拆解记录。'
     snapshot = read(app.root/'inventory.json')
-    receipt = prepare_batch(snapshot,report,observed,native.config.dismantle_level)
+    receipt = prepare_batch(snapshot,report,observed,native.dismantle_level)
     from collections import Counter
     from .store import fingerprint
     receipt.update(account=app.account, nativeAtPreview=native_run(Path(os_utils.get_work_dir()), app.account),
