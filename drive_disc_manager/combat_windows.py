@@ -55,9 +55,10 @@ def window_requests(profile):
 
 def combine(window_rows, main):
     weight = sum(row['weight'] for row in window_rows)
-    score = sum(row['weight'] * number(row['outputScore']) for row in window_rows) / weight
+    score = sum(row['weight'] * number(row.get('rawOutput', row['outputScore'])) for row in window_rows) / weight
     primary = next(row for row in window_rows if row['name'] == main)
-    return dict(ids=primary['ids'], critRate=primary['critRate'], outputScore=float(score),
+    return dict(ids=primary['ids'], critRate=primary['critRate'], rawCritRate=primary['rawCritRate'], outputScore=float(score), rawOutput=str(score),
                 mainWindow=main, windows=[dict(name=row['name'], share=float(row['weight']/weight),
-                    outputScore=row['outputScore'], critRate=row['critRate'], panelCritRate=row.get('panelCritRate'))
+                    outputScore=row['outputScore'], rawOutput=row['rawOutput'], critRate=row['critRate'], panelCritRate=row.get('panelCritRate'),
+                    metric=row['metric'], metricValue=row['metricValue'], critDamage=row['critDamage'], damageBonus=row['damageBonus'], sheerBonus=row['sheerBonus'])
                     for row in window_rows])

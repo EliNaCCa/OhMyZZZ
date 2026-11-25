@@ -63,8 +63,10 @@ def assign_group(members, pool, url, fetch, max_nodes=160):
             if choice['ids'] != baseline['ids']:
                 choice['reason'] = '同时出场组协调让盘 · '+choice.get('reason','')
             if 'bestOutput' in baseline:
-                best = max(number(baseline['bestOutput']), number(choice['bestOutput']))
+                best = max(number(baseline['rawBestOutput']), number(choice['rawBestOutput']))
+                choice['rawBestOutput'] = str(best)
                 choice['bestOutput'] = float(best)
-                choice['relativeLossPct'] = float(100*(1-number(choice['outputScore'])/best))
+                score = number(choice.get('rawOutput', choice['outputScore']))
+                choice['relativeLossPct'] = float(100*(best-score)/best)
         choice['search'] = dict(candidateBuilds=len(original), calls=queries, visited=nodes)
     return result

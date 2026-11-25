@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from drive_disc_manager.engine import NAME, VERSION, managed
-from drive_disc_manager.optimizer import loopback_json, saved_targets
+from drive_disc_manager.optimizer import loopback_json, saved_targets, candidate_pool, select_candidate
 from drive_disc_manager.service import preview
 from drive_disc_manager.store import defaults, save
 
@@ -30,6 +30,29 @@ def smoke(source):
             second = endpoint.proc
             saved, = saved_targets(endpoint)
             assert saved['sourceId'] == 'smoke' and not saved['requiresClaimMapping']
+            # Two legal slot-3 alternatives. The pinned server displays identical
+            # output when the only difference is a CD roll at a tiny crit rate.
+            mains = [('HP_FLAT',2200),('ATK_FLAT',316),('DEF_FLAT',184),
+                     ('HP_PERCENT',30),('ICE_DMG',30),('ATK_PERCENT',30)]
+            pieces = [dict(id=str(slot),slot=slot,level=15,rarity='S',setName='谶羽之誓',
+                           mainStat=dict(type=stat,value=value),subStats=[])
+                      for slot,(stat,value) in enumerate(mains,1)]
+            other = dict(pieces[2],id='cd',subStats=[dict(type='CRIT_DMG',value=4.8)])
+            weak = dict(target, baseCritRate=0.00001)
+            result = loopback_json(endpoint,'/api/optimize',dict(weak,discs=pieces+[other]))
+            assert len(result['results'])==2 and len({r['outputScore'] for r in result['results']})==1
+            current = {d['id'] for d in pieces}
+            profile = dict(request=weak, tolerancePct=0)
+            pool = candidate_pool(endpoint,profile,pieces+[other],current)
+            winner = select_candidate(pool,profile,current)
+            assert winner['ids'][2]=='cd' and len({r['rawOutput'] for r in pool})==2
+            threshold = dict(request=dict(target,baseCritRate=97.59999), tolerancePct=.5)
+            chosen = select_candidate(candidate_pool(endpoint,threshold,pieces,set()),threshold,set())
+            assert chosen['bestNearFullOutput'] is None and chosen['critRate']==97.59999
+            rupture = dict(request=dict(target,roleSystem='RUPTURE',baseHP=7000),tolerancePct=.5)
+            chosen = select_candidate(candidate_pool(endpoint,rupture,pieces,set()),rupture,set())
+            assert chosen['metric']=='贯穿力' and chosen['metricValue']>0
+            print('PASS equal API scores distinguished, raw crit threshold respected, rupture index verified')
         assert not second.is_running()
         cfg = defaults()
         cfg['profiles'] = [dict(name='演示队', agentKey='Ellen', request=saved['request'])]

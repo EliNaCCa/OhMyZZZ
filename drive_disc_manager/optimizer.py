@@ -1,7 +1,9 @@
-"""Use the optimizer's existing team inputs, combat critRate and outputScore directly."""
+"""Use the optimizer's team inputs and candidate search; compare direct builds locally."""
 import http.client
 import json
+from collections import Counter
 from decimal import Decimal, InvalidOperation
+from math import prod
 from urllib.parse import urlsplit
 from .store import fingerprint
 
@@ -119,13 +121,13 @@ def prefer(candidates, tolerance_pct, current):
     if not 0 <= tol <= 1:
         raise ValueError('输出容差应在 0–100% 之间')
     def key(c):
-        return number(c['outputScore']), sum(i in current for i in c['ids']), tuple(c['ids'])
+        return number(c.get('rawOutput', c['outputScore'])), sum(i in current for i in c['ids']), tuple(c['ids'])
     best = max(candidates, key=key)
     if key(best)[0] <= 0:
         raise ValueError('缺少正的预期输出')
     # outputScore already includes the optimizer's capped crit expectation.
     # A rate within one roll of 100 qualifies; it still deals its real damage.
-    near = [c for c in candidates if number(c['critRate']) >= 100 - NEAR_CRIT_GAP]
+    near = [c for c in candidates if number(c.get('rawCritRate', c['critRate'])) >= 100 - NEAR_CRIT_GAP]
     cap = max(near,key=key) if near else None
     chosen = cap if cap and key(cap)[0] >= key(best)[0]*(1-tol) else best
     if cap is None:
@@ -136,8 +138,8 @@ def prefer(candidates, tolerance_pct, current):
         reason = '实战暴击达 97.6%，输出差距在容差内'
     else:
         reason = '近满暴方案超出输出容差，选最高输出'
-    full = [c for c in near if number(c['critRate']) >= 100]
-    return dict(chosen, bestOutput=best['outputScore'], relativeLossPct=float(100*(1-key(chosen)[0]/key(best)[0])),
+    full = [c for c in near if number(c.get('rawCritRate', c['critRate'])) >= 100]
+    return dict(chosen, bestOutput=best['outputScore'], rawBestOutput=str(key(best)[0]), relativeLossPct=float(100*(key(best)[0]-key(chosen)[0])/key(best)[0]),
                 reason=reason, effectiveCritRate=float(min(100,number(chosen['critRate']))),
                 bestNearFullOutput=cap['outputScore'] if cap else None,
                 bestFullOutput=max(full,key=key)['outputScore'] if full else None)
@@ -154,7 +156,12 @@ def _window_pool(url, profile, discs, current, request, exact=False):
     if not args.get('roleSystem') or not args.get('characterName'):
         raise ValueError('配队需要配装器角色与职业配置')
     direct = args['roleSystem'].upper() in ('ATTACK','STRONG','RUPTURE')
-    args.update(discs=discs, excludeDiscarded=True, topN=24, maxCombinations=profile.get('searchLimit',200000))
+    counts = Counter(d['slot'] for d in discs)
+    combinations = prod(counts[slot] for slot in range(1, 7))
+    # The pinned API accepts up to 200 results. Return every eligible combination
+    # for small pools, even when the optimizer's own ranking differs from ours.
+    limit = max(24, combinations) if direct and combinations <= 200 else 24
+    args.update(discs=discs, excludeDiscarded=True, topN=limit, maxCombinations=profile.get('searchLimit',200000))
     original_args = dict(args)
     # Upstream filters on PANEL rate, while the personal preference uses combat rate.
     estimated_panel = max(0, min(100, 100 - float((args.get('combatExtraStats') or {}).get('CRIT_RATE', 0))))
@@ -179,8 +186,8 @@ def _window_pool(url, profile, discs, current, request, exact=False):
                     raise ValueError('配装器修正过属性，请复核实物')
             if tuple(ids) not in results:
                 if direct:
-                    results[tuple(ids)] = dict(ids=ids, outputScore=r['outputScore'],critRate=r['critRate'],
-                                               panelCritRate=r.get('panelCritRate'))
+                    from .direct_score import direct_score
+                    results[tuple(ids)] = dict(ids=ids, panelCritRate=r.get('panelCritRate'), **direct_score(inputs, r))
                 else:
                     results[tuple(ids)] = dict(ids=ids,reason='沿用该职业的配装器排名',score=r['score'])
     if not results:

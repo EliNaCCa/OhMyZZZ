@@ -318,10 +318,16 @@ class ManagerInterface(BaseInterface):
         self.slots.resizeColumnsToContents()
         details = [profile['name']]
         if 'outputScore' in result:
-            details += [f"所选输出 {result['outputScore']:g}",f"候选最高 {result['bestOutput']:g}"]
+            details += [f"所选输出 {result.get('rawOutput', result['outputScore'])}", f"候选最高 {result.get('rawBestOutput', result['bestOutput'])}"]
+            if result.get('metric'):
+                details.append(f"实战{result['metric']} {result['metricValue']:g} · 暴伤 {result['critDamage']:g}% · 增伤 {result['damageBonus']:g}%")
+                if result['metric'] == '贯穿力':
+                    details.append(f"贯穿伤害加成 {result['sheerBonus']:g}%")
         for window in result.get('windows', []):
             principal = '（主）' if window['name']==result['mainWindow'] else ''
-            details.append(f"{window['name']}{principal} · 占比 {window['share']:.1%} · 实战暴击 {window['critRate']:g}% · 输出 {window['outputScore']:g}")
+            details.append(f"{window['name']}{principal} · 占比 {window['share']:.1%} · 实战暴击 {window['critRate']}% · 输出 {window.get('rawOutput', window['outputScore'])}")
+            if window.get('metric'):
+                details.append(f"{window['metric']} {window['metricValue']:g} · 暴伤 {window['critDamage']:g}% · 增伤 {window['damageBonus']:g}%")
         scope = result.get('search',{})
         if scope: details.append(f"初选 {scope['candidateBuilds']} 套")
         if self.report.get('configuration') != digest(self.cfg): details.append('配置已修改 · 上次计算结果')
