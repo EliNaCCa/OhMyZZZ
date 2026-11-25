@@ -15,6 +15,7 @@ jobs:
           python-version: '3.11'
       - run: python scripts/smoke.py
       - run: python scripts/group_priority_smoke.py
+      - run: python scripts/allocation_input_smoke.py
       - run: python scripts/scan_copies_smoke.py
       - run: python scripts/maintenance_smoke.py
       - run: python scripts/early_smoke.py

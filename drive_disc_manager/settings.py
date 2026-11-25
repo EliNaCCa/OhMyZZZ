@@ -23,6 +23,7 @@ class ManagerInterface(BaseInterface):
     probe_finished = Signal(object, str)
     equip_finished = Signal(str, str, str)
     rules_finished = Signal(object, str)
+    preview_finished = Signal(object, str)
 
     def __init__(self, ctx, parent=None):
         super().__init__('ohmyzzz_settings', APP_NAME, '', parent)
@@ -31,11 +32,16 @@ class ManagerInterface(BaseInterface):
         self.status = QLabel()
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        self.preview_job = None
+        self.preview_refresh_accounts = set()
+        self.preview_finished.connect(self.finish_preview, Qt.ConnectionType.QueuedConnection)
+        self.preview_note = QLabel(); self.preview_note.setWordWrap(True); self.preview_note.hide()
+        layout.addWidget(self.preview_note)
         self.tabs = tabs = QTabWidget(); layout.addWidget(tabs)
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'仓库预览')
         bar = QHBoxLayout(); box.addLayout(bar)
-        self.button(bar,'导入本账号扫描',self.load_inventory)
-        self.button(bar,'重新计算',self.calculate)
+        self.import_button = self.button(bar,'导入本账号扫描',self.load_inventory)
+        self.calculate_buttons = [self.button(bar,'重新计算',self.start_preview)]
         self.pin_button = self.button(bar,'始终保留 / 取消',self.pin)
         self.quota_button = self.button(bar,'同类备用数量',self.set_quota)
         self.probe_button = self.button(bar, '读一张盘', self.start_probe)
@@ -107,7 +113,7 @@ class ManagerInterface(BaseInterface):
         self.button(bar,'输出窗口',self.edit_windows)
         self.button(bar,'启用 / 停用',self.toggle_profile)
         self.button(bar,'设为出场 / 取消',self.set_field_profile)
-        self.button(bar,'重新计算',self.calculate)
+        self.calculate_buttons.append(self.button(bar,'重新计算',self.start_preview))
         self.teams = self.grid(['方案','同时出场组','输出容差','有效暴击','输出差距','选择依据'])
         self.teams.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         box.addWidget(self.teams)
@@ -176,9 +182,14 @@ class ManagerInterface(BaseInterface):
             self.tabs.setCurrentIndex(0)
         self.root = root
         self.sync_button.setEnabled(root not in self.rule_updates)
+        self.show_preview_job()
         self.maintenance_dir = root.parent / '_maintenance'
         self.show_maintenance()
         self.reload()
+        if self.preview_job is None and root in self.preview_refresh_accounts:
+            self.preview_refresh_accounts.discard(root)
+            if self.preview_stale:
+                self.start_preview(reuse_allocations=True)
         if self.conflicts:
             self.tabs.setCurrentIndex(1)
             self.rule_search.clear()
@@ -436,7 +447,7 @@ class ManagerInterface(BaseInterface):
         self.profile_menu.setEnabled(bool(selected) and not self.equip_busy)
         self.refresh_target_button.setEnabled(bool(selected.get('sourceId')) and not self.equip_busy)
         ready = not self.preview_stale and selected.get('enabled',True) and self.report.get('assignments',{}).get(selected.get('name'),{}).get('ids')
-        self.apply_button.setEnabled(bool(ready) and not self.equip_busy)
+        self.apply_button.setEnabled(bool(ready) and not self.equip_busy and self.preview_job is None)
         self.apply_button.setToolTip('查看本次要穿戴的盘' if ready else '用当前配置和完整库存计算所选配队后可用')
         self.fill(self.slots,[])
         self.fill(self.panel_stats,[])
@@ -603,7 +614,7 @@ class ManagerInterface(BaseInterface):
         from .manual_equip import confirmation, run_confirmed
         account, root = self.ctx.current_instance_idx, self.root
         index = self.teams.currentRow()
-        if self.equip_busy or not self.ctx.run_context.is_context_stop or str(account) != root.name:
+        if self.equip_busy or self.preview_job is not None or not self.ctx.run_context.is_context_stop or str(account) != root.name:
             raise ValueError('请在当前账号的一条龙空闲时应用配队')
         if not 0 <= index < len(self.cfg['profiles']):
             return
@@ -689,7 +700,7 @@ class ManagerInterface(BaseInterface):
             validate(cfg)
             save_config(self.root,cfg,self.config_hash)
             if key in ('rotateSpareLocks','protect15','protectNaturalCrit') and (self.root/'inventory.json').is_file():
-                self.calculate()
+                self.refresh_saved_preview()
                 return
             self.reload()
         except Exception as exc:
@@ -701,7 +712,7 @@ class ManagerInterface(BaseInterface):
         path,_=QFileDialog.getOpenFileName(self,'选择属于当前账号的 ZOD 扫描','','JSON (*.json)')
         if path:
             self.check_account(account)
-            self.calculate(import_path=path)
+            self.start_preview(import_path=path)
 
     def start_probe(self):
         from .disc_probe import probe
@@ -830,18 +841,91 @@ class ManagerInterface(BaseInterface):
             return
         self.edit_profile_fields(token, index, updated)
 
-    def calculate(self, *, import_path=None, reuse_allocations=False):
+    @staticmethod
+    def build_preview(account, wiki, import_path, reuse_allocations):
         from .maintenance import Deferred, exclusive
-        account = self.root
-        self.check_account(account)
         try:
             # The game worker holds this same lock from its fresh scan through marking/equip.
             with exclusive(account.parent/'_maintenance'):
                 if import_path is not None:
                     import_inventory(account,import_path)
-                preview(account,wiki_path(),refresh=False,reuse_allocations=reuse_allocations)
+                preview(account,wiki,refresh=False,reuse_allocations=reuse_allocations)
         except Deferred as exc:
             raise ValueError('插件任务或维护正在运行，请结束后再计算仓库预览。') from exc
+
+    def show_preview_job(self, error=''):
+        busy = self.preview_job is not None
+        for button in [self.import_button, *self.calculate_buttons]:
+            button.setEnabled(not busy)
+        message = error
+        if busy:
+            message = f'正在计算账号 {self.preview_job.name} 的仓库预览…'
+        self.preview_note.setText(message)
+        self.preview_note.setVisible(bool(message))
+
+    def start_preview(self, *, import_path=None, reuse_allocations=False):
+        account = self.root
+        self.check_account(account)
+        if self.preview_job is not None:
+            return
+        wiki = wiki_path()
+        self.preview_job = account
+        self.preview_refresh_accounts.discard(account)
+        self.show_preview_job()
+        self.apply_button.setEnabled(False)
+
+        def worker():
+            error = ''
+            try:
+                self.build_preview(account, wiki, import_path, reuse_allocations)
+            except Exception as exc:
+                error = str(exc) or type(exc).__name__
+            try:
+                self.preview_finished.emit(account, error)
+            except RuntimeError:
+                pass  # OneDragon closed the settings page during calculation.
+
+        Thread(target=worker, name='OhMyZZZ preview', daemon=True).start()
+
+    def finish_preview(self, account, error):
+        if self.preview_job != account:
+            return
+        self.preview_job = None
+        if self.root.name != str(self.ctx.current_instance_idx):
+            self.on_interface_shown()
+        current = self.root == account
+        self.show_preview_job('仓库预览计算失败 · '+error if current and error else '')
+        if current:
+            index = self.teams.currentRow()
+            profiles = self.cfg['profiles']
+            name = profiles[index]['name'] if 0 <= index < len(profiles) else None
+            self.reload()
+            if name:
+                self.refresh_teams(name)
+        else:
+            self.show_build()
+        if self.root in self.preview_refresh_accounts:
+            self.preview_refresh_accounts.discard(self.root)
+            if self.preview_stale and not (current and error):
+                self.start_preview(reuse_allocations=True)
+
+    def refresh_saved_preview(self):
+        # A rules, role or protection edit can reuse allocations for identical team inputs.
+        self.reload()
+        if self.preview_job is None:
+            self.start_preview(reuse_allocations=True)
+        else:
+            self.preview_refresh_accounts.add(self.root)
+
+    def calculate(self, *, import_path=None, reuse_allocations=False):
+        account = self.root
+        self.check_account(account)
+        if self.preview_job is not None:
+            self.preview_refresh_accounts.add(account)
+            self.reload()
+            return
+        try:
+            self.build_preview(account, wiki_path(), import_path, reuse_allocations)
         finally:
             self.reload()
 
@@ -870,7 +954,10 @@ class ManagerInterface(BaseInterface):
             self.reload()
             raise
         if (account/'inventory.json').is_file():
-            self.calculate(reuse_allocations=reuse_allocations)
+            if reuse_allocations:
+                self.calculate(reuse_allocations=True)
+            else:
+                self.refresh_saved_preview()
         else:
             self.reload()
 
@@ -1002,7 +1089,7 @@ class ManagerInterface(BaseInterface):
         match = next((i for i,item in enumerate(self.rows) if item['fp']==r['fp'] and item['id']==r.get('id')),None)
         if match is not None and not self.table.isRowHidden(match): self.table.selectRow(match)
         after = self.coverage.get(tuple(selectors.values()))
-        if before and after:
+        if before and after and self.preview_job is None and not self.preview_stale:
             change = f"调整前 {before['kept']} 张 → 调整后 {after['kept']} 张"
             self.reserve_info.setText(change+'　｜　'+self.reserve_info.text())
             return change
@@ -1057,11 +1144,12 @@ class ManagerInterface(BaseInterface):
             return
         self.sync_button.setEnabled(True)
         if error:
-            self.status.setText('订阅更新失败，沿用最近成功版本 · '+error)
+            fallback = '沿用最近成功版本' if self.rules.get('fields') else '尚无可用规则快照'
+            self.status.setText(f'订阅更新失败，{fallback} · {error}')
             return
         try:
             if (root/'inventory.json').is_file():
-                self.calculate()
+                self.refresh_saved_preview()
             else:
                 self.reload()
             if self.conflicts:
@@ -1114,7 +1202,7 @@ class ManagerInterface(BaseInterface):
         finally:
             self.reload()
         if (account/'inventory.json').is_file():
-            self.calculate()
+            self.refresh_saved_preview()
 
     def rule_row(self, key):
         parts = key.split('/')
@@ -1189,4 +1277,4 @@ class ManagerInterface(BaseInterface):
             resolve_conflict(self.root,key,conflict,action)
         finally:
             self.reload()
-        if (self.root/'inventory.json').is_file(): self.calculate()
+        if (self.root/'inventory.json').is_file(): self.refresh_saved_preview()

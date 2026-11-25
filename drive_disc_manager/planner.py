@@ -148,6 +148,13 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
             row['explanation'].append('锁定来源 · OhMyZZZ 备用名额')
         if 'observedValues' in d and not row['observedValues']:
             row['review'].append('本次扫描未核实完整的主副词条数值')
+        if enabled and not row['marked'] and d['rarity'] == 'S' and fp in inputs and inputs[fp] is None:
+            if d['setKey'] not in optimizer_names:
+                row['review'].append('配装器缺少套装译名 · '+d['setKey'])
+            elif d.get('mainStatValue') is None and d['level'] < 15 and not values:
+                row['review'].append('配装器缺少主属性数值，请重新扫描')
+            else:
+                row['review'].append('主副词条无法用于配装搜索')
         if d.get('markState')=='unknown':
             row['review'].append('现场弃置状态待核')
         if d.get('lockState')=='unknown':

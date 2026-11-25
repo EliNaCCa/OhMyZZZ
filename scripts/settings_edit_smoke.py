@@ -288,6 +288,48 @@ def smoke(home, tmp):
         widget.edit_rule()
     accepted = config(account)['overrides'][sub_key]
     assert accepted['mode'] == 'only' and set(accepted['values']) == {'crit_', 'atk_'}
+
+    # Hold a one-disc preview open while the settings page receives normal Qt input.
+    # A rule edit during the first calculation must be reflected by the last published preview.
+    from drive_disc_manager.store import read
+    from drive_disc_manager.service import preview as actual_preview, rule_snapshot
+    cfg = dict(config(account), profiles=[], fieldProfile='', reserve=0)
+    save(account/'config.json', cfg)
+    d = dict(id='demo',setKey='SwingJazz',slotKey='5',mainStatKey='atk_',level=0,rarity='S',
+             substats=[dict(key=k,upgrades=0) for k in ('crit_','hp','pen')])
+    save(account/'inventory.json', dict(old_inventory, discs=[d], audit=dict(game_total=1,exported=1,delta=0)))
+    widget.reload()
+    started, proceed = Event(), Event()
+    def delay_first(root, wiki, refresh, reuse_allocations):
+        snap = rule_snapshot(root, refresh=False)
+        if not started.is_set():
+            started.set()
+            assert proceed.wait(5)
+        return actual_preview(root, wiki, snapshot=snap, reuse_allocations=reuse_allocations)
+    def finish_preview():
+        proceed.set()
+        deadline = monotonic()+5
+        while widget.preview_job is not None and monotonic() < deadline:
+            app.processEvents()
+            sleep(.005)
+        assert widget.preview_job is None and all(b.isEnabled() for b in widget.calculate_buttons)
+    with patch('drive_disc_manager.settings.preview', side_effect=delay_first) as worker:
+        widget.calculate_buttons[0].click()
+        assert started.wait(1) and not widget.import_button.isEnabled()
+        widget.calculate_buttons[1].click()
+        widget.rule_search.setText('Ellen 副词条')
+        widget.edit_cfg(reserve=1)
+        finish_preview()
+        assert worker.call_count == 2 and not widget.preview_stale
+        assert read(account/'preview.json')['configuration'] == digest(config(account))
+    started.clear(); proceed.clear()
+    with patch('drive_disc_manager.settings.preview', side_effect=delay_first) as worker:
+        widget.calculate_buttons[1].click()
+        assert started.wait(1)
+        context.current_instance_idx = 2
+        widget.on_interface_shown()
+        finish_preview()
+        assert worker.call_count == 1 and widget.report == {} and not (tmp/'2/preview.json').exists()
     widget.close()
 
 
