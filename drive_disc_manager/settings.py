@@ -76,6 +76,7 @@ class ManagerDialog(QDialog):
         for key,title in [('run_scanner','运行时重新扫描'),('afterEarly','早场刷后运行'),('applyMarkers','锁定保留盘并标记弃置')]:
             toggle = QCheckBox(title); self.flags[key] = toggle; flags.addWidget(toggle)
             toggle.clicked.connect(lambda checked,k=key:self.set_flag(k,checked))
+        self.early_info = QLabel(); self.early_info.setWordWrap(True); box.addWidget(self.early_info)
         protections = QHBoxLayout(); box.addLayout(protections)
         for key, title in [('protect15','保留 +15 盘'),('protectNaturalCrit','保留原生四词条双暴盘')]:
             toggle = QCheckBox(title); self.flags[key] = toggle; protections.addWidget(toggle)
@@ -214,6 +215,12 @@ class ManagerDialog(QDialog):
         note = 'OhMyZZZ 按规则标记。拆解由一条龙独立任务按品级和「全选已弃置」设置执行。'
         if needs_review(salvage): note += '　上批确认结果待核。'
         self.salvage_info.setText(note)
+        early = read(self.root/'early-result.json', {})
+        labels = {'COMPLETED':'完成', 'daily':'由日常列表管理', 'running':'开始后尚无完成回执',
+                  'FAILED':'失败', 'STOPPED':'已停止', 'NOT_STARTED':'未启动'}
+        status = early.get('status', '')
+        parts = [early.get('date'), labels.get(status, status), early.get('reason')]
+        self.early_info.setText('最近早场 · ' + (' · '.join(filter(None, parts)) or '暂无记录'))
         field = self.cfg.get('fieldProfile')
         receipt = read(self.root/'equip-result.json', {})
         parts = [f'下次运行出场方案 · {field}' if field else '只计算配装']
