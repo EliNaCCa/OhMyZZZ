@@ -72,9 +72,11 @@ class ManagerDialog(QDialog):
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'运行设置')
         flags = QHBoxLayout(); box.addLayout(flags)
         self.flags = {}
-        for key,title in [('run_scanner','运行时重新扫描'),('afterEarly','早场刷后运行'),('applyMarkers','标记后按游戏当前弃置拆解')]:
+        for key,title in [('run_scanner','运行时重新扫描'),('afterEarly','早场刷后运行'),('applyMarkers','锁定保留盘并标记弃置')]:
             toggle = QCheckBox(title); self.flags[key] = toggle; flags.addWidget(toggle)
             toggle.clicked.connect(lambda checked,k=key:self.set_flag(k,checked))
+        self.salvage_info = QLabel(); self.salvage_info.setWordWrap(True); box.addWidget(self.salvage_info)
+        self.button(box,'查看拆解记录',self.show_salvage)
         self.editor = QPlainTextEdit(); box.addWidget(self.editor)
         self.button(box,'保存配置',self.save_text)
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'版本维护')
@@ -101,6 +103,34 @@ class ManagerDialog(QDialog):
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.horizontalHeader().setStretchLastSection(True)
         return table
+
+    def show_salvage(self):
+        from .salvage_audit import close_reviewed, needs_review
+        last = read(self.root/'dismantle-result.json', {})
+        possible = read(self.root/'dismantle-preview.json', {})
+        dialog = QDialog(self); dialog.setWindowTitle('拆解记录'); dialog.resize(760, 420)
+        box = QVBoxLayout(dialog)
+        tabs = QTabWidget(); box.addWidget(tabs)
+        for title, data in [('标记后的范围估算', possible), ('上批拆解对账', last)]:
+            page = QWidget(); layout = QVBoxLayout(page); tabs.addTab(page, title)
+            if not data:
+                layout.addWidget(QLabel('本账号暂无记录')); continue
+            text = data.get('resolution') or ('等待本账号新扫描对账' if data is last else '待选范围估算，未提交拆解')
+            if data is possible:
+                text += f"　·　品级未读清 {data['unresolvedGrades']} 张"
+            note = QLabel(text); note.setWordWrap(True); layout.addWidget(note)
+            grid = self.grid(['套装','号位','主属性','等级','纳入原因','实物核对']); layout.addWidget(grid)
+            self.fill(grid, [(e['set'],e['slot'],e['main'],e['level'],e['source'],
+                              e.get('after') or ('重复属性待核' if e['beforeMultiplicity'] != 1 else '—'))
+                             for e in data.get('entries', [])])
+        if needs_review(last):
+            tabs.setCurrentIndex(1)
+            if last.get('afterInventory'):
+                def acknowledge():
+                    close_reviewed(self.root, last['batch'], last['afterInventory'])
+                    dialog.accept(); self.reload()
+                self.button(box,'已在游戏核对，结束这批记录',acknowledge)
+        dialog.exec()
 
     def set_updates(self, enabled):
         from .update_prompt import set_startup
@@ -174,6 +204,11 @@ class ManagerDialog(QDialog):
         self.status.setText(f"上次预览 {self.report.get('counts',{})}　待处理规则冲突 {len(conflicts)}　"+' / '.join(self.report.get('issues',[])+self.report.get('warnings',[])))
         self.refresh_teams()
         self.refresh_roster()
+        from .salvage_audit import needs_review
+        salvage = read(self.root/'dismantle-result.json', {})
+        note = 'OhMyZZZ 按规则标记。拆解由一条龙独立任务按品级和「全选已弃置」设置执行。'
+        if needs_review(salvage): note += '　上批确认结果待核。'
+        self.salvage_info.setText(note)
         field = self.cfg.get('fieldProfile')
         receipt = read(self.root/'equip-result.json', {})
         parts = [f'下次运行出场方案 · {field}' if field else '只计算配装']

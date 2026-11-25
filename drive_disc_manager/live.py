@@ -13,7 +13,7 @@ from one_dragon.utils import os_utils, cv2_utils
 from inventory_scan.warehouse_nav import goto_drive_warehouse
 from .store import digest, fingerprint, read, save, config
 from .marks import mark_action
-from .scan_marks import mark_hint
+from .scan_marks import mark_hint, observed_grade
 
 
 def marker_conflict(home, account, group):
@@ -81,13 +81,15 @@ class Marker:
         if not items or any(i['confidence']<0.85 for i in items):
             return None
         texts = ''.join(item['text'] for item in items).replace(' ','')
-        slot = re.search(r'[【\[]([1-6])[】\]]',texts)
-        level = re.search(r'(?:等级|Lv[.])([0-9]+)/15',texts,re.I)
-        if not slot or not level or '主属性' not in texts and 'MainStat' not in texts:
+        slot = re.search(r'\[([1-6])\]',texts.replace('【','[').replace('】',']'))
+        level = re.search(r'(?:等级|Lv[.]?)([0-9]{1,2})/(?:9|12|15)(?![0-9])',texts,re.I)
+        rank = observed_grade(items)
+        if not slot or not level or rank is None or ('主属性' not in texts and 'MainStat' not in texts):
             return None
         disc = self.parser.parse_ocr_result(items,part)
         if not disc or str(disc['slotKey'])!=slot[1] or disc['level']!=int(level[1]):
             return None
+        disc['rarity'] = rank
         fp = fingerprint(disc)
         if fp not in self.rows or self.seen_counts[fp]!=1:
             return None

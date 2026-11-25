@@ -45,7 +45,11 @@ with TemporaryDirectory() as tmp:
     report=plan(z,limited,rules,{})
     batch=prepare_batch(z,report,{},'A及以下')
     assert [r['source'] for r in batch['entries']]==['游戏原有弃置']
-    record(root,batch)
+    assert batch['status']=='not_submitted'
+    # A v0.1.9 execution that stopped near confirmation must be reconciled first.
+    record(root,dict(batch,status='pending'))
+    reconcile(root,z)
+    assert read(root/'dismantle-result.json')['status']=='needs_review'
     after=dict(z,discs=z['discs'][1:],audit=dict(game_total=1,exported=1,delta=0))
     reconcile(root,after)
     assert read(root/'dismantle-result.json')['observations']=={'已不在库存':1}

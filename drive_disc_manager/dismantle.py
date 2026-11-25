@@ -1,10 +1,9 @@
-"""Delegate to the account's enabled native dismantler, with its existing grade policy."""
-import time
+"""Preview the scope of the account's independently enabled native dismantler."""
 from pathlib import Path
 import yaml
 from one_dragon.utils import os_utils
-from .store import config, digest, read
-from .salvage_audit import prepare_batch, record
+from .store import config, digest, read, save
+from .salvage_audit import needs_review, prepare_batch, SCOPE_UNAVAILABLE
 
 
 def configured_dismantler(app):
@@ -31,16 +30,12 @@ def handoff(app, report, observed):
     if digest(config(app.root)) != report['configuration']:
         raise ValueError('拆解前配置已变化，需按新配置重新预览')
     previous = read(app.root/'dismantle-result.json', {})
-    if previous.get('status') in ('pending','native_completed'):
-        raise ValueError('上一批需要用本账号的新扫描对账')
+    if needs_review(previous):
+        return '已标记，上批确认结果待核。请查看运行设置的拆解记录。'
     receipt = prepare_batch(read(app.root/'inventory.json'),report,observed,native.config.dismantle_level)
-    if receipt['unresolvedGrades']:
-        return '已标记，低品级拆解范围未读全，等待下一次扫描'
-    if not receipt['entries']:
+    # Native selection exposes button matches only. Its failure edges can still
+    # proceed to confirm. Keep the independent host task out of this invocation.
+    save(app.root/'dismantle-preview.json', receipt)
+    if not receipt['entries'] and not receipt['unresolvedGrades']:
         return '当前无弃置或符合品级条件的盘'
-    record(app.root,receipt)
-    result = native.execute()
-    if not result.success:
-        raise ValueError('内置拆解未完成，下次按游戏现状重新扫描')
-    record(app.root,dict(receipt,finished=time.time(),status='native_completed',result=result.status))
-    return '内置拆解已返回，下一次扫描核对本批明细'
+    return SCOPE_UNAVAILABLE

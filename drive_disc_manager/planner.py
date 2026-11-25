@@ -60,7 +60,10 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     for row in rows:
         key = 'matrix/'+row['set']+'/'+row['slot']
         if row['marked']:
-            row.update(decision='已弃置',reasons=['游戏已标记弃置'],review=[])
+            if counts[row['fp']] > 1:
+                row.update(decision='待复核',reasons=['游戏已标记弃置，实物属性重复'])
+            else:
+                row.update(decision='已弃置',reasons=['游戏已标记弃置'],review=[])
             continue
         main = row['main']
         fixed = {'1':'hp','2':'atk','3':'def'}.get(row['slot']) == main
