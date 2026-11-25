@@ -187,10 +187,15 @@ def download(directory, version, release):
     return retain(directory,tmp,version)
 
 
-def require_idle(home):
+def require_idle(home, gui_pid=None):
     import psutil
+    ignored = {os.getpid()}
+    if gui_pid == os.getpid():
+        parent = psutil.Process().parent()
+        if parent and Path(parent.exe()).parent == home/'.venv'/'Scripts' and parent.cmdline()[1:] == ['-m', 'zzz_od.gui.app']:
+            ignored.add(parent.pid)
     for proc in psutil.process_iter(['pid','name','exe','cmdline']):
-        if proc.pid == os.getpid():
+        if proc.pid in ignored:
             continue
         info = proc.info
         name = (info['name'] or '').lower()

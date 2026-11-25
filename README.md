@@ -58,7 +58,7 @@
 
 ## 来源与维护
 
-一条龙启动时会提示 OhMyZZZ 的新版本。选择「退出后更新」即可在关闭一条龙后安装。可在 **OhMyZZZ → 版本维护** 关闭启动提示、手动检查更新或回退上一版。[启动提示与回退](docs/configuration.md#启动提示与回退)
+一条龙启动时会提示 OhMyZZZ 的新版本。空闲时点「立即更新」即可在当前窗口加载新版，也可选择「退出后更新」。在 **OhMyZZZ → 版本维护** 可以关闭启动提示、手动检查更新或回退上一版。[启动提示与回退](docs/configuration.md#启动提示与回退)
 
 - 套装与主词条推荐来自清理表，角色倾向来自攻略表。同步失败时沿用最近一次成功的规则快照。[清理表](https://docs.google.com/spreadsheets/d/1ZIZa4zg0zkkPIP2TrHQaMw9XzjJLvO2iOpUAyREDFwY/edit?gid=133245023) · [角色攻略](https://docs.google.com/spreadsheets/d/e/2PACX-1vTj2PaPq6Py_1B5fsOPj_Moc-tN_7mut7fICczI6lz1njyEIAInTnfB7lAraX4pYCRGNbaHGlIbFZ90/pubhtml)
 - OhMyZZZ 基于 idk500 的清理插件开发，保留 GPL-3.0 许可。GitHub Actions 检查上游变更、提交同步 PR，并为发布版本生成 ZIP 和 SHA-256。[上游项目](https://github.com/idk500/zzzod-plugin-disc-cleanup) · [许可证](LICENSE) · [发布记录](https://github.com/EliNaCCa/OhMyZZZ/releases)

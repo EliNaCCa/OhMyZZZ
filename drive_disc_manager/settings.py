@@ -17,6 +17,7 @@ class ManagerDialog(QDialog):
     @classmethod
     def show_flyout(cls,ctx,group_id,target,parent):
         dialog = cls(ctx.get_plugin_data_dir(APP_ID)/str(ctx.current_instance_idx), parent)
+        dialog.ctx = ctx
         dialog.exec()
 
     def __init__(self,root,parent=None):
@@ -100,7 +101,9 @@ class ManagerDialog(QDialog):
         app = QApplication.instance()
         prompt = getattr(app,'_ohmyzzz_prompt',None)
         if prompt is None:
-            prompt = app._ohmyzzz_prompt = UpdatePrompt(app,self.root.parents[2],None)
+            prompt = app._ohmyzzz_prompt = UpdatePrompt(app,self.root.parents[2],getattr(self,'ctx',None))
+        elif prompt.ctx is None:
+            prompt.ctx = getattr(self,'ctx',None)
         prompt.check(self,manual=True)
 
     def queue_maintenance(self, action):
