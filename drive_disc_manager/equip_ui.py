@@ -203,6 +203,13 @@ class EquipUI:
         if confirm:
             if not any(term in body for term in ('驱动盘','驱动光盘')) or not any(term in body for term in ('替换','装备','穿戴')):
                 raise ValueError('待确认弹窗内容与换装不符')
+            donor = target.get('location','')
+            mentions = {label for label in self.names.values() if label and label in body}
+            # Some character names contain another character's entire name.
+            mentions = {label for label in mentions if not any(label != other and label in other for other in mentions)}
+            allowed = {self.names.get(key) for key in (donor, target['agent'])}
+            if mentions - allowed:
+                raise ValueError('换装提示中的装备者与本轮配队不符，请重新计算')
             checkpoint()
             self.click(confirm)
         # The next inspect re-enters the agent and reads the exact slot.

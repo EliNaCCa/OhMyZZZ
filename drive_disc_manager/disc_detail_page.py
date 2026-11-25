@@ -47,6 +47,7 @@ class DiscDetails(QWidget):
     back = Signal()
     rule = Signal(str)
     team = Signal(str)
+    edit_policy = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -54,6 +55,10 @@ class DiscDetails(QWidget):
         bar = QHBoxLayout(); outer.addLayout(bar)
         close = QPushButton('返回仓库'); bar.addWidget(close); close.clicked.connect(self.back.emit)
         self.title = label(); bar.addWidget(self.title, 1)
+        self.pin = QPushButton(); bar.addWidget(self.pin)
+        self.quota = QPushButton('同类备用数量'); bar.addWidget(self.quota)
+        self.pin.clicked.connect(lambda: self.edit_policy.emit('pin'))
+        self.quota.clicked.connect(lambda: self.edit_policy.emit('quota'))
         self.stats = label(); outer.addWidget(self.stats)
         self.tabs = QTabWidget(); outer.addWidget(self.tabs)
         page = QWidget(); box = QVBoxLayout(page); self.tabs.addTab(page,'规则来源')
@@ -72,7 +77,7 @@ class DiscDetails(QWidget):
         self.summary = QPlainTextEdit(); self.summary.setReadOnly(True); self.tabs.addTab(self.summary,'判定明细')
         self.version = label(); outer.addWidget(self.version)
 
-    def present(self, row, report, *, set_name, coverage, rule_keys, team_names, probe=False, stale=False):
+    def present(self, row, report, *, set_name, coverage, rule_keys, team_names, probe=False, stale=False, pinned=False):
         self.book = report.get('traceRules', {})
         self.uses = row.get('ruleUses', [])
         self.empty_hint = ('旧预览中没有逐字段来源，可返回仓库重新计算。' if 'traceRules' not in report else
@@ -80,7 +85,12 @@ class DiscDetails(QWidget):
         self.rule_keys, self.team_names = set(rule_keys), set(team_names)
         title = f"{set_name} · {row['slot']} 号位 +{row['level']}　{row['decision']}"
         self.title.setText(title)
-        self.stats.setText(display_values(row.get('observedValues')))
+        self.pin.setText('取消个人保护' if pinned else '始终保留这张')
+        self.pin.setEnabled(not row['marked'])
+        self.pin.setToolTip('按实物属性保护；完全相同的盘会一同保留。')
+        from .disc_owner import owner_label
+        owner = '　穿戴 · '+owner_label(row) if row.get('ownerState') or row.get('location') else ''
+        self.stats.setText(display_values(row.get('observedValues'))+owner)
         # Keep recommendation evidence distinct from the final quota decision.
         summary = []
         reasons = row['reasons']

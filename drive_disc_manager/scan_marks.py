@@ -20,9 +20,11 @@ class MarkReader:
 
     def parse_ocr_result(self, items, image):
         # The host's spelling dictionary mutates its input. Preserve raw value tokens.
-        result = self.parser.parse_ocr_result([dict(i) for i in items], image)
+        result = self.parser.parse_ocr_result([dict(i) for i in items], None)
         if result is None:
             return None
+        from .disc_owner import read_owner
+        result['ownerState'], result['location'] = read_owner(image, getattr(self.parser, 'icon_matcher', None))
         mark, lock = read_controls(self.ocr, self.footer)
         result.update(markState=mark, trash=mark == 'marked', lockState=lock, lock=lock == 'locked')
         result['observedGrade'] = observed_grade(items)

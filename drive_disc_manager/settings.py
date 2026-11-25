@@ -11,6 +11,7 @@ from .manager_app import wiki_path
 from .drive_disc_manager_const import APP_ID, APP_NAME
 from .reserve_policy import DEFAULT_STATS, matching_rules, SELECTORS
 from .roster import roster_catalog
+from .disc_owner import owner_label
 
 
 def pretty(value):
@@ -130,6 +131,7 @@ class ManagerInterface(BaseInterface):
         self.detail.back.connect(lambda:tabs.setCurrentIndex(0))
         self.detail.rule.connect(self.open_detail_rule)
         self.detail.team.connect(self.open_detail_team)
+        self.detail.edit_policy.connect(self.edit_detail_policy)
         tabs.currentChanged.connect(lambda index:tabs.setTabVisible(self.detail_tab,False) if index!=self.detail_tab else None)
 
     def on_interface_shown(self):
@@ -361,7 +363,7 @@ class ManagerInterface(BaseInterface):
             self.team_score.setText(result.get('error') or '启用并重新计算后可查看六个号位。'); return
         by_fp = {r['fp']:r for r in self.rows}
         rows = [by_fp[fp] for fp in result['ids'] if fp in by_fp]
-        self.fill(self.slots,[(r['slot'],r['set'],r['main'],r['level'],r.get('location') or '背包',
+        self.fill(self.slots,[(r['slot'],r['set'],r['main'],r['level'],owner_label(r),
                                '、'.join(r['reasons'])) for r in rows])
         self.slots.resizeColumnsToContents()
         details = [profile['name']]
@@ -471,7 +473,7 @@ class ManagerInterface(BaseInterface):
         agents = {p['name']:p.get('request',{}).get('characterName') for p in self.cfg['profiles']}
         table = self.grid(['方案','目标角色','号位','套装','主副词条','上次扫描装备者'])
         self.fill(table,[(t['profile'], agents.get(t['profile']) or t['agent'], t['slot'], sets.get(t['set'],t['set']),
-                          display_values(t['observedValues']), t['location'] or '背包 / 未识别') for t in targets])
+                          display_values(t['observedValues']), owner_label(t)) for t in targets])
         table.resizeColumnsToContents(); panel.addWidget(table)
         note = QLabel('请先进入游戏大世界。确认后会重新扫描驱动盘，按清单换装并复读各个号位。目标变化时会返回预览。')
         note.setWordWrap(True); panel.addWidget(note)
@@ -656,7 +658,7 @@ class ManagerInterface(BaseInterface):
         fp=self.rows[index]['fp']; pins=set(self.cfg['pins'])
         self.cfg['pins']=sorted(pins^{fp}); self.edit_cfg()
 
-    def open_disc_detail(self):
+    def open_disc_detail(self, *, probe=None):
         from .disc_trace import probe_trace
         from .store import equipment_names
         if self.root.name != str(self.ctx.current_instance_idx):
@@ -665,16 +667,49 @@ class ManagerInterface(BaseInterface):
         report = self.report
         wiki = read(wiki_path(), {})
         names = equipment_names(wiki) | self.cfg.get('aliases', {})
-        probe = not 0 <= idx < len(self.rows)
+        if probe is None:
+            probe = not 0 <= idx < len(self.rows)
         if probe:
             row, report = probe_trace(self.probe_record,self.cfg,self.rules,wiki,read(self.root/'owned-agents.json', []))
         else:
             row = self.rows[idx]
-        self.detail.present(row, report, set_name=names.get(row['set'],row['set']), probe=probe,
+        self.detail_selection = (self.root, row, probe)
+        self.detail.present(row, report, set_name=names.get(row['set'],row['set']), probe=probe, pinned=row['fp'] in self.cfg['pins'],
                             coverage=None if probe or row['marked'] else self.coverage.get(tuple(row[k] for k in SELECTORS)),
                             rule_keys=self.keys, team_names=[p['name'] for p in self.cfg['profiles']],
                             stale=not probe and (report.get('rules')!=self.rules.get('version') or report.get('configuration')!=self.config_hash))
+        if probe:
+            criteria = {key:row[key] for key in SELECTORS}
+            limits, _ = matching_rules(criteria, self.cfg)
+            quotas = '、'.join(purpose+' '+('不限' if count is None else f'{count} 张')
+                               for purpose, (_, count, _) in limits.items())
+            self.detail.spares.setText('当前同类名额　'+quotas+'　｜　'+self.detail.spares.text())
         self.tabs.setTabVisible(self.detail_tab,True); self.tabs.setCurrentIndex(self.detail_tab)
+
+    def edit_detail_policy(self, action):
+        try:
+            root, row, probe = self.detail_selection
+            if root != self.root or root.name != str(self.ctx.current_instance_idx):
+                self.on_interface_shown(); return
+            tab = self.detail.tabs.currentIndex()
+            if action == 'pin':
+                if row['marked']: return
+                self.cfg['pins'] = sorted(set(self.cfg['pins']) ^ {row['fp']})
+                self.edit_cfg()
+                change = ''
+            else:
+                change = self.set_quota(row)
+                if change is None: return
+            if not probe:
+                match = next((i for i, d in enumerate(self.rows) if d['id'] == row['id'] and d['fp'] == row['fp']), None)
+                if match is None: return
+                self.table.selectRow(match)
+            self.open_disc_detail(probe=probe)
+            self.detail.tabs.setCurrentIndex(1 if change else tab)
+            if change:
+                self.detail.spares.setText(change+'　｜　'+self.detail.spares.text())
+        except Exception as exc:
+            QMessageBox.warning(self,APP_NAME,str(exc))
 
     def open_detail_rule(self, key):
         if self.root.name != str(self.ctx.current_instance_idx):
@@ -719,10 +754,11 @@ class ManagerInterface(BaseInterface):
         clear_unlock_exception(self.root, self.rows[index], self.report['inventory'], names)
         self.calculate()
 
-    def set_quota(self):
-        index=self.table.currentRow()
-        if index<0: return
-        r=self.rows[index]
+    def set_quota(self, r=None):
+        if r is None:
+            index=self.table.currentRow()
+            if index<0: return
+            r=self.rows[index]
         selectors = {k:r[k] for k in SELECTORS}
         limits, trim = matching_rules(selectors,self.cfg)
         options = list(dict.fromkeys([*limits,'偏暴击','偏暴伤']))
@@ -747,7 +783,10 @@ class ManagerInterface(BaseInterface):
         if match is not None: self.table.selectRow(match)
         after = self.coverage.get(tuple(selectors.values()))
         if before and after:
-            self.reserve_info.setText(f"调整前 {before['kept']} 张 → 调整后 {after['kept']} 张　｜　"+self.reserve_info.text())
+            change = f"调整前 {before['kept']} 张 → 调整后 {after['kept']} 张"
+            self.reserve_info.setText(change+'　｜　'+self.reserve_info.text())
+            return change
+        return purpose+' · 同类额外保留 '+('不限' if count < 0 else f'{count} 张')
 
     def update_rules(self):
         sync(self.root)

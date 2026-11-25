@@ -64,7 +64,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     by_set, unresolved, excluded = compile_roster(catalog, fields, cfg['overrides'])
     by_fp = {fingerprint(d):d for d in ds}
     inputs = {fp:as_disc(d,optimizer_names,base) for fp,d in by_fp.items()
-              if counts[fp] == 1 and not d.get('trash') and d.get('markState')!='unknown'}
+              if counts[fp] == 1 and not d.get('trash') and d.get('markState')!='unknown' and d.get('ownerState') != 'unknown'}
     enabled = [p for p in cfg['profiles'] if p.get('enabled',True)]
     assignments, groups, issues = {}, defaultdict(list), []
     used_by = defaultdict(list)
@@ -113,6 +113,10 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         row = dict(fp=fp, id=d['id'], set=set_key(d), slot=str(d['slotKey']), main=d['mainStatKey'],
                    level=d['level'], location=d.get('location',''), rolls={s['key']:1+s['upgrades']-base for s in d['substats']}, reasons=why, recommendations=[], explanation=[], review=[], ruleUses=[])
         row['marked'] = d.get('trash') is True
+        if 'ownerState' in d:
+            row['ownerState'] = d['ownerState']
+            if d['ownerState'] == 'unknown':
+                row['review'].append('穿戴者头像待复核')
         row['observedValues'] = values
         row['scannedLock'] = d.get('lockState', 'unknown')
         row['managedSpareLock'] = managed

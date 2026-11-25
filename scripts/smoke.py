@@ -155,4 +155,30 @@ with TemporaryDirectory() as tmp:
     except ValueError as exc:
         assert '重新应用' in str(exc)
     else: raise AssertionError('changed donor was accepted')
+
+    class BorrowDisc(SimulatedEquipment):
+        def __init__(self, owner):
+            super().__init__()
+            self.owner = owner
+            self.reads = []
+        def inspect(self, target):
+            self.reads.append((target['agent'], target['slot']))
+            if target['fp'] == ids[0]:
+                return 'equipped' if target['agent'] == self.owner else 'available'
+            return super().inspect(target)
+        def equip(self, target, checkpoint):
+            checkpoint()
+            assert target['location'] == self.owner
+            self.owner = target['agent']
+            self.clicks += 1
+
+    stale = BorrowDisc('DifferentOwner')
+    try:
+        apply_loadout(root, cfg, report, snapshot, stale)
+    except ValueError as exc:
+        assert '借盘方案' in str(exc) and stale.clicks == 0
+    else: raise AssertionError('Unverified donor was used')
+    confirmed = BorrowDisc('ChangedOwner')
+    assert apply_loadout(root, cfg, report, snapshot, confirmed)['verified'] == ids
+    assert confirmed.reads[:3] == [('Ellen',1), ('ChangedOwner',1), ('Ellen',1)] and confirmed.clicks == 1
 print('smoke OK: two discs, one reserve, team preference')

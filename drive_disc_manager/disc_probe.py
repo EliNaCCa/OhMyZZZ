@@ -83,7 +83,7 @@ def read_selected(scanner, total, guard):
                 or not level or disc['level'] != int(level[1]) or not disc.get('observedValues')
                 or 'unknown' in (disc['markState'],disc['lockState'])):
             raise ValueError('当前盘的主副词条、锁定或弃置状态未读清')
-        reading = {k:disc[k] for k in ('setKey','slotKey','level','rarity','observedValues','markState','lockState')}
+        reading = {k:disc[k] for k in ('setKey','slotKey','level','rarity','observedValues','markState','lockState','ownerState','location')}
         reading['fingerprint'] = fingerprint(disc)
         guard()
         if first is not None:

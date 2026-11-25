@@ -29,6 +29,8 @@ def target_loadout(cfg, report, snapshot, name):
             if counts[fp] != 1 or fp in claimed:
                 raise ValueError('目标盘不唯一或同时出场的方案重盘')
             disc = by_fp[fp]
+            if disc.get('ownerState') == 'unknown':
+                raise ValueError(f'{agent} 的 {slot} 号盘穿戴者待复核，请重新扫描')
             if int(disc['slotKey']) != slot or disc.get('trash') or disc.get('markState') != 'unmarked':
                 raise ValueError('目标盘号位或弃置状态不适合换装')
             observed = checked_values(disc, roll_base(snapshot))
@@ -36,7 +38,8 @@ def target_loadout(cfg, report, snapshot, name):
                 raise ValueError(f'{agent} 的 {slot} 号盘缺少实测词条数值，请用 OhMyZZZ 重新扫描')
             claimed.add(fp)
             targets.append(dict(profile=profile['name'],agent=agent,slot=slot,fp=fp,
-                                location=disc.get('location',''),set=disc['setKey'],main=disc['mainStatKey'],
+                                location=disc.get('location',''),ownerState=disc.get('ownerState','legacy'),
+                                set=disc['setKey'],main=disc['mainStatKey'],
                                 observedValues=observed))
     return targets
 
@@ -53,6 +56,7 @@ def apply_loadout(root, cfg, report, snapshot, ui, *, name=None):
             raise ValueError('换装过程中配置已变化')
         ui.guard()
 
+    freed_slots = set()
     save(path, receipt)
     try:
         for target in targets:
@@ -63,14 +67,28 @@ def apply_loadout(root, cfg, report, snapshot, ui, *, name=None):
                 continue
             if state != 'available':
                 raise ValueError('当前盘的穿戴状态待核')
+            donor = target['location']
+            if donor == target['agent']:
+                raise ValueError('扫描时已穿戴的盘目前不在位，请重新计算')
+            if (donor, target['slot']) in freed_slots:
+                # An earlier verified action in this very plan displaced the donor's old disc.
+                donor = ''
+            if donor:
+                checkpoint()
+                if ui.inspect(dict(target, agent=donor)) != 'equipped':
+                    raise ValueError(f"{donor} 的 {target['slot']} 号位已变化，请重新计算借盘方案")
+                checkpoint()
+                if ui.inspect(target) != 'available':
+                    raise ValueError('返回目标角色后，驱动盘的穿戴状态已变化')
             checkpoint()
-            action = dict(agent=target['agent'],slot=target['slot'],fp=target['fp'],state='pending')
+            action = dict(agent=target['agent'],slot=target['slot'],fp=target['fp'],donor=donor,state='pending')
             receipt['actions'].append(action)
             save(path,receipt)
-            ui.equip(target, checkpoint)
+            ui.equip(dict(target, location=donor), checkpoint)
             if ui.inspect(target) != 'equipped':
                 raise ValueError(f"{target['agent']} 的 {target['slot']} 号盘换装后未能复读")
             action['state'] = 'observed'
+            freed_slots.add((target['agent'], target['slot']))
             save(path,receipt)
         # Re-open each slot after the last teammate has finished borrowing discs.
         for target in targets:

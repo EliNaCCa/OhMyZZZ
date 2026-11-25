@@ -97,6 +97,7 @@ def smoke(home):
             scanned = MarkReader(parser, ocr, frame[985:1070,1050:1920]).parse_ocr_result(items,part)
             assert scanned['observedValues'] == values and fingerprint(scanned) == fp and scanned['markState'] == state
             assert scanned['lockState'] == 'unlocked' and not scanned['lock']
+            assert scanned['ownerState'] == 'bag' and not scanned['location']
             candidate = as_disc(scanned, {scanned['setKey']:'谶羽之誓'}, roll_base=1)
             assert candidate['level'] == 3 and candidate['mainStat'] == dict(type='ATK_PERCENT', value=12)
             wrong_roll = [dict(i,text='24%') if i['text']=='2.4%' else i for i in items]

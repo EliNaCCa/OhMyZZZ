@@ -51,6 +51,8 @@ def probe_trace(record, cfg, rules, wiki, known_owned):
                level=disc['level'], main=next(iter(values['main'])), observedValues=values, rolls=rolls,
                reasons=reasons, recommendations=[], review=[], explanation=[], ruleUses=[],
                decision='单盘观察', marked=disc['markState']=='marked')
+    if 'ownerState' in disc:
+        row.update(ownerState=disc['ownerState'], location=disc.get('location', ''))
     if row['marked']:
         reasons.append('读取时游戏已标记弃置')
     else:

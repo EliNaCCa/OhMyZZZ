@@ -90,7 +90,7 @@ class Marker:
         rank = observed_grade(items)
         if not slot or not level or rank is None or ('主属性' not in texts and 'MainStat' not in texts):
             return None
-        disc = self.parser.parse_ocr_result([dict(i) for i in items],part)
+        disc = self.parser.parse_ocr_result([dict(i) for i in items],None)
         if not disc or str(disc['slotKey'])!=slot[1] or disc['level']!=int(level[1]):
             return None
         disc['rarity'] = rank
@@ -105,8 +105,13 @@ class Marker:
         icon_open = float(cv2.matchTemplate(open_icon,self.template,cv2.TM_CCOEFF_NORMED).max())>=0.90
         if (lock == 'unlocked') != icon_open:
             lock = 'unknown'
-        equipped = bool(disc.get('location')) or self.parser.icon_matcher.is_region_colorful(part,54,54,85,85)
-        return fp, lock, mark, equipped
+        from .disc_owner import read_owner
+        state, owner = read_owner(part, self.parser.icon_matcher)
+        planned = self.rows[fp]
+        if state == 'unknown' or ('ownerState' in planned and
+                (state, owner) != (planned['ownerState'], planned.get('location', ''))):
+            return None
+        return fp, lock, mark, state == 'worn'
 
     def remember(self,fp,state,intended=None,spare=False):
         entry = dict(state=state,intended=intended,inventory=self.report['inventory'],time=time.time())
