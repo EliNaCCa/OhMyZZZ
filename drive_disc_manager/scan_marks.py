@@ -12,10 +12,11 @@ def observed_grade(items):
 
 
 class MarkReader:
-    def __init__(self, parser, ocr, footer):
+    def __init__(self, parser, ocr, footer, cell=None):
         self.parser = parser
         self.ocr = ocr
         self.footer = footer
+        self.cell = cell
 
     def parse_ocr_result(self, items, image):
         # The host's spelling dictionary mutates its input. Preserve raw value tokens.
@@ -29,6 +30,8 @@ class MarkReader:
             result['rarity'] = result['observedGrade']
         from .stat_reading import measure
         result['observedValues'] = measure(items, result, self.parser) if result['observedGrade'] else None
+        if self.cell is not None:
+            result['scanCell'] = self.cell
         return result
 
 
@@ -56,25 +59,45 @@ def capture_marks(scanner):
     grid = scanner.drive_disk_scanner
     worker = scanner.ocr_worker
     save_image, submit = grid._save_screenshot, worker.submit
+    cache = scanner.screenshot_cache
+    unique = cache.save_unique
+    witnessed = set()
     pending = local()
 
     def capture(row, col, image):
+        from .scan_copies import selected_column
+        column = selected_column(image, grid.grid_rows[row][col])
+        pending.cell = (grid.scroll_rounds, column) if column is not None else None
         pending.footer = image[985:1070,1050:1920].copy()
         try:
             return save_image(row, col, image)
         finally:
             pending.footer = None
+            pending.cell = None
+
+    def sample(kind, image):
+        idx, duplicate = unique(kind, image)
+        cell = getattr(pending, 'cell', None)
+        if kind == 'drive_disk' and cell is not None:
+            key = (idx, cell)
+            if duplicate and key not in witnessed:
+                # Same detail pixels, independently selected physical column. Read its own footer.
+                enqueue('disc', image, grid.parser)
+            witnessed.add(key)
+        return idx, duplicate
 
     def enqueue(kind, image, parser):
         footer = getattr(pending, 'footer', None)
         if kind == 'disc' and footer is not None:
-            parser = MarkReader(parser, scanner.ctx.ocr, footer)
+            parser = MarkReader(parser, scanner.ctx.ocr, footer, pending.cell)
         return submit(kind, image, parser)
 
     grid._save_screenshot = capture
     worker.submit = enqueue
+    cache.save_unique = sample
     try:
         yield
     finally:
         grid._save_screenshot = save_image
         worker.submit = submit
+        cache.save_unique = unique

@@ -82,7 +82,7 @@ class ManagerApp(ZApplication):
                 fresh = [p for p in exports.glob('inventory_*.json') if before.get(p)!=p.stat().st_mtime_ns]
                 if len(fresh)!=1:
                     return self.round_fail('本轮扫描文件无法唯一识别')
-                import_inventory(self.root,fresh[0])
+                import_inventory(self.root,fresh[0],readings=scanner.ocr_worker.scanned_discs)
                 from .marks import reconcile_scan
                 from .salvage_audit import reconcile
                 snapshot = read(self.root/'inventory.json')

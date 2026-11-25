@@ -91,7 +91,9 @@ def inventory(z):
     audit = z.get('audit') or {}
     if audit.get('partial') or any(type(audit.get(k)) is not int or audit[k] != v
                                    for k, v in [('game_total',len(ds)),('exported',len(ds)),('delta',0)]):
-        raise ValueError('库存不完整或缺少游戏内数量核对，请重新扫描')
+        total = audit.get('game_total')
+        detail = f'（游戏内 {total}，导出 {len(ds)}）' if type(total) is int else ''
+        raise ValueError('库存不完整或缺少游戏内数量核对'+detail+'，请重新扫描')
     ids = set()
     for d in ds:
         if not isinstance(d,dict) or not all(isinstance(d.get(k),str) and d[k] for k in ('id','setKey','mainStatKey','rarity')):
@@ -119,11 +121,14 @@ def config(root):
     return {**defaults(), **read(root / 'config.json', {})}
 
 
-def import_inventory(root, path):
+def import_inventory(root, path, *, readings=None):
     path = Path(path)
     if 'partial' in path.name.lower():
         raise ValueError('部分扫描文件')
     z = read(path)
+    if readings is not None:
+        from .scan_copies import with_copies
+        z = with_copies(z, readings)
     inventory(z)
     # An account keeps unlocked agents. A later disc-only export has an empty
     # characters array and should not retire agents seen in earlier full scans.

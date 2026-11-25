@@ -128,6 +128,8 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         if d.get('lockState')=='unknown':
             row['review'].append('现场锁定状态待核')
         row['ambiguous'] = counts[fp] > 1
+        if row['ambiguous'] and 'scanCell' in d:
+            row['explanation'].append(f'本轮有 {counts[fp]} 张同属性实物盘，整组跳过换装和标记')
         if row['ambiguous'] or d.get('setKey')=='Unknown' or d['rarity']!='S' or not 3<=len(row['rolls'])<=4:
             row['review'].append('身份、品级或副词条待核')
         unknown = [stat for stat in row['rolls'] if stat not in STATS or STATS[stat][1] is None]
