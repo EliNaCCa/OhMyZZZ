@@ -49,6 +49,7 @@ class Marker:
         self.rows = {row['fp']:row for row in report['discs']}
         self.seen_counts = Counter(row['fp'] for row in report['discs'])
         self.history = read(self.root/'markers.json', {})
+        self.observed = {}
         asset = Path(__file__).parent/'assets'/'lock_open.png'
         import numpy as np
         self.template = cv2.imdecode(np.frombuffer(asset.read_bytes(),np.uint8),cv2.IMREAD_GRAYSCALE)
@@ -120,6 +121,7 @@ class Marker:
                     detail = self.detail()
                     if not detail: continue
                     fp,unlocked,mark,equipped = detail
+                    self.observed[fp] = mark
                     if fp not in seen:
                         seen.add(fp); new+=1
                     history = self.history.get(fp,{}).get('state')
@@ -156,6 +158,7 @@ class Marker:
                     expected = bool(check and check[0]==fp and (check[2]=='marked' if mode=='mark' else self.locked_hint()))
                     if not expected:
                         raise ValueError('标记结果未能复读，先对账')
+                    self.observed[fp] = check[2]
                     self.remember(fp,'marked' if mode=='mark' else ('manual-keep' if action=='manual-keep' else 'locked'))
                     todo.pop(fp)
                     if not todo: return
@@ -184,3 +187,4 @@ class Marker:
             why = goto_drive_warehouse(self.app,self.app.round_by_goto_screen)
             if why: raise ValueError(why)
             self.apply(phase)
+        return self.observed

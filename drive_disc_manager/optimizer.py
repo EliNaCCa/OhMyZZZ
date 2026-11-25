@@ -97,6 +97,9 @@ def number(v):
     return n
 
 
+NEAR_CRIT_GAP = Decimal('2.4')
+
+
 def prefer(candidates, tolerance_pct, current):
     candidates = tuple(candidates)
     tol = number(tolerance_pct)/100
@@ -107,19 +110,24 @@ def prefer(candidates, tolerance_pct, current):
     best = max(candidates, key=key)
     if key(best)[0] <= 0:
         raise ValueError('缺少正的预期输出')
-    full = [c for c in candidates if number(c['critRate']) >= 100]
-    cap = max(full,key=key) if full else None
+    # outputScore already includes the optimizer's capped crit expectation.
+    # A rate within one roll of 100 qualifies; it still deals its real damage.
+    near = [c for c in candidates if number(c['critRate']) >= 100 - NEAR_CRIT_GAP]
+    cap = max(near,key=key) if near else None
     chosen = cap if cap and key(cap)[0] >= key(best)[0]*(1-tol) else best
     if cap is None:
-        reason = '候选均未满暴，选最高输出'
+        reason = '候选暴击率均低于 97.6%，选最高输出'
     elif chosen is cap and key(chosen)[0] == key(best)[0]:
-        reason = '满暴且输出最高'
+        reason = '实战暴击达 97.6%，且输出最高'
     elif chosen is cap:
-        reason = '满暴方案的输出差距在容差内'
+        reason = '实战暴击达 97.6%，输出差距在容差内'
     else:
-        reason = '满暴方案超出容差，选最高输出'
+        reason = '近满暴方案超出输出容差，选最高输出'
+    full = [c for c in near if number(c['critRate']) >= 100]
     return dict(chosen, bestOutput=best['outputScore'], relativeLossPct=float(100*(1-key(chosen)[0]/key(best)[0])),
-                reason=reason, bestFullOutput=cap['outputScore'] if cap else None)
+                reason=reason, effectiveCritRate=float(min(100,number(chosen['critRate']))),
+                bestNearFullOutput=cap['outputScore'] if cap else None,
+                bestFullOutput=max(full,key=key)['outputScore'] if full else None)
 
 
 class NoBuildCandidates(ValueError):

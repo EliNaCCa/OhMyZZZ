@@ -28,9 +28,36 @@ with TemporaryDirectory() as tmp:
     z['discs'][0]['trash']=True
     save(src,z); import_inventory(root,src)
     assert preview(root)['counts']=={'保留':1,'已弃置':1}
-    cases=[dict(ids=['a'],critRate=98,outputScore=100),dict(ids=['b'],critRate=100,outputScore=99.5)]
+    # Same two discs: a recommended main stat can be capped, and an old mark
+    # remains part of the live batch even when the disc ranks as a spare.
+    from drive_disc_manager.planner import plan
+    from drive_disc_manager.salvage_audit import prepare_batch, record, reconcile
+    from drive_disc_manager.store import read
+    from drive_disc_manager.scan_marks import observed_grade
+    z['discs'][0].update(trash=False,markState='unmarked',observedGrade='S')
+    z['discs'][1].update(markState='unmarked',observedGrade='S')
+    rules={'fields':{key:['def_'],key+'/known':['def_']},'version':'smoke'}
+    assert plan(z,cfg,rules,{})['counts']=={'保留':2}
+    limited=dict(cfg,trimRecommended=True)
+    report=plan(z,limited,rules,{})
+    assert report['counts']=={'保留':1,'弃置候选':1} and report['reserveCoverage'][0]['kept']==1
+    z['discs'][0].update(trash=True,markState='marked')
+    report=plan(z,limited,rules,{})
+    batch=prepare_batch(z,report,{},'A及以下')
+    assert [r['source'] for r in batch['entries']]==['游戏原有弃置']
+    record(root,batch)
+    after=dict(z,discs=z['discs'][1:],audit=dict(game_total=1,exported=1,delta=0))
+    reconcile(root,after)
+    assert read(root/'dismantle-result.json')['observations']=={'已不在库存':1}
+    assert not prepare_batch(after,plan(after,limited,rules,{}),{},'A及以下')['entries']
+    assert observed_grade([dict(text='等级0/15',confidence=0.95)])=='S'
+    cases=[dict(ids=['a'],critRate=97.59,outputScore=100),dict(ids=['b'],critRate=97.6,outputScore=99.5)]
     assert prefer(cases,0.5,set())['ids']==['b']
     assert prefer(cases,0,set())['ids']==['a']
+    overflow=dict(ids=['c'],critRate=104.8,outputScore=100.01)
+    selected=prefer(cases+[overflow],0.5,set())
+    assert selected['ids']==['c'] and selected['effectiveCritRate']==100
+    assert prefer([dict(cases[0],critRate=98),cases[1]],0.5,set())['ids']==['a']
     from drive_disc_manager.allocation import assign_group
     members = [(dict(name='主C'),set()),(dict(name='队友'),set())]
     options = {'主C':[dict(ids=['1','2','3','4','5','6'],critRate=100,outputScore=100),

@@ -32,10 +32,10 @@ class ManagerApp(ZApplication):
                 if not scanner.config.scan_drive_disk:
                     return self.round_fail('请在仓库扫描器中启用驱动盘')
                 # Suppress the scanner's optional browser launch for this invocation only.
-                scanner._open_export = lambda path: None
-                from .scan_marks import attach
-                attach(scanner)
-                result = scanner.execute()
+                from unittest.mock import patch
+                from .scan_marks import capture_marks
+                with capture_marks(scanner), patch.object(scanner,'_open_export',lambda path: None):
+                    result = scanner.execute()
                 if not result.success or self.ctx.current_instance_idx != self.account:
                     return self.round_fail('本轮扫描中断，请核对账号及库存')
                 fresh = [p for p in exports.glob('inventory_*.json') if before.get(p)!=p.stat().st_mtime_ns]
@@ -43,7 +43,10 @@ class ManagerApp(ZApplication):
                     return self.round_fail('本轮扫描文件无法唯一识别')
                 import_inventory(self.root,fresh[0])
                 from .marks import reconcile_scan
-                reconcile_scan(self.root, read(self.root/'inventory.json'))
+                from .salvage_audit import reconcile
+                snapshot = read(self.root/'inventory.json')
+                reconcile(self.root,snapshot)
+                reconcile_scan(self.root,snapshot)
             report = preview(self.root,wiki_path())
             if report['issues']:
                 return self.round_fail('配装待复核 · '+' / '.join(report['issues']))
@@ -51,9 +54,9 @@ class ManagerApp(ZApplication):
                 if scanner is None:
                     return self.round_fail('请开启本轮重新扫描后再标记')
                 from .live import Marker
-                Marker(self,scanner,report).run()
+                observed = Marker(self,scanner,report).run()
                 from .dismantle import handoff
-                return self.round_success(handoff(self,report))
+                return self.round_success(handoff(self,report,observed))
             return self.round_success('预览 · '+str(report['counts']))
         except (KeyError,ValueError,OSError,TypeError) as exc:
             return self.round_fail(str(exc))

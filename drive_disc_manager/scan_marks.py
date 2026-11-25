@@ -1,4 +1,16 @@
 """Bind the footer from each stable warehouse screenshot to its own OCR job."""
+import re
+from contextlib import contextmanager
+
+
+def observed_grade(items):
+    # The host parser defaults rarity to S. Use an explicit enhancement cap instead.
+    text = ''.join(str(i.get('text','')) for i in items if i.get('confidence',0) >= 0.85).replace(' ','')
+    caps = re.findall(r'(?:等级|Lv[.]?)(?:[0-9]{1,2})/(9|12|15)(?![0-9])', text, re.I)
+    if len(set(caps)) == 1:
+        return {'9':'B','12':'A','15':'S'}[caps[0]]
+
+
 class MarkReader:
     def __init__(self, parser, ocr, footer):
         self.parser = parser
@@ -12,6 +24,9 @@ class MarkReader:
         state = mark_hint(self.ocr, self.footer)
         result['markState'] = state
         result['trash'] = state == 'marked'
+        result['observedGrade'] = observed_grade(items)
+        if result['observedGrade']:
+            result['rarity'] = result['observedGrade']
         return result
 
 
@@ -24,7 +39,8 @@ def mark_hint(ocr, footer):
     return 'unknown'
 
 
-def attach(scanner):
+@contextmanager
+def capture_marks(scanner):
     from threading import local
     grid = scanner.drive_disk_scanner
     worker = scanner.ocr_worker
@@ -46,3 +62,8 @@ def attach(scanner):
 
     grid._save_screenshot = capture
     worker.submit = enqueue
+    try:
+        yield
+    finally:
+        grid._save_screenshot = save_image
+        worker.submit = submit
