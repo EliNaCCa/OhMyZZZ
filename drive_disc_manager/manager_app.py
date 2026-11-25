@@ -57,7 +57,10 @@ class ManagerApp(ZApplication):
                 from .salvage_audit import reconcile
                 snapshot = read(self.root/'inventory.json')
                 reconcile(self.root,snapshot)
-                reconcile_scan(self.root,snapshot)
+                from .store import equipment_names
+                names = equipment_names(read(wiki_path(), {}))
+                names.update(cfg.get('aliases', {}))
+                reconcile_scan(self.root, snapshot, names)
             report = preview(self.root,wiki_path(),snapshot=pinned)
             if report['issues']:
                 return self.round_fail('配装待复核 · '+' / '.join(report['issues']))

@@ -31,6 +31,8 @@ class ManagerInterface(BaseInterface):
         self.table = self.grid(['套装','号位','主属性','等级','建议','原因']); box.addWidget(self.table)
         self.stat_info = QLabel(); self.stat_info.setWordWrap(True); box.addWidget(self.stat_info)
         self.reserve_info = QLabel(); self.reserve_info.setWordWrap(True); box.addWidget(self.reserve_info)
+        self.restore_unlock = self.button(box, '取消这张盘的手动解锁保护', self.clear_unlock)
+        self.restore_unlock.hide()
         self.table.itemSelectionChanged.connect(self.show_reserve)
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'规则订阅')
         bar = QHBoxLayout(); box.addLayout(bar)
@@ -82,6 +84,10 @@ class ManagerInterface(BaseInterface):
         for key, title in [('protect15','保留 +15 盘'),('protectNaturalCrit','保留原生四词条双暴盘')]:
             toggle = QCheckBox(title); self.flags[key] = toggle; protections.addWidget(toggle)
             toggle.clicked.connect(lambda checked,k=key:self.set_flag(k,checked))
+        rotate = self.flags['rotateSpareLocks'] = QCheckBox('换代时解除插件的旧备用锁')
+        rotate.setToolTip('新保留盘锁定后，才可解除本插件为备用名额加的锁。手动锁和旧版来源不明的锁继续保留。')
+        rotate.clicked.connect(lambda checked:self.set_flag('rotateSpareLocks', checked))
+        box.addWidget(rotate)
         self.salvage_info = QLabel(); self.salvage_info.setWordWrap(True); box.addWidget(self.salvage_info)
         self.button(box,'查看拆解记录',self.show_salvage)
         self.editor = QPlainTextEdit(); box.addWidget(self.editor)
@@ -392,7 +398,11 @@ class ManagerInterface(BaseInterface):
             cfg.update(afterEarly=False,applyMarkers=False,fieldProfile='')
         from .validation import validate
         validate(cfg)
-        save_config(self.root,cfg,self.config_hash); self.reload()
+        save_config(self.root,cfg,self.config_hash)
+        if key == 'rotateSpareLocks' and (self.root/'inventory.json').is_file():
+            self.calculate()
+        else:
+            self.reload()
 
     def load_inventory(self):
         path,_=QFileDialog.getOpenFileName(self,'选择属于当前账号的 ZOD 扫描','','JSON (*.json)')
@@ -478,6 +488,7 @@ class ManagerInterface(BaseInterface):
     def show_reserve(self):
         index = self.table.currentRow()
         self.stat_info.clear()
+        self.restore_unlock.setVisible(0 <= index < len(self.rows) and bool(self.rows[index].get('manualUnlock')))
         self.reserve_info.setText('选择一张盘，可查看同类备用名额和各用途的实际张数。')
         if not 0 <= index < len(self.rows): return
         from .stat_reading import display_values
@@ -489,6 +500,18 @@ class ManagerInterface(BaseInterface):
             cap = '不限' if use['count'] is None else str(use['count'])
             parts.append(f"{use['purpose']} {use['covered']}/{cap}")
         self.reserve_info.setText(f"同类可选 {group['eligible']} 张，实际备用 {group['kept']} 张　｜　"+'　'.join(parts))
+
+    def clear_unlock(self):
+        from .marks import clear_unlock_exception
+        from .store import equipment_names
+        index = self.table.currentRow()
+        if not 0 <= index < len(self.rows): return
+        if self.ctx.current_instance_idx != int(self.root.name):
+            raise ValueError('当前账号已变化，请重新打开配置页')
+        names = equipment_names(read(wiki_path(), {}))
+        names.update(self.cfg.get('aliases', {}))
+        clear_unlock_exception(self.root, self.rows[index], self.report['inventory'], names)
+        self.calculate()
 
     def set_quota(self):
         index=self.table.currentRow()

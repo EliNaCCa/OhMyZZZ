@@ -1,5 +1,20 @@
 """Current game marks win over both batch history and automatic keep suggestions."""
 
+def owns_spare(entry, values):
+    receipt = entry.get('spareLock') if isinstance(entry, dict) else None
+    return bool(values and isinstance(receipt, dict) and entry.get('state') == 'locked' and
+                receipt.get('values') == values and receipt.get('origin') == 'verified-spare-lock-v1')
+
+
+def scanned_identities(discs, names):
+    from collections import Counter
+    from .store import equipment_keys, fingerprint
+    reverse = equipment_keys(names)
+    keys = {d['setKey']:d['setKey'] if d['setKey'] in names else reverse.get(d['setKey'].strip(), d['setKey']) for d in discs}
+    identities = Counter(fingerprint(dict(d, setKey=keys[d['setKey']])) for d in discs)
+    counts = {fingerprint(d):identities[fingerprint(dict(d, setKey=keys[d['setKey']]))] for d in discs}
+    return keys, counts
+
 def mark_action(live_state, previous, wants_trash):
     if live_state == 'marked':
         return 'already-discarded'
@@ -10,30 +25,74 @@ def mark_action(live_state, previous, wants_trash):
     return 'mark' if wants_trash else 'keep'
 
 
-def reconcile_scan(root, inventory):
-    from collections import Counter
-    from .store import fingerprint, read, save
+def reconcile_scan(root, inventory, names=None):
+    from .store import fingerprint, read, save, roll_base
+    from .stat_reading import checked_values
     import time
     history = read(root/'markers.json', {})
-    counts = Counter(fingerprint(d) for d in inventory['discs'])
+    _, counts = scanned_identities(inventory['discs'], names or {})
+    base = roll_base(inventory)
     now = time.time()
+    # A later lookalike cannot inherit an absent or ambiguous disc's automatic lock.
+    for fp, entry in history.items():
+        if 'spareLock' in entry and counts.get(fp) != 1:
+            entry.pop('spareLock')
     for disc in inventory['discs']:
         fp = fingerprint(disc)
         live = disc.get('markState', 'unknown')
+        entry = history.get(fp, {})
+        lock = disc.get('lockState')
+        clear_controls = (lock in ('locked','unlocked') and disc.get('lock') is (lock == 'locked')
+                          and live in ('marked','unmarked') and disc.get('trash') is (live == 'marked'))
+        if 'spareLock' in entry:
+            same = owns_spare(entry, checked_values(disc, base))
+            if not (same and clear_controls and lock == 'locked' and live == 'unmarked'):
+                entry.pop('spareLock')
+                if same and clear_controls and live == 'unmarked' and lock == 'unlocked':
+                    entry.update(state='manual-unlock', time=now, values=checked_values(disc, base))
         if counts[fp] != 1 or live == 'unknown':
             continue
-        previous = history.get(fp, {}).get('state')
-        if previous == 'pending':
-            expected = history[fp].get('intended')
-            if expected == 'mark':
-                previous = 'marked'
-            elif expected == 'lock':
-                # A fresh live lock check precedes any subsequent click.
-                history[fp] = dict(state='verify-lock',time=now)
+        previous = entry.get('state')
+        if previous in ('pending', 'released'):
+            values = checked_values(disc, base)
+            if not (values and clear_controls):
+                continue
+            if entry.get('values') != values:
+                # Old pending records lack numeric evidence. Retire to protection only.
+                if 'values' in entry or previous == 'released':
+                    continue
+                recovered = 'manual-unlock'
+            elif previous == 'released' or entry.get('intended') in ('release', 'lock'):
+                recovered = 'manual-unlock'
+            elif entry.get('intended') == 'mark':
+                recovered = 'manual-keep'
+            else:
+                continue
+            state = 'already-discarded' if live == 'marked' else recovered
+            history[fp] = dict(state=state, time=now, values=values)
+            continue
         action = mark_action(live, previous, False)
         if action in ('already-discarded','manual-keep') and action != previous:
             history[fp] = dict(state=action,time=now)
-        elif history.get(fp,{}).get('state')=='pending' and previous=='marked':
-            history[fp] = dict(state=action,time=now)
     save(root/'markers.json', history)
     return {fp for fp,entry in history.items() if entry['state']=='manual-keep'}
+
+
+def clear_unlock_exception(root, row, inventory_digest, names):
+    from .maintenance import exclusive
+    from .stat_reading import checked_values
+    from .store import digest, fingerprint, read, roll_base, save
+    with exclusive(root.parent/'_maintenance'):
+        snapshot = read(root/'inventory.json')
+        history = read(root/'markers.json', {})
+        fp = row['fp']
+        entry = history.get(fp, {})
+        _, counts = scanned_identities(snapshot['discs'], names)
+        if digest(snapshot) != inventory_digest or counts.get(fp) != 1:
+            raise ValueError('库存已变化或有重复盘，请重新计算')
+        disc = next(d for d in snapshot['discs'] if fingerprint(d) == fp)
+        values = checked_values(disc, roll_base(snapshot))
+        if not values or values != row.get('observedValues') or entry.get('state') != 'manual-unlock' or entry.get('values') != values:
+            raise ValueError('当前盘与手动解锁记录不一致，请重新扫描')
+        del history[fp]
+        save(root/'markers.json', history)

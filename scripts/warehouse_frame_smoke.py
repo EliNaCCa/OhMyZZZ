@@ -53,7 +53,7 @@ def smoke(home):
             frame = cv2.imdecode(np.frombuffer(path.read_bytes(), np.uint8), cv2.IMREAD_COLOR_RGB)
             frame = cv2.resize(frame,(1920,1080),interpolation=cv2.INTER_CUBIC)
             app.screenshot = lambda: frame
-            assert marker.detail() == (fp, True, state, False), name
+            assert marker.detail() == (fp, 'unlocked', state, False), name
             part = frame[267:768,1408:1838]
             items = [dict(text=text,confidence=m.confidence,position=(m.x,m.y,m.x+m.w,m.y+m.h))
                      for text,matches in ocr.run_ocr(part).items() for m in matches]

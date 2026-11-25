@@ -12,7 +12,7 @@ from one_dragon.base.geometry.rectangle import Rect
 from one_dragon.utils import os_utils, cv2_utils
 from inventory_scan.warehouse_nav import goto_drive_warehouse
 from .store import digest, fingerprint, read, save, config
-from .marks import mark_action
+from .marks import mark_action, owns_spare
 from .scan_marks import mark_hint, observed_grade, read_controls
 from .stat_reading import measure
 
@@ -51,6 +51,7 @@ class Marker:
         self.seen_counts = Counter(row['fp'] for row in report['discs'])
         self.history = read(self.root/'markers.json', {})
         self.observed = {}
+        self.released = set()
         asset = Path(__file__).parent/'assets'/'lock_open.png'
         import numpy as np
         self.template = cv2.imdecode(np.frombuffer(asset.read_bytes(),np.uint8),cv2.IMREAD_GRAYSCALE)
@@ -99,13 +100,79 @@ class Marker:
             return None
         open_icon = cv2.cvtColor(screen[806:854,1508:1552],cv2.COLOR_RGB2GRAY)
         mark, lock = read_controls(self.app.ctx.ocr, screen[985:1070,1050:1920])
-        unlocked = lock == 'unlocked' and float(cv2.matchTemplate(open_icon,self.template,cv2.TM_CCOEFF_NORMED).max())>=0.90
+        icon_open = float(cv2.matchTemplate(open_icon,self.template,cv2.TM_CCOEFF_NORMED).max())>=0.90
+        if (lock == 'unlocked') != icon_open:
+            lock = 'unknown'
         equipped = bool(disc.get('location')) or self.parser.icon_matcher.is_region_colorful(part,54,54,85,85)
-        return fp, unlocked, mark, equipped
+        return fp, lock, mark, equipped
 
-    def remember(self,fp,state,intended=None):
-        self.history[fp] = dict(state=state,intended=intended,inventory=self.report['inventory'],time=time.time())
+    def remember(self,fp,state,intended=None,spare=False):
+        entry = dict(state=state,intended=intended,inventory=self.report['inventory'],time=time.time())
+        if state in ('pending', 'released', 'manual-unlock'):
+            entry['values'] = self.rows[fp]['observedValues']
+        if spare:
+            entry['spareLock'] = dict(origin='verified-spare-lock-v1', values=self.rows[fp]['observedValues'])
+        self.history[fp] = entry
         save(self.root/'markers.json',self.history)
+
+    def change(self, mode, detail, state, spare=False):
+        fp, lock, mark, equipped = detail
+        if self.detail() != detail:
+            raise ValueError('点击前实物或状态已变化，请重新扫描')
+        if digest(config(self.root)) != self.report['configuration']:
+            raise ValueError('配置已变化，需重新预览')
+        self.remember(fp, 'pending', mode)
+        self.app.ctx.controller.click(Point(1447,833) if mode == 'mark' else Point(1530,830))
+        time.sleep(.55)
+        expected_lock = {'lock':'locked', 'release':'unlocked', 'mark':lock}[mode]
+        expected_mark = 'marked' if mode == 'mark' else mark
+        if self.detail() != (fp, expected_lock, expected_mark, equipped):
+            raise ValueError('操作结果未能复读，先对账')
+        self.observed[fp] = expected_mark
+        self.remember(fp, state, spare=spare)
+
+    def handle_disc(self, mode, detail, row):
+        fp, lock, mark, equipped = detail
+        entry = self.history.get(fp, {})
+        history = entry.get('state')
+        if history == 'pending':
+            raise ValueError('上次确认附近中断，需要现场对账')
+        action = mark_action(mark, history, mode == 'mark')
+        if action == 'already-discarded':
+            if history not in ('marked','already-discarded'):
+                self.remember(fp, 'already-discarded')
+            if mode == 'lock':
+                raise ValueError('计划保留的盘已被标记弃置，请重新扫描')
+            return True
+        if mark != 'unmarked' or lock not in ('locked', 'unlocked'):
+            return False
+        if action == 'manual-keep' and history != 'manual-keep':
+            self.remember(fp, 'manual-keep')
+        if mode == 'lock':
+            if lock == 'locked' or row.get('manualUnlock'):
+                return True
+            if row.get('scannedLock') == 'locked':
+                self.remember(fp, 'manual-unlock')
+                raise ValueError('扫描后发现保留盘被解锁，请重新计算')
+            spare = bool(row['reasons']) and all(r.startswith('备用 · ') for r in row['reasons'])
+            self.change(mode, detail, 'manual-keep' if action == 'manual-keep' else 'locked',
+                        spare=spare and not equipped and action != 'manual-keep' and row.get('scannedLock') == 'unlocked')
+        elif mode == 'release':
+            if (self.cfg.get('rotateSpareLocks') is not True or not row.get('managedSpareLock') or
+                    row['decision'] != '弃置候选' or row['review'] or row['reasons'] or
+                    not owns_spare(entry, row['observedValues']) or equipped or action == 'manual-keep'):
+                raise ValueError('换代条件已变化，请重新扫描')
+            if lock != 'locked':
+                self.remember(fp, 'manual-unlock')
+                raise ValueError('发现旧备用锁已被手动解除，请重新计算')
+            self.change(mode, detail, 'released')
+            self.released.add(fp)
+        elif action != 'manual-keep' and lock == 'unlocked' and not equipped and history != 'manual-unlock':
+            if row.get('managedSpareLock') and not (fp in self.released and history == 'released' and
+                                                    entry.get('inventory') == self.report['inventory']):
+                raise ValueError('旧备用锁缺少本轮解除记录')
+            self.change(mode, detail, 'marked')
+        return True
 
     def apply(self, mode):
         todo = {}
@@ -113,6 +180,7 @@ class Marker:
             if row['review'] or self.seen_counts[fp]!=1: continue
             if mode=='lock' and row['decision']=='保留': todo[fp]=row
             if mode=='mark' and row['decision']=='弃置候选': todo[fp]=row
+            if mode=='release' and row['decision']=='弃置候选' and row.get('managedSpareLock'): todo[fp]=row
         if not todo: return
         seen = set()
         for page in range(400):
@@ -127,65 +195,31 @@ class Marker:
                     self.grid._stable_screenshot()
                     detail = self.detail()
                     if not detail: continue
-                    fp,unlocked,mark,equipped = detail
+                    fp,_,mark,_ = detail
                     self.observed[fp] = mark
                     if fp not in seen:
                         seen.add(fp); new+=1
-                    history = self.history.get(fp,{}).get('state')
-                    action = mark_action(mark, history, fp in todo and mode=='mark')
-                    if action=='already-discarded':
-                        if history not in ('marked','already-discarded'):
-                            self.remember(fp,'already-discarded')
-                        todo.pop(fp,None)
-                        continue
-                    if action=='manual-keep' and history!='manual-keep':
-                        self.remember(fp,'manual-keep')
-                    if fp not in todo: continue
-                    if mark=='unknown': continue
-                    if mode=='lock':
-                        if not unlocked:
-                            # Absence of an open-lock image is not proof of a lock.
-                            # Rely only on explicit locked hint or verify via live control.
-                            if self.locked_hint(): todo.pop(fp)
-                            continue
-                        if mark!='unmarked': continue
-                        point = Point(1530,830)
-                    else:
-                        if action=='manual-keep' or equipped or not unlocked:
-                            todo.pop(fp); continue
-                        point = Point(1447,833)
-                    if history=='pending': raise ValueError('上次确认附近中断，需要现场对账')
-                    if self.detail()!=detail: continue
-                    if digest(config(self.root))!=self.report['configuration']:
-                        raise ValueError('配置已变化，需重新预览')
-                    self.remember(fp,'pending',mode)
-                    self.app.ctx.controller.click(point)
-                    time.sleep(0.55)
-                    check = self.detail()
-                    expected = bool(check and check[0]==fp and (check[2]=='marked' if mode=='mark' else self.locked_hint()))
-                    if not expected:
-                        raise ValueError('标记结果未能复读，先对账')
-                    self.observed[fp] = check[2]
-                    self.remember(fp,'marked' if mode=='mark' else ('manual-keep' if action=='manual-keep' else 'locked'))
-                    todo.pop(fp)
-                    if not todo: return
+                    if fp in todo and self.handle_disc(mode, detail, todo[fp]):
+                        del todo[fp]
+                        if not todo: return
             if not todo: return
             if not new and page: break
             self.app.ctx.controller.scroll(3,grid[-1][0]); time.sleep(.6)
         if todo:
             raise ValueError(f'{mode} 尚有 {len(todo)} 张未核实，保留现场记录')
 
-    def locked_hint(self):
-        screen=self.frame()
-        return read_controls(self.app.ctx.ocr, screen[985:1070,1050:1920])[1] == 'locked'
-
     def run(self):
         reason = marker_conflict(os_utils.get_work_dir(),self.app.account,self.app.group)
         if reason: raise ValueError(reason)
         if self.report['issues'] or not self.report['rules']: raise ValueError('配装或规则待复核')
-        if any(v.get('state')=='pending' for v in self.history.values()):
+        if any(v.get('state') in ('pending', 'released') for v in self.history.values()):
             raise ValueError('上次确认附近中断，需要现场对账')
-        for phase in ('lock','mark'):
+        phases = ['lock', 'mark']
+        if self.cfg.get('rotateSpareLocks') and any(row.get('managedSpareLock') and row['decision']=='弃置候选' for row in self.rows.values()):
+            if any(row['review'] and row['reasons'] for row in self.rows.values()):
+                raise ValueError('有待复核的保留盘，本轮暂缓备用换代')
+            phases.insert(1, 'release')
+        for phase in phases:
             # Re-enter the warehouse for each pass (the previous pass can leave a scrolled page).
             from zzz_od.operation.back_to_normal_world import BackToNormalWorld
             if not BackToNormalWorld(self.app.ctx).execute().success: raise ValueError('无法返回大世界')

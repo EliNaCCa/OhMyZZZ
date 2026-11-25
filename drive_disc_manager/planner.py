@@ -9,25 +9,25 @@ from .roster import compile_roster, explain, roster_catalog
 from .stat_reading import checked_values
 
 
-def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_owned=()):
+def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_owned=(),history=None):
     ds, _ = inventory(z)
+    from .marks import owns_spare, scanned_identities
+    history = history or {}
+    keys, counts = scanned_identities(ds, names)
     reverse = equipment_keys(names)
     def set_key(disc):
-        raw = disc['setKey']
-        return raw if raw in names else reverse.get(raw.strip(), raw)
+        return keys[disc['setKey']]
 
     # The scanner can export a Chinese title when its dictionary lacks a new set.
     # Keep the raw title in physical fingerprints, so pins and history stay attached.
     optimizer_names = {d['setKey']:names[set_key(d)] for d in ds if set_key(d) in names}
-    canonical_fps = {fingerprint(d):fingerprint(dict(d, setKey=set_key(d))) for d in ds}
-    identities = Counter(canonical_fps[fingerprint(d)] for d in ds)
     base = roll_base(z)
     fields = rules.get('fields',{})
     catalog = roster_catalog(z, fields, cfg, wiki or {}, known_owned)
     by_set, unresolved = compile_roster(catalog, fields, cfg['overrides'])
     by_fp = {fingerprint(d):d for d in ds}
     inputs = {fp:as_disc(d,optimizer_names,base) for fp,d in by_fp.items()
-              if identities[canonical_fps[fp]] == 1 and not d.get('trash') and d.get('markState')!='unknown'}
+              if counts[fp] == 1 and not d.get('trash') and d.get('markState')!='unknown'}
     enabled = [p for p in cfg['profiles'] if p.get('enabled',True)]
     assignments, groups, issues = {}, defaultdict(list), []
     used_by = defaultdict(list)
@@ -57,8 +57,15 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         why = list(used_by[fp])
         if d.get('location'):
             why.append('已装备 · '+d['location'])
-        if d.get('lock') is True:
-            why.append('游戏内已锁定')
+        values = checked_values(d, base)
+        entry = history.get(fp, {})
+        managed = (counts[fp] == 1 and owns_spare(entry, values) and d.get('lockState') == 'locked'
+                   and d.get('lock') is True and d.get('markState') == 'unmarked' and d.get('trash') is False)
+        if d.get('lock') is True and not (managed and cfg.get('rotateSpareLocks') is True):
+            why.append('插件备用锁' if managed else '游戏内已锁定')
+        manual_unlock = entry.get('state') == 'manual-unlock'
+        if manual_unlock:
+            why.append('手动解锁后保留')
         if fp in cfg['pins']:
             why.append('手动保护')
         if cfg['protect15'] and d['level']==15:
@@ -66,14 +73,21 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         row = dict(fp=fp, id=d['id'], set=set_key(d), slot=str(d['slotKey']), main=d['mainStatKey'],
                    level=d['level'], location=d.get('location',''), rolls={s['key']:1+s['upgrades']-base for s in d['substats']}, reasons=why, recommendations=[], explanation=[], review=[])
         row['marked'] = d.get('trash') is True
-        row['observedValues'] = checked_values(d, base)
+        row['observedValues'] = values
+        row['scannedLock'] = d.get('lockState', 'unknown')
+        row['managedSpareLock'] = managed
+        row['manualUnlock'] = manual_unlock
+        if entry.get('state') in ('released', 'pending'):
+            row['review'].append('上轮标记操作等待现场对账')
+        if managed:
+            row['explanation'].append('锁定来源 · OhMyZZZ 备用名额')
         if 'observedValues' in d and not row['observedValues']:
             row['review'].append('本次扫描未核实完整的主副词条数值')
         if d.get('markState')=='unknown':
             row['review'].append('现场弃置状态待核')
         if d.get('lockState')=='unknown':
             row['review'].append('现场锁定状态待核')
-        row['ambiguous'] = identities[canonical_fps[fp]] > 1
+        row['ambiguous'] = counts[fp] > 1
         if row['ambiguous'] or d.get('setKey')=='Unknown' or d['rarity']!='S' or not 3<=len(row['rolls'])<=4:
             row['review'].append('身份、品级或副词条待核')
         unknown = [stat for stat in row['rolls'] if stat not in STATS or STATS[stat][1] is None]
@@ -138,6 +152,8 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         if row['marked']:
             continue
         row['decision'] = '保留' if row['reasons'] else ('待复核' if row['review'] else '弃置候选')
+        if row['managedSpareLock'] and row['decision'] == '弃置候选':
+            row['explanation'].append('新保留盘锁定后，解除本插件的旧备用锁')
     return dict(inventory=digest(z), rules=rules.get('version'), configuration=digest(cfg), assignments=assignments,
                 issues=issues, roster=[a for a in catalog if a['selected']], reserveCoverage=coverage,
                 counts=dict(Counter(r['decision'] for r in rows)), discs=rows)

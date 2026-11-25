@@ -25,7 +25,8 @@ def preview(root, wiki=None, refresh=True, *, snapshot=None):
     dictionary = read(wiki) if wiki and Path(wiki).is_file() else {}
     names = equipment_names(dictionary)
     names.update(cfg.get('aliases',{}))
-    manual = [fp for fp, entry in read(root/'markers.json', {}).items() if entry.get('state')=='manual-keep']
+    history = read(root/'markers.json', {})
+    manual = [fp for fp, entry in history.items() if entry.get('state')=='manual-keep']
     from .optimizer import candidate_pool, NoBuildCandidates
     from .engine import managed
     with ExitStack() as stack:
@@ -38,7 +39,7 @@ def preview(root, wiki=None, refresh=True, *, snapshot=None):
                 endpoint = stack.enter_context(managed(root))
             return candidate_pool(endpoint, profile, discs, current)
         report = plan(z,dict(cfg,pins=sorted(set(cfg['pins'])|set(manual))),rules,names,candidates,
-                      wiki=dictionary, known_owned=read(root/'owned-agents.json', []))
+                      wiki=dictionary, known_owned=read(root/'owned-agents.json', []), history=history)
     report['configuration'] = digest(cfg)
     report.update(warnings=warnings,generated=time.time(), mode='preview')
     save(root/'preview.json',report)
