@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from unittest.mock import patch
 
 
 def smoke(home):
@@ -23,6 +24,8 @@ def smoke(home):
     from drive_disc_manager.optimizer import as_disc
     from drive_disc_manager.scan_marks import MarkReader
     from drive_disc_manager.stat_reading import measure
+    from drive_disc_manager.disc_probe import read_selected
+    from drive_disc_manager.warehouse import enter_warehouse
     from drive_disc_manager.store import defaults, equipment_names, fingerprint, read
 
     os_utils.set_work_dir(str(home))
@@ -54,6 +57,40 @@ def smoke(home):
             frame = cv2.resize(frame,(1920,1080),interpolation=cv2.INTER_CUBIC)
             app.screenshot = lambda: frame
             assert marker.detail() == (fp, 'unlocked', state, False), name
+            if name == 'mark_before':
+                scanner.ctx, scanner.screenshot = ctx, app.screenshot
+                total = enter_warehouse(scanner, lambda:None)
+                assert total == 319
+                probe = read_selected(scanner, total, lambda:None)
+                assert probe['fingerprint'] == fp and probe['observedValues'] == values
+                assert probe['lockState'] == 'unlocked' and probe['markState'] == 'unmarked'
+                # Exercise each UI transition without connecting to the game. The actual
+                # captured disc above separately covers the final screen and OCR reads.
+                from one_dragon.base.geometry.point import Point
+                from one_dragon.base.matcher.match_result import MatchResult
+                world, menu = '大世界-普通', '菜单'
+                pages = [world, menu, '音擎仓库', '驱动仓库']
+                route = []
+                def nav_click(point, **kwargs):
+                    index = len(route)
+                    assert (point.x,point.y) == [(120,70),(706,952),(1680,115)][index]
+                    assert bool(kwargs.get('pc_alt')) == (index == 0)
+                    route.append(pages[index]); return True
+                def nav_ocr(crop):
+                    page = pages[len(route)]
+                    text = ('驱动仓库319/2000' if page=='驱动仓库' else '音擎仓库' if page=='音擎仓库' else
+                            '仓库' if page==menu and crop.shape[0]==134 else '')
+                    return {text:[MatchResult(.99,500,20,12,16)]} if text else {}
+                menu_area = SimpleNamespace(center=Point(120,70), pc_alt=True, gamepad_key='menu')
+                bag_area = SimpleNamespace(rect=Rect(200,924,1728,1058))
+                nav_ctx = SimpleNamespace(ocr=SimpleNamespace(run_ocr=nav_ocr), controller=SimpleNamespace(click=nav_click),
+                    screen_loader=SimpleNamespace(get_area=lambda p,_:menu_area if p==world else bag_area))
+                nav_op = SimpleNamespace(ctx=nav_ctx, screenshot=lambda:frame)
+                match_page = lambda *a,screen_name: pages[len(route)] == screen_name
+                switch_tab = lambda op,*a,**k: op.ctx.controller.click(Point(1680,115))
+                with (patch('one_dragon.base.screen.screen_utils.is_target_screen', side_effect=match_page),
+                      patch('inventory_scan.warehouse_nav.click_warehouse_tab', side_effect=switch_tab)):
+                    assert enter_warehouse(nav_op, lambda:None) == 319 and route == pages[:-1]
             part = frame[267:768,1408:1838]
             items = [dict(text=text,confidence=m.confidence,position=(m.x,m.y,m.x+m.w,m.y+m.h))
                      for text,matches in ocr.run_ocr(part).items() for m in matches]

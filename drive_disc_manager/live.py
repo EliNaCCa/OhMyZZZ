@@ -10,7 +10,7 @@ import cv2
 from one_dragon.base.geometry.point import Point
 from one_dragon.base.geometry.rectangle import Rect
 from one_dragon.utils import os_utils, cv2_utils
-from inventory_scan.warehouse_nav import goto_drive_warehouse
+from .warehouse import enter_warehouse, warehouse_header
 from .store import digest, fingerprint, read, save, config
 from .marks import mark_action, owns_spare
 from .scan_marks import mark_hint, observed_grade, read_controls
@@ -58,17 +58,19 @@ class Marker:
         if self.template is None:
             raise ValueError('缺少开锁模板')
 
-    def frame(self):
+    def guard(self):
         if not self.app.ctx.run_context.is_context_running or self.app.ctx.current_instance_idx != self.app.account:
             raise ValueError('运行状态或账号已改变')
         if not self.app.ctx.controller.game_win.is_win_active:
             raise ValueError('游戏窗口已失去焦点')
+
+    def frame(self):
+        self.guard()
         screen = self.app.screenshot()
         if screen is None or screen.shape[:2]!=(1080,1920):
             raise ValueError('驱动仓库画面尺寸变化')
-        title = ''.join(self.app.ctx.ocr.run_ocr(screen[:200,:1250])).replace(' ','')
-        total = re.search(r'驱动仓库[^0-9]{0,10}([0-9]+)/[0-9]+',title)
-        if not total or int(total[1])!=len(self.report['discs']):
+        _, total = warehouse_header(self.app.ctx.ocr, screen)
+        if total != len(self.report['discs']):
             raise ValueError('当前驱动仓库数量与计划不匹配')
         return screen
 
@@ -224,7 +226,7 @@ class Marker:
             from zzz_od.operation.back_to_normal_world import BackToNormalWorld
             if not BackToNormalWorld(self.app.ctx).execute().success: raise ValueError('无法返回大世界')
             self.scanner._ensure_screen_areas()
-            why = goto_drive_warehouse(self.app,self.app.round_by_goto_screen)
-            if why: raise ValueError(why)
+            if enter_warehouse(self.app, self.guard) != len(self.report['discs']):
+                raise ValueError('当前驱动仓库数量与计划不匹配')
             self.apply(phase)
         return self.observed

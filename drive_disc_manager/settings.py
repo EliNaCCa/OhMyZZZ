@@ -1,4 +1,6 @@
 import json
+from threading import Thread
+from PySide6.QtCore import Signal, Qt
 from one_dragon_qt.widgets.base_interface import BaseInterface
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QTabWidget,QWidget,QLabel,QPushButton,
     QPlainTextEdit,QTableWidget,QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView,QCheckBox)
@@ -16,6 +18,8 @@ def pretty(value):
 
 
 class ManagerInterface(BaseInterface):
+    probe_finished = Signal(object, str)
+
     def __init__(self, ctx, parent=None):
         super().__init__('ohmyzzz_settings', APP_NAME, '', parent)
         self.ctx = ctx
@@ -28,6 +32,10 @@ class ManagerInterface(BaseInterface):
         bar = QHBoxLayout(); box.addLayout(bar)
         for title,callback in [('导入本账号扫描',self.load_inventory),('重新计算',self.calculate),('始终保留 / 取消',self.pin),('同类备用数量',self.set_quota)]:
             self.button(bar,title,callback)
+        self.probe_button = self.button(bar, '读一张盘', self.start_probe)
+        self.probe_button.setToolTip('进入已打开游戏的驱动仓库，复读当前盘的主副词条和标记。')
+        self.probe_note = QLabel(); self.probe_note.setWordWrap(True); box.addWidget(self.probe_note)
+        self.probe_finished.connect(self.finish_probe, Qt.ConnectionType.QueuedConnection)
         self.table = self.grid(['套装','号位','主属性','等级','建议','原因']); box.addWidget(self.table)
         self.stat_info = QLabel(); self.stat_info.setWordWrap(True); box.addWidget(self.stat_info)
         self.reserve_info = QLabel(); self.reserve_info.setWordWrap(True); box.addWidget(self.reserve_info)
@@ -213,6 +221,7 @@ class ManagerInterface(BaseInterface):
     def reload(self):
         self.cfg=config(self.root); self.rules=read(self.root/'rules.json',{}); self.report=read(self.root/'preview.json',{})
         self.config_hash = digest(self.cfg)
+        self.show_probe(read(self.root/'single-disc.json', {}))
         self.editor.setPlainText(pretty(self.cfg)); self.rows=self.report.get('discs',[])
         for key,toggle in self.flags.items(): toggle.setChecked(bool(self.cfg.get(key)))
         self.coverage = {tuple(group[k] for k in SELECTORS):group for group in self.report.get('reserveCoverage',[])}
@@ -408,6 +417,38 @@ class ManagerInterface(BaseInterface):
         path,_=QFileDialog.getOpenFileName(self,'选择属于当前账号的 ZOD 扫描','','JSON (*.json)')
         if path:
             import_inventory(self.root,path); self.calculate()
+
+    def start_probe(self):
+        from .disc_probe import probe
+        account, root = self.ctx.current_instance_idx, self.root
+        if int(root.name) != account or not self.ctx.run_context.is_context_stop:
+            raise ValueError('请在当前账号的一条龙空闲时读盘')
+        self.probe_button.setEnabled(False)
+        self.probe_note.setText('正在进入驱动仓库并复读当前盘…'); self.probe_note.show()
+        def worker():
+            try:
+                record = probe(self.ctx, root, account)
+            except Exception as exc:
+                record = dict(status='failed', error=str(exc))
+            self.probe_finished.emit(record, str(root))
+        Thread(target=worker, name='OhMyZZZ single disc', daemon=True).start()
+
+    def finish_probe(self, record, root):
+        self.probe_button.setEnabled(True)
+        if str(self.root) == root:
+            self.show_probe(record)
+
+    def show_probe(self, record):
+        from .stat_reading import display_values
+        text = record.get('error', '')
+        if record.get('status') == 'verified':
+            disc = record['disc']
+            lock = '已锁定' if disc['lockState']=='locked' else '未锁定'
+            mark = '已弃置' if disc['markState']=='marked' else '未弃置'
+            text = (f"{disc['setKey']}　{disc['slotKey']} 号位 +{disc['level']}　{lock} · {mark}　"
+                    + display_values(disc['observedValues']))
+        self.probe_note.setText(('上次单盘读取 · ' + text) if text else '')
+        self.probe_note.setVisible(bool(text))
 
     def configure_optimizer(self):
         from .optimizer import loopback_json
