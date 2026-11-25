@@ -1,4 +1,5 @@
 import time
+from contextlib import ExitStack
 from pathlib import Path
 from .planner import plan
 from .maintenance import Deferred
@@ -25,8 +26,19 @@ def preview(root, wiki=None, refresh=True, *, snapshot=None):
     names = equipment_names(dictionary)
     names.update(cfg.get('aliases',{}))
     manual = [fp for fp, entry in read(root/'markers.json', {}).items() if entry.get('state')=='manual-keep']
-    report = plan(z,dict(cfg,pins=sorted(set(cfg['pins'])|set(manual))),rules,names,wiki=dictionary,
-                  known_owned=read(root/'owned-agents.json', []))
+    from .optimizer import candidate_pool, NoBuildCandidates
+    from .engine import managed
+    with ExitStack() as stack:
+        endpoint = cfg['optimizer_url']
+        def candidates(url, profile, discs, current):
+            nonlocal endpoint
+            if not discs:
+                raise NoBuildCandidates('缺少适用的驱动盘')
+            if not endpoint:
+                endpoint = stack.enter_context(managed(root))
+            return candidate_pool(endpoint, profile, discs, current)
+        report = plan(z,dict(cfg,pins=sorted(set(cfg['pins'])|set(manual))),rules,names,candidates,
+                      wiki=dictionary, known_owned=read(root/'owned-agents.json', []))
     report['configuration'] = digest(cfg)
     report.update(warnings=warnings,generated=time.time(), mode='preview')
     save(root/'preview.json',report)

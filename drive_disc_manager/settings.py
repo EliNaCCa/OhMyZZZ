@@ -58,6 +58,10 @@ class ManagerDialog(QDialog):
         self.agent_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         box.addWidget(self.agent_table)
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'我的配队')
+        engine_bar = QHBoxLayout(); box.addLayout(engine_bar)
+        self.button(engine_bar,'打开配装器',self.open_optimizer)
+        self.engine_mode = QLabel(); engine_bar.addWidget(self.engine_mode); engine_bar.addStretch()
+        self.button(engine_bar,'连接设置',self.configure_optimizer)
         bar = QHBoxLayout(); box.addLayout(bar)
         self.button(bar,'从配装器保存为配队',self.import_profile)
         self.button(bar,'设置满暴容差',self.edit_tolerance)
@@ -216,6 +220,7 @@ class ManagerDialog(QDialog):
         self.select_rule()
         self.status.setText(f"上次预览 {self.report.get('counts',{})}　待处理规则冲突 {len(conflicts)}　"+' / '.join(self.report.get('issues',[])+self.report.get('warnings',[])))
         self.refresh_teams()
+        self.engine_mode.setText('手动连接 · '+self.cfg['optimizer_url'] if self.cfg['optimizer_url'] else '由 OhMyZZZ 按需启动')
         self.refresh_roster()
         from .salvage_audit import needs_review
         salvage = read(self.root/'dismantle-result.json', {})
@@ -386,11 +391,45 @@ class ManagerDialog(QDialog):
         if path:
             import_inventory(self.root,path); self.calculate()
 
+    def configure_optimizer(self):
+        from .optimizer import loopback_json
+        url, ok = QInputDialog.getText(self, '配装器连接', '留空使用 OhMyZZZ 托管，或填写自用配装器的本机 HTTP 地址', text=self.cfg['optimizer_url'])
+        if not ok:
+            return
+        url = url.strip()
+        if url:
+            state = loopback_json(url, '/api/state')
+            if not isinstance(state, dict) or not isinstance(state.get('setEffects'), list):
+                raise ValueError('该地址未返回配装器的套装数据')
+        self.cfg['optimizer_url'] = url
+        self.edit_cfg()
+
+    def optimizer_session(self):
+        from contextlib import nullcontext
+        from .engine import managed
+        return nullcontext(self.cfg['optimizer_url']) if self.cfg['optimizer_url'] else managed(self.root)
+
+    def open_optimizer(self):
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        from .engine import Endpoint
+        from .optimizer import loopback_json
+        with self.optimizer_session() as endpoint:
+            if isinstance(endpoint, Endpoint):
+                url = endpoint.url
+            else:
+                loopback_json(endpoint, '/api/state')
+                url = endpoint
+            if not QDesktopServices.openUrl(QUrl(url)):
+                raise ValueError('无法打开默认浏览器')
+            if isinstance(endpoint, Endpoint):
+                QMessageBox.information(self, '编辑配装器目标',
+                    '请在浏览器中保存角色目标，再回到这里点「确定」结束编辑。随后可点「从配装器保存为配队」。')
+
     def import_profile(self):
         from .optimizer import saved_targets
-        url,ok=QInputDialog.getText(self,'本地配装器','配装器窗口显示的地址',text=self.cfg['optimizer_url'])
-        if not ok: return
-        choices=saved_targets(url.strip())
+        with self.optimizer_session() as endpoint:
+            choices = saved_targets(endpoint)
         if not choices:
             raise ValueError('请先在配装器保存角色的多角色目标')
         labels=[f"{i+1}. {p['agent']}" for i,p in enumerate(choices)]
@@ -408,7 +447,6 @@ class ManagerDialog(QDialog):
         wiki=read(wiki_path(),{})
         agent_key=next((a.get('code') or a['EN'].replace(' ','') for a in wiki.get('character',{}).values()
                         if a.get('CHS')==source['agent'] and a.get('EN')),'')
-        self.cfg['optimizer_url']=url.strip()
         self.cfg['profiles'].append(dict(name=name.strip(),agentKey=agent_key,request=source['request'],
                                          simultaneous=simultaneous.strip(),tolerancePct=0.5,sourceId=source['sourceId']))
         self.edit_cfg()

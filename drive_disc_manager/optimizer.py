@@ -35,12 +35,17 @@ def as_disc(d, names, roll_base=0):
 
 
 def loopback_json(url, route, payload=None):
-    uri = urlsplit(url)
+    from .engine import Endpoint
+    managed = isinstance(url, Endpoint)
+    uri = urlsplit(url.url if managed else url)
     if uri.scheme != 'http' or uri.hostname not in ('127.0.0.1','localhost','::1') or not uri.port or uri.path not in ('','/') or uri.username or uri.password or uri.query or uri.fragment:
         raise ValueError('填写配装器窗口显示的本机 HTTP 地址和端口')
     # Direct loopback connection. Never proxy or follow redirects with private inventory.
     con = http.client.HTTPConnection(uri.hostname, uri.port, timeout=60)
     try:
+        if managed:
+            con.connect()
+            url.check_connection(con)
         if payload is None:
             con.request('GET',route)
         else:
