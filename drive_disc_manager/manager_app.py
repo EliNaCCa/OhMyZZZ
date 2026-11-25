@@ -67,6 +67,8 @@ class ManagerApp(ZApplication):
             mark = request is None and cfg.get('applyMarkers')
             scanner = None
             if request or cfg['run_scanner']:
+                from time import time
+                scan_started = time()
                 exports = Path(os_utils.get_work_dir())/'.debug/inventory_exports'
                 before = {p:p.stat().st_mtime_ns for p in exports.glob('inventory_*.json')}
                 scanner = self.ctx.run_context.get_application('inventory_scan',self.account,'one_dragon' if request else self.group)
@@ -84,8 +86,9 @@ class ManagerApp(ZApplication):
                     return self.round_fail('本轮扫描文件无法唯一识别')
                 import_inventory(self.root,fresh[0],readings=scanner.ocr_worker.scanned_discs)
                 from .marks import reconcile_scan
-                from .salvage_audit import reconcile
+                from .salvage_audit import native_run, observe_native, reconcile
                 snapshot = read(self.root/'inventory.json')
+                observe_native(self.root, self.account, native_run(Path(os_utils.get_work_dir()), self.account), scan_started)
                 reconcile(self.root,snapshot)
                 from .store import equipment_names
                 names = equipment_names(read(wiki_path(), {}))

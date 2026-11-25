@@ -3,7 +3,7 @@ from pathlib import Path
 import yaml
 from one_dragon.utils import os_utils
 from .store import config, digest, read, save
-from .salvage_audit import needs_review, prepare_batch, SCOPE_UNAVAILABLE
+from .salvage_audit import native_run, needs_review, prepare_batch, SCOPE_UNAVAILABLE
 
 
 def configured_dismantler(app):
@@ -32,7 +32,12 @@ def handoff(app, report, observed):
     previous = read(app.root/'dismantle-result.json', {})
     if needs_review(previous):
         return '已标记，上批确认结果待核。请查看运行设置的拆解记录。'
-    receipt = prepare_batch(read(app.root/'inventory.json'),report,observed,native.config.dismantle_level)
+    snapshot = read(app.root/'inventory.json')
+    receipt = prepare_batch(snapshot,report,observed,native.config.dismantle_level)
+    from collections import Counter
+    from .store import fingerprint
+    receipt.update(account=app.account, nativeAtPreview=native_run(Path(os_utils.get_work_dir()), app.account),
+                   beforeCounts=dict(Counter(fingerprint(disc) for disc in snapshot['discs'])))
     # Native selection exposes button matches only. Its failure edges can still
     # proceed to confirm. Keep the independent host task out of this invocation.
     save(app.root/'dismantle-preview.json', receipt)

@@ -57,9 +57,46 @@ def record(root, receipt):
     save(root/'dismantle-history'/(receipt['batch']+'.json'), receipt)
 
 
+def native_run(home, account):
+    """Read the native task's persisted per-account record, including headless runs."""
+    import math
+    import yaml
+    path = home/'config'/f'{account:02d}'/'app_run_record'/'drive_disc_dismantle.yml'
+    try:
+        data = yaml.safe_load(path.read_text('utf-8-sig'))
+    except (OSError, UnicodeError, yaml.YAMLError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    stamp = data.get('run_time_float')
+    state = data.get('run_status')
+    if type(stamp) not in (int, float) or not math.isfinite(stamp) or stamp <= 0 or type(state) is not int:
+        return None
+    return dict(account=account, updated=stamp, status=state)
+
+
+def observe_native(root, account, native, scan_started):
+    """Only a changed terminal receipt before this scan can explain a later inventory difference."""
+    if not native or native['account'] != account or native['status'] not in (1, 2):
+        return
+    before = read(root/'dismantle-preview.json', {})
+    last = read(root/'dismantle-result.json', {})
+    if (before.get('account') != account or before.get('status') != 'not_submitted'
+            or not before.get('entries') or before['batch'] == last.get('batch') or needs_review(last)):
+        return
+    baseline = before.get('nativeAtPreview') or {}
+    if not max(before['started'], baseline.get('updated', 0)) < native['updated'] <= scan_started:
+        return
+    record(root, dict(before, status='pending', independentNative=native))
+
+
 def reconcile(root, fresh):
     previous = read(root/'dismantle-result.json', {})
     if not needs_review(previous):
+        return
+    if previous.get('independentNative') and previous.get('afterInventory'):
+        # Keep the first observation after the independent run. A later manual
+        # cleanup cannot prove what the earlier native task selected.
         return
     discs, counts = inventory(fresh)
     previous.update(observedAt=time(), afterInventory=digest(fresh), afterTotal=len(discs))
@@ -82,15 +119,27 @@ def reconcile(root, fresh):
         else:
             mark = by_fp[fp][0].get('markState')
             state = {'marked':'仍标弃置','unmarked':'在库且未标弃置'}.get(mark,'标记待核')
-            if state == '在库且未标弃置' and entry['source'] == '内置低品级范围':
+            if state == '在库且未标弃置' and entry['source'] in ('内置低品级范围', '低品级可能入选'):
                 state = '仍在低品级范围'
         entry['after'] = state
         states[state] += 1
     previous.setdefault('nativeStatus', previous['status'])
     resolved = (not (set(states) - {'已不在库存', '在库且未标弃置'})
                 and previous['beforeTotal'] - len(discs) == states['已不在库存'])
+    native = previous.get('independentNative')
+    if native:
+        expected = previous.get('beforeCounts')
+        remaining = Counter(expected or {})
+        for entry in previous['entries']:
+            if entry['after'] == '已不在库存':
+                remaining[entry['fp']] -= 1
+        resolved = (resolved and native['status'] == 1 and previous.get('unresolvedGrades') == 0
+                    and expected is not None and remaining == counts)
     previous.update(status='reconciled' if resolved else 'needs_review', observations=dict(states),
                     resolution='已核对库存差额和现存标记' if resolved else '确认结果待核，本批不会自动重试')
+    if native:
+        note = '成功' if native['status'] == 1 else '失败'
+        previous['resolution'] = '内置任务回执'+note+' · '+('前后库存已对上' if resolved else '库存变化待核')
     record(root, previous)
 
 
@@ -99,6 +148,7 @@ def close_reviewed(root, batch, after_inventory):
     with exclusive(root.parent/'_maintenance'):
         receipt = read(root/'dismantle-result.json', {})
         if (not batch or not after_inventory or not needs_review(receipt) or receipt.get('batch') != batch
-                or receipt.get('afterInventory') != after_inventory or digest(read(root/'inventory.json')) != after_inventory):
+                or receipt.get('afterInventory') != after_inventory
+                or (not receipt.get('independentNative') and digest(read(root/'inventory.json')) != after_inventory)):
             raise ValueError('请先用本账号的新扫描对账，再核对这批记录')
         record(root, dict(receipt, status='reviewed', reviewedAt=time(), resolution='玩家已核对，按下轮实况重新规划'))

@@ -77,6 +77,8 @@
 
 ## 换装与恢复
 
+在 **运行设置 → 查看拆解记录** 可查看一条龙内置拆解的运行结果和逐盘库存变化。插件记录标记时的库存，等本账号内置任务有了新的结束回执，再用下一份完整扫描核对。记录会区分「游戏原有弃置」「本轮观察到弃置」和「低品级可能入选」。如果其他盘也有增减，会保留当时的读数供复核。
+
 扫描器导出中文套装名时，OhMyZZZ 会按对应的订阅字段筛盘，继续用库存中的原始指纹识别你的单盘保护。随包补充的六套名称取自同一套装 ID 的简中和英文条目。[套装 ID](https://github.com/EnkaNetwork/API-docs/blob/26b4ddcd045a1264d0a8ef3ef5a3a3e33cbe16ce/store/zzz/equipments.json) · [名称对照](https://github.com/EnkaNetwork/API-docs/blob/26b4ddcd045a1264d0a8ef3ef5a3a3e33cbe16ce/store/zzz/locs.json)
 
 单盘冒烟使用上游归档的「谶羽之誓」五号盘两帧画面，以及一条龙 PP-OCRv6 和仓库扫描器。两帧分别读到「弃置」和「解除弃置」，对应同一实物指纹。插件用 FeatheredFate 查询该盘的订阅规则。[回放样本](e2e/recap_20261101/mark_before.jpg)

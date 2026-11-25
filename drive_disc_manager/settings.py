@@ -167,6 +167,10 @@ class ManagerInterface(BaseInterface):
             text = data.get('resolution') or ('等待本账号新扫描对账' if data is last else '待选范围估算，未提交拆解')
             if data is possible:
                 text += f"　·　品级未读清 {data['unresolvedGrades']} 张"
+            elif data.get('independentNative'):
+                from datetime import datetime
+                completed = datetime.fromtimestamp(data['independentNative']['updated']).strftime('%m-%d %H:%M')
+                text += f"　·　内置任务 {completed}　·　库存 {data['beforeTotal']} → {data.get('afterTotal', '待核')} 张"
             note = QLabel(text); note.setWordWrap(True); layout.addWidget(note)
             grid = self.grid(['套装','号位','主属性','等级','纳入原因','实物核对']); layout.addWidget(grid)
             self.fill(grid, [(e['set'],e['slot'],e['main'],e['level'],e['source'],

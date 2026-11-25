@@ -53,6 +53,26 @@ with TemporaryDirectory() as tmp:
     after=dict(z,discs=z['discs'][1:],audit=dict(game_total=1,exported=1,delta=0))
     reconcile(root,after)
     assert read(root/'dismantle-result.json')['observations']=={'已不在库存':1}
+    from drive_disc_manager.salvage_audit import observe_native
+    from drive_disc_manager.store import fingerprint
+    observed = root/'observed'
+    before = dict(batch, account=1, started=10, nativeAtPreview={'updated':8},
+                  beforeCounts={fingerprint(d):1 for d in z['discs']})
+    save(observed/'dismantle-preview.json', before)
+    for account, stamp, status in [(2, 11, 1), (1, 8, 1), (1, 13, 1), (1, 11, 3)]:
+        observe_native(observed, 1, dict(account=account, updated=stamp, status=status), 12)
+    assert not (observed/'dismantle-result.json').exists()
+    native = dict(account=1, updated=11, status=1)
+    observe_native(observed, 1, native, 12)
+    reconcile(observed, after)
+    done = read(observed/'dismantle-result.json')
+    assert done['status']=='reconciled' and done['independentNative']==native and done['observations']=={'已不在库存':1}
+    # An off-list change with the same total still needs review.
+    changed_root = root/'changed'; save(changed_root/'dismantle-preview.json', before)
+    observe_native(changed_root, 1, native, 12)
+    reconcile(changed_root, dict(after, discs=[dict(after['discs'][0], level=6)]))
+    uncertain = read(changed_root/'dismantle-result.json'); assert uncertain['status']=='needs_review'
+    reconcile(changed_root, after); assert read(changed_root/'dismantle-result.json')==uncertain
     assert not prepare_batch(after,plan(after,limited,rules,{}),{},'A及以下')['entries']
     assert observed_grade([dict(text='等级0/15',confidence=0.95)])=='S'
     # Four-line double crit at birth vs a three-line piece that revealed its fourth at +3.
