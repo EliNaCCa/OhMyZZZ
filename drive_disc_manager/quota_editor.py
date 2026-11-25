@@ -2,7 +2,7 @@
 from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel,
                                QRadioButton, QSpinBox, QVBoxLayout)
 
-from .reserve_policy import DEFAULT_STATS, SELECTORS, exact_purpose, matching_rules, normalized_rule
+from .reserve_policy import DEFAULT_STATS, exact_purpose, matching_rules, normalized_rule, rule_selectors
 
 
 def amount(n):
@@ -13,6 +13,9 @@ class QuotaEditor(QDialog):
     def __init__(self, parent, group, cfg, reverse, title):
         super().__init__(parent)
         self.group, self.cfg, self.reverse = group, cfg, reverse
+        self.draft_rules = list(cfg['reserve_rules'])
+        self.displayed_purpose = None
+        self.changes = {}
         self.normalized = [normalized_rule(rule, reverse) for rule in cfg['reserve_rules']]
         self.limits, _ = matching_rules(group, dict(cfg, reserve_rules=self.normalized))
         self.setWindowTitle('同类备用数量')
@@ -48,6 +51,10 @@ class QuotaEditor(QDialog):
         self.show_purpose(self.purpose.currentText())
 
     def show_purpose(self, purpose):
+        self.store_edits()
+        self.displayed_purpose = purpose
+        self.normalized = [normalized_rule(rule, self.reverse) for rule in self.draft_rules]
+        self.limits, _ = matching_rules(self.group, dict(self.cfg, reserve_rules=self.normalized))
         matching = [r for r in self.normalized if exact_purpose(r, self.group, purpose, {})]
         broader = [r for r in self.normalized if not exact_purpose(r, self.group, purpose, {})]
         inherited, trim = matching_rules(self.group, dict(self.cfg, reserve_rules=broader))
@@ -67,16 +74,25 @@ class QuotaEditor(QDialog):
         self.inherit.setChecked(not matching)
         self.count.setEnabled(bool(matching))
         self.trim.setEnabled(bool(matching))
+        self.initial = self.controls()
 
-    def result_rules(self):
-        purpose = self.purpose.currentText()
-        original = self.cfg['reserve_rules']
+    def controls(self):
+        return self.custom.isChecked(), self.count.value(), self.trim.currentIndex()
+
+    def store_edits(self):
+        purpose = self.displayed_purpose
+        if purpose is None or self.controls() == self.initial:
+            return
+        original = self.draft_rules
         positions = [i for i, r in enumerate(original) if exact_purpose(r, self.group, purpose, self.reverse)]
         keep = [r for i, r in enumerate(original) if i not in positions]
         if self.inherit.isChecked():
-            return keep, '继承 · '+purpose
+            self.draft_rules = keep
+            self.changes[purpose] = '继承 · '+purpose
+            self.initial = self.controls()
+            return
         count = self.count.value()
-        rule = {k:self.group[k] for k in SELECTORS}
+        rule = rule_selectors(self.group)
         rule.update(purpose=purpose, count=None if count < 0 else count)
         stats = self.limits[purpose][2] if purpose in self.limits else {'偏暴击':['crit_'], '偏暴伤':['crit_dmg_']}[purpose]
         if stats is not DEFAULT_STATS:
@@ -87,4 +103,10 @@ class QuotaEditor(QDialog):
         # policies from other purposes retain their configured precedence.
         index = positions[-1] - len(positions) + 1 if positions else len(keep)
         keep.insert(index, rule)
-        return keep, purpose+' · 同类额外保留 '+amount(rule['count'])
+        self.draft_rules = keep
+        self.changes[purpose] = purpose+' · 同类额外保留 '+amount(rule['count'])
+        self.initial = self.controls()
+
+    def result_rules(self):
+        self.store_edits()
+        return self.draft_rules, '、'.join(self.changes.values())

@@ -22,12 +22,16 @@ def quota(value):
     return value
 
 
+def rule_selectors(rule):
+    return {k: str(rule[k]) for k in SELECTORS if rule.get(k) not in (None, '', '*')}
+
+
 def matching_rules(group, cfg):
     limits = {'通用': (-1, quota(cfg['reserve']), DEFAULT_STATS)}
     trim = (-1, cfg.get('trimRecommended', False))
     for rule in cfg['reserve_rules']:
-        selectors = {k: str(rule[k]) for k in SELECTORS if rule.get(k) not in (None, '', '*')}
-        if any(group[k] != v for k, v in selectors.items()):
+        selectors = rule_selectors(rule)
+        if any(group.get(k) != v for k, v in selectors.items()):
             continue
         rank = len(selectors)
         if 'trimRecommended' in rule and rank >= trim[0]:
@@ -45,9 +49,8 @@ def normalized_rule(rule, reverse):
 
 
 def exact_purpose(rule, group, purpose, reverse):
-    selectors = normalized_rule(rule, reverse)
-    return ((rule.get('purpose') or '通用') == purpose
-            and all(str(selectors.get(k, '')) == str(group[k]) for k in SELECTORS))
+    return ((rule.get('purpose') or '通用') == purpose and
+            rule_selectors(normalized_rule(rule, reverse)) == rule_selectors(group))
 
 
 def apply_reserves(rows, cfg):

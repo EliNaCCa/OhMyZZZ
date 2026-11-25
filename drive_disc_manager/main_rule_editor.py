@@ -1,5 +1,6 @@
 """Edit a single Set+Main subscription field in the host's settings page."""
 from PySide6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QGridLayout, QLabel, QVBoxLayout
+from .subscriptions import SLOT_EXTRA
 
 
 NAMES = {'hp_':'生命值百分比', 'atk_':'攻击力百分比', 'def_':'防御力百分比',
@@ -8,9 +9,6 @@ NAMES = {'hp_':'生命值百分比', 'atk_':'攻击力百分比', 'def_':'防御
          'physical_dmg_':'物理伤害', 'fire_dmg_':'火属性伤害', 'ice_dmg_':'冰属性伤害',
          'electric_dmg_':'电属性伤害', 'ether_dmg_':'以太伤害', 'wind_dmg_':'风属性伤害',
          'lumiflux_dmg_':'流光伤害'}
-SLOTS = {'4':('crit_', 'crit_dmg_', 'anomProf'),
-         '5':tuple(k for k in NAMES if k.endswith('_dmg_') and k != 'crit_dmg_') + ('pen_',),
-         '6':('impact','energyRegen_','anomMas_')}
 
 
 class MainRuleEditor(QDialog):
@@ -22,7 +20,7 @@ class MainRuleEditor(QDialog):
         outer.addWidget(QLabel(note))
         grid = QGridLayout(); outer.addLayout(grid)
         self.checks = {}
-        keys = dict.fromkeys([*SLOTS[slot], 'atk_', 'hp_', 'def_', *remote, *selected])
+        keys = dict.fromkeys([*SLOT_EXTRA[slot], 'atk_', 'hp_', 'def_', *remote, *selected])
         for index, key in enumerate(keys):
             check = QCheckBox(NAMES.get(key, key) + ('（上游推荐）' if key in remote else ''))
             check.setToolTip(key); check.setChecked(key in selected)

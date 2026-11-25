@@ -68,6 +68,10 @@ class ManagerApp(ZApplication):
             scanner = None
             if request or cfg['run_scanner']:
                 from time import time
+                from .scanner_status import scanner_status
+                ready, reason = scanner_status(self.ctx, self.account)
+                if not ready:
+                    return self.round_fail(reason)
                 scan_started = time()
                 exports = Path(os_utils.get_work_dir())/'.debug/inventory_exports'
                 before = {p:p.stat().st_mtime_ns for p in exports.glob('inventory_*.json')}

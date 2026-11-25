@@ -110,6 +110,7 @@ class ManagerInterface(BaseInterface):
             toggle = QCheckBox(title); self.flags[key] = toggle; flags.addWidget(toggle)
             toggle.clicked.connect(lambda checked,k=key:self.set_flag(k,checked))
         self.early_info = QLabel(); self.early_info.setWordWrap(True); box.addWidget(self.early_info)
+        self.scanner_note = QLabel(); self.scanner_note.setWordWrap(True); box.addWidget(self.scanner_note)
         protections = QHBoxLayout(); box.addLayout(protections)
         for key, title in [('protect15','保留 +15 盘'),('protectNaturalCrit','保留原生四词条双暴盘')]:
             toggle = QCheckBox(title); self.flags[key] = toggle; protections.addWidget(toggle)
@@ -134,6 +135,10 @@ class ManagerInterface(BaseInterface):
         self.button(bar,'取消待办',lambda:self.queue_maintenance(''))
         self.button(bar,'刷新状态',self.show_maintenance)
         box.addStretch()
+        from .reserve_presets import ReservePresets
+        self.reserve_presets = ReservePresets()
+        tabs.addTab(self.reserve_presets, '备用规则')
+        self.reserve_presets.edit.connect(self.edit_preset)
         from .disc_detail_page import DiscDetails
         self.detail = DiscDetails(); self.detail_tab = tabs.addTab(self.detail, '盘详情')
         tabs.setTabVisible(self.detail_tab,False)
@@ -275,6 +280,7 @@ class ManagerInterface(BaseInterface):
         wiki = read(wiki_path(), {})
         self.refresh_roster(wiki)
         self.set_names = equipment_names(wiki) | self.cfg.get('aliases', {})
+        self.reserve_presets.present(self.cfg, self.set_names, fields, self.root)
         self.agent_names = {name:a['label'] for a in self.agents for name in [*a['builds'],*a['guides']]}
         self.rule_rows = {key:self.rule_row(key) for key in self.keys}
         if not conflicts: self.only_conflicts.setChecked(False)
@@ -292,6 +298,12 @@ class ManagerInterface(BaseInterface):
             note = '本账号日常任务顺序暂未读到 · ' + str(exc)
         if needs_review(salvage): note += '　上批确认结果待核。'
         self.salvage_info.setText(note)
+        from .scanner_status import scanner_status
+        try:
+            _, scanner_note = scanner_status(self.ctx, int(self.root.name))
+        except Exception as exc:
+            scanner_note = '宿主设置暂未读到 · '+str(exc)
+        self.scanner_note.setText('仓库扫描器 · '+scanner_note)
         early = read(self.root/'early-result.json', {})
         labels = {'COMPLETED':'完成', 'daily':'由日常列表管理', 'running':'开始后尚无完成回执',
                   'FAILED':'失败', 'STOPPED':'已停止', 'NOT_STARTED':'未启动'}
@@ -835,27 +847,14 @@ class ManagerInterface(BaseInterface):
         self.calculate()
 
     def set_quota(self, r=None):
-        from .quota_editor import QuotaEditor
-        from .main_rule_editor import NAMES
         if r is None:
             index=self.table.currentRow()
             if index<0: return
             r=self.rows[index]
         selectors = {k:r[k] for k in SELECTORS}
-        account, expected = self.root, self.config_hash
-        title = f"{self.set_names.get(r['set'],r['set'])} · {r['slot']} 号位 · {NAMES.get(r['main'], r['main'])}"
-        dialog = QuotaEditor(self, selectors, self.cfg, equipment_keys(self.set_names), title)
-        if not dialog.exec(): return
-        if self.root != account or account.name != str(self.ctx.current_instance_idx):
-            self.on_interface_shown()
-            raise ValueError('账号已切换，请在当前账号重新选择驱动盘。')
-        rules, summary = dialog.result_rules()
         before = self.coverage.get(tuple(selectors.values()))
-        save_config(account, dict(dialog.cfg, reserve_rules=rules), expected)
-        if (account/'inventory.json').is_file():
-            self.calculate()
-        else:
-            self.reload()
+        summary = self.edit_quota(selectors, '通用')
+        if summary is None: return
         match = next((i for i,item in enumerate(self.rows) if item['fp']==r['fp']),None)
         if match is not None: self.table.selectRow(match)
         after = self.coverage.get(tuple(selectors.values()))
@@ -863,6 +862,33 @@ class ManagerInterface(BaseInterface):
             change = f"调整前 {before['kept']} 张 → 调整后 {after['kept']} 张"
             self.reserve_info.setText(change+'　｜　'+self.reserve_info.text())
             return change
+        return summary
+
+    def edit_preset(self, selectors, purpose):
+        try:
+            self.edit_quota(selectors, purpose)
+        except Exception as exc:
+            QMessageBox.warning(self,APP_NAME,str(exc))
+
+    def edit_quota(self, selectors, purpose):
+        from .quota_editor import QuotaEditor
+        from .reserve_presets import scope_name
+        account, expected = self.root, self.config_hash
+        title = scope_name(selectors, self.set_names)
+        dialog = QuotaEditor(self, selectors, self.cfg, equipment_keys(self.set_names), title)
+        dialog.purpose.setCurrentText(purpose)
+        if not dialog.exec(): return
+        if self.root != account or account.name != str(self.ctx.current_instance_idx):
+            self.on_interface_shown()
+            raise ValueError('账号已切换，请在当前账号重新选择驱动盘。')
+        rules, summary = dialog.result_rules()
+        if rules == dialog.cfg['reserve_rules']:
+            return
+        save_config(account, dict(dialog.cfg, reserve_rules=rules), expected)
+        if (account/'inventory.json').is_file():
+            self.calculate()
+        else:
+            self.reload()
         return summary
 
     def update_rules(self):

@@ -96,6 +96,29 @@ def smoke(root):
     else:
         raise AssertionError('stale editor removed a newer local override')
 
+    stale_rules = read(root/'rules.json')
+    save(root/'rules.json', dict(stale_rules, updated=0))
+    def concurrent_source():
+        sub.save_field_override(root, key, seen_remote=['atk_'], seen_local=chosen, override=None)
+        return {key:['def_']}, {'Set+Main':'42'}, {key:['Set+Main']}
+    with patch.object(sub, 'sources', side_effect=concurrent_source):
+        pinned_cfg, pinned_rules, warnings = rule_snapshot(root)
+    assert not warnings and key not in pinned_cfg['overrides'] and pinned_rules['fields'][key] == ['def_']
+
+    # A deliberate local exclusion only removes this source's recommendation.
+    from drive_disc_manager.planner import plan
+    data = read(root/'inventory.json')
+    blank = dict(fields={key:[], key+'/known':[]}, version='blank-cell')
+    cfg = dict(pinned_cfg, reserve=0, overrides={})
+    def row(options):
+        return plan(data, options, blank, {})['discs'][0]
+    assert row(cfg)['decision'] == '待复核'
+    only = dict(cfg, overrides={key:dict(mode='only', values=['atk_'])})
+    excluded = row(only)
+    assert excluded['decision'] == '弃置候选' and '个人「只接受」规则排除此主属性' in excluded['explanation']
+    assert row(dict(only, reserve=1))['decision'] == '保留'
+    assert row(dict(only, pins=[excluded['fp']]))['decision'] == '保留'
+
 
 if __name__ == '__main__':
     with TemporaryDirectory() as temp:

@@ -2,21 +2,21 @@ import time
 from contextlib import ExitStack
 from pathlib import Path
 from .planner import plan
-from .maintenance import Deferred
+from .maintenance import Deferred, exclusive
 from .store import config, digest, equipment_names, read, save
 from .subscriptions import sync
 
 
 def rule_snapshot(root, refresh=True):
-    cfg = config(root)
-    rules = read(root/'rules.json',{})
     warnings = []
-    if refresh and cfg['auto_sync'] and time.time()-rules.get('updated',0) > 86400:
+    if refresh and config(root)['auto_sync'] and time.time()-read(root/'rules.json',{}).get('updated',0) > 86400:
         try:
-            rules = sync(root)
+            sync(root)
         except (ValueError, OSError, Deferred) as exc:
             warnings.append('订阅失败，使用最近成功版本 · '+str(exc))
-    return cfg, rules, warnings
+    # A player may edit local options while the upstream tables are downloading.
+    with exclusive(root/'_rules'):
+        return config(root), read(root/'rules.json',{}), warnings
 
 
 def preview(root, wiki=None, refresh=True, *, snapshot=None):

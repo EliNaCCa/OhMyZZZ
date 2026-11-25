@@ -15,6 +15,12 @@ STATS = {'ATK':'atk_', 'HP':'hp_', 'DEF':'def_', 'CRIT Rate':'crit_', 'CRIT DMG'
          'Anomaly Proficiency':'anomProf', 'PEN Ratio':'pen_', 'Anomaly Mastery':'anomMas_',
          'Impact':'impact','Energy Regen':'energyRegen_', **{e.title()+' DMG':e+'_dmg_' for e in ELEMENTS}}
 
+SLOT_EXTRA = {'4': ('crit_', 'crit_dmg_', 'anomProf'),
+              '5': tuple(e+'_dmg_' for e in ('physical','fire','ice','electric','ether','wind','lumiflux')) + ('pen_',),
+              '6': ('impact', 'energyRegen_', 'anomMas_')}
+SLOT_MAIN = {'1': ('hp',), '2': ('atk',), '3': ('def',),
+             **{slot: ('hp_', 'atk_', 'def_', *extras) for slot, extras in SLOT_EXTRA.items()}}
+
 
 def fetch(url):
     with urllib.request.urlopen(url, timeout=15) as response:

@@ -3,7 +3,7 @@ from collections import Counter, defaultdict
 from .optimizer import as_disc, candidate_pool, STATS
 from .allocation import assign_group, group_conflict
 from .store import digest, equipment_keys, fingerprint, inventory, roll_base
-from .subscriptions import effective, current_conflicts
+from .subscriptions import effective, current_conflicts, SLOT_MAIN
 from .reserve_policy import apply_reserves, development, normalized_rule
 from .roster import compile_roster, explain, roster_catalog
 from .stat_reading import checked_values
@@ -17,13 +17,22 @@ def assess_rules(row, cfg, fields, reverse, by_set, unresolved, excluded):
     if verified_fixed:
         row['recommendations'].append('已知套装固定主属性')
         row['ruleUses'].append(('matrix/'+row['set']+'/4', '', '四号位表收录了该套装，当前号位主属性固定'))
-    allowed = effective(fields.get(key),cfg['overrides'].get(key))
+    override = cfg['overrides'].get(key) or {}
+    allowed = effective(fields.get(key),override)
     known = fields.get(key+'/known',[])
+    excluded_locally = (key in fields and override.get('mode') == 'only'
+                        and row['slot'] in ('4','5','6') and main in SLOT_MAIN[row['slot']] and main not in (allowed or ()))
     row['field'] = key
     if main in (allowed or []):
         row['recommendations'].append('套装主词条规则 · '+key)
     if row['slot'] in '456' or key in fields or key in cfg['overrides']:
-        outcome = ('主属性符合' if main in (allowed or []) else '主属性不符' if main in known else '该主属性缺少明确规则')
+        if excluded_locally:
+            outcome = '个人「只接受」规则排除此主属性'
+            row['explanation'].append(outcome)
+        elif main in (allowed or []):
+            outcome = '主属性符合'
+        else:
+            outcome = '主属性不符' if main in known else '该主属性缺少明确规则'
         row['ruleUses'].append((key, '', outcome))
     explain(row, by_set, unresolved, excluded)
     for agent in cfg['roster']:
@@ -42,7 +51,7 @@ def assess_rules(row, cfg, fields, reverse, by_set, unresolved, excluded):
         elif any(v not in agent['mainMap'] for v in values):
             row['review'].append('角色词条映射待核 · '+agent['name'])
         row['ruleUses'].append((field, agent['name'], '个人套装与主属性映射'))
-    if main not in known and not (row['recommendations'] or row['reasons']):
+    if main not in known and not excluded_locally and not (row['recommendations'] or row['reasons']):
         row['review'].append('缺少明确规则')
 
 

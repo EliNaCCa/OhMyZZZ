@@ -69,6 +69,12 @@ def smoke(home, tmp):
     assert not (account/'config.json').exists() and not (tmp/'2/config.json').exists()
 
     context.current_instance_idx = 1
+    run = context.run_context = SimpleNamespace(is_app_registered=lambda key: key == 'inventory_scan')
+    option = SimpleNamespace(scan_drive_disk=False)
+    def scanner_config(key, idx, group_id):
+        assert (key,idx,group_id) == ('inventory_scan',1,'one_dragon')
+        return option
+    run.get_config = scanner_config
     cfg = config(account)
     group = dict(set='SwingJazz', slot='5', main='atk_')
     cfg['aliases'] = {'SwingJazz':'摇摆爵士'}
@@ -76,6 +82,11 @@ def smoke(home, tmp):
     cfg['reserve_rules'] = [broader, dict(set='摇摆爵士', slot=5, main='atk_', count=6)]
     save(account/'config.json', cfg)
     widget.on_interface_shown()
+
+    assert '开启「驱动盘」' in widget.scanner_note.text()
+    option.scan_drive_disk = True
+    widget.on_interface_shown()
+    assert '已就绪' in widget.scanner_note.text()
 
     def inherit(dialog):
         assert dialog.custom.isChecked() and dialog.count.value() == 6
@@ -86,6 +97,30 @@ def smoke(home, tmp):
     with patch.object(QuotaEditor, 'exec', inherit):
         assert widget.set_quota(dict(group, fp='fixture')) == '继承 · 通用'
     assert config(account)['reserve_rules'] == [broader]
+    # Create a preset for a non-scanned set, then verify its scope on two different slots.
+    page = widget.reserve_presets
+    page.suit.setCurrentIndex(page.suit.findData('SwingJazz'))
+    assert page.scope() == {'set':'SwingJazz'} and '通用 3 张' in page.current.text()
+    page.slot.setCurrentIndex(page.slot.findData('5'))
+    assert page.scope() == {'set':'SwingJazz', 'slot':'5'}
+
+    def narrow(dialog):
+        dialog.purpose.setCurrentText('偏暴击')
+        dialog.custom.click()
+        dialog.count.setValue(2)
+        dialog.purpose.setCurrentText('偏暴伤')
+        dialog.custom.click()
+        dialog.count.setValue(4)
+        return True
+
+    with patch.object(QuotaEditor, 'exec', narrow):
+        page.change.click()
+    assert config(account)['reserve_rules'] == [broader, dict(set='SwingJazz', slot='5', purpose='偏暴击', count=2, stats=['crit_']),
+                                               dict(set='SwingJazz', slot='5', purpose='偏暴伤', count=4, stats=['crit_dmg_'])]
+    assert '偏暴伤 4 张' in page.current.text()
+    page.slot.setCurrentIndex(page.slot.findData('4'))
+    assert '偏暴伤' not in page.current.text()
+    assert page.grid.rowCount() == 3
     widget.close()
 
 
