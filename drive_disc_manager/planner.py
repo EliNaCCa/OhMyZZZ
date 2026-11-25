@@ -1,10 +1,11 @@
 """Produce a read-only plan from one pinned inventory, configuration and rule revision."""
 from collections import Counter, defaultdict
 from .optimizer import as_disc, candidate_pool, STATS
-from .allocation import assign_group, group_conflict
+from .allocation import assign_group, group_conflict, reusable_assignments
+from .drive_disc_manager_const import PLUGIN_VERSION
 from .store import digest, equipment_keys, fingerprint, inventory, roll_base
 from .subscriptions import effective, current_conflicts, SLOT_MAIN
-from .reserve_policy import apply_reserves, development, normalized_rule
+from .reserve_policy import apply_reserves, assess_growth, normalized_rule
 from .roster import compile_roster, explain, roster_catalog
 from .stat_reading import checked_values
 
@@ -55,7 +56,7 @@ def assess_rules(row, cfg, fields, reverse, by_set, unresolved, excluded):
         row['review'].append('缺少明确规则')
 
 
-def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_owned=(),history=None):
+def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_owned=(),history=None,previous_preview=None):
     ds, _ = inventory(z)
     from .marks import owns_spare, scanned_identities
     history = history or {}
@@ -86,12 +87,17 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         current = {f for f,d in by_fp.items() if d.get('location') and d['location']==p.get('agentKey')}
         groups[group].append((p,current))
     pool = [disc for disc in inputs.values() if disc and not disc['discarded']]
+    inventory_hash = digest(z)
+    allocation_key = digest([PLUGIN_VERSION, inventory_hash, enabled, optimizer_names, cfg['optimizer_url']]) if enabled else None
+    saved = reusable_assignments(previous_preview, allocation_key, groups, pool)
     for (_,group_name), members in groups.items():
         try:
             conflict = group_conflict(p for p, _ in members)
             if conflict:
                 raise ValueError(conflict)
-            for profile,result in assign_group(members,pool,cfg['optimizer_url'],fetch_candidates):
+            results = ([(p, saved[p['name']]) for p, _ in members] if saved is not None else
+                       assign_group(members, pool, cfg['optimizer_url'], fetch_candidates))
+            for profile,result in results:
                 name = profile['name']
                 assignments[name] = result
                 for fp in result['ids']:
@@ -153,14 +159,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         if row['main'] in row['rolls']:
             row['review'].append('主副词条重复')
         if d['rarity']=='S':
-            growth = development(row)
-            if growth is None:
-                row['review'].append('强化档数与等级不符')
-            else:
-                row['development'] = growth
-                row['explanation'].append(f"初始 {growth['initial']} 词条 · 剩余 {growth['remaining']} 次强化机会")
-                if cfg.get('protectNaturalCrit', True) and growth['initial']==4 and {'crit_', 'crit_dmg_'} <= row['rolls'].keys():
-                    row['reasons'].append('原生四词条双暴保护')
+            assess_growth(row, cfg)
         rows.append(row)
     for row in rows:
         if row['marked']:
@@ -184,7 +183,8 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     evidence = rule_book(rows, rules, cfg['overrides'], current_conflicts(rules, cfg['overrides']))
     teams = {p['name']:dict(agent=(p.get('request') or {}).get('characterName') or p.get('agentKey'),
                             group=p.get('simultaneous') or '') for p in enabled}
-    return dict(inventory=digest(z), rules=rules.get('version'), configuration=digest(cfg), assignments=assignments,
+    return dict(inventory=inventory_hash, rules=rules.get('version'), configuration=digest(cfg), assignments=assignments,
+                allocationKey=allocation_key, reusedAssignments=saved is not None,
                 traceRules=evidence, traceTeams=teams,
                 issues=issues, roster=[a for a in catalog if a['selected']], reserveCoverage=coverage,
                 counts=dict(Counter(r['decision'] for r in rows)), discs=rows)

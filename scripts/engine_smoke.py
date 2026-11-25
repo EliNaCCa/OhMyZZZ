@@ -4,6 +4,7 @@ import shutil
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from drive_disc_manager.engine import NAME, VERSION, managed
@@ -123,6 +124,20 @@ def smoke(source):
         report = preview(root, refresh=False)
         result = report['assignments']['演示队']
         assert len(set(result.get('ids', ()))) == 6 and result['outputScore'] > 0, (result, report['issues'])
+        cfg['reserve_rules'] = [dict(set='FeatheredFate', purpose='备用精通', stats=['anomProf'], count=2)]
+        save(root/'config.json', cfg)
+        with patch('drive_disc_manager.engine.managed', side_effect=AssertionError('unexpected optimizer launch')) as launch:
+            adjusted = preview(root, refresh=False, reuse_allocations=True)
+            launch.assert_not_called()
+        assert adjusted['reusedAssignments'] and adjusted['assignments'] == report['assignments']
+        assert adjusted['configuration'] != report['configuration']
+        assert all(row['decision'] == '保留' and not any(r.startswith('备用 · ') for r in row['reasons'])
+                   for row in adjusted['discs'])
+        # The same six IDs under a different team tolerance still need a new allocation.
+        cfg['profiles'][0]['tolerancePct'] = 0
+        save(root/'config.json', cfg)
+        updated = preview(root, refresh=False, reuse_allocations=True)
+        assert not updated['reusedAssignments'] and updated['allocationKey'] != adjusted['allocationKey'] and not updated['issues']
         print('PASS saved target survived restart; preview allocated six demo slots; managed processes exited')
 
 

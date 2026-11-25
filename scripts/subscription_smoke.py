@@ -119,6 +119,13 @@ def smoke(root):
     assert row(dict(only, reserve=1))['decision'] == '保留'
     assert row(dict(only, pins=[excluded['fp']]))['decision'] == '保留'
 
+    from drive_disc_manager.roster import parse_main, parse_substats
+    assert parse_main(['PEN% = Elec%', 'Phys%²', 'CDMG']) == ({'pen_', 'electric_dmg_', 'physical_dmg_', 'crit_dmg_'}, False)
+    assert parse_main(['Elec% / 未知属性'])[1]
+    assert parse_substats(['Anomaly: AP >= ATK%', 'CRIT: CR% (until cap) >= CD%', 'Flat HP']) == {
+        'anomProf', 'atk_', 'crit_', 'crit_dmg_', 'hp'}
+    assert parse_substats(['hp_', 'crit_dmg_', 'anomProf']) == {'hp_', 'crit_dmg_', 'anomProf'}
+
 
 if __name__ == '__main__':
     with TemporaryDirectory() as temp:

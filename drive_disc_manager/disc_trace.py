@@ -54,8 +54,15 @@ def probe_trace(record, cfg, rules, wiki, known_owned):
     if 'ownerState' in disc:
         row.update(ownerState=disc['ownerState'], location=disc.get('location', ''))
     if row['marked']:
-        reasons.append('读取时游戏已标记弃置')
+        row['reasons'] = ['读取时游戏已标记弃置']
     else:
+        if disc.get('ownerState') == 'worn' and disc.get('location'):
+            reasons.append('已装备 · '+disc['location'])
+        if disc.get('ownerState') == 'unknown':
+            row['review'].append('穿戴者头像待复核')
+        if disc['rarity'] == 'S' and len(rolls) == len(values['subs']):
+            from .reserve_policy import assess_growth
+            assess_growth(row, cfg)
         fields = rules.get('fields', {})
         catalog = roster_catalog({}, fields, cfg, wiki, known_owned)
         assess_rules(row, cfg, fields, reverse, *compile_roster(catalog, fields, cfg['overrides'], reverse))

@@ -823,7 +823,7 @@ class ManagerInterface(BaseInterface):
             return
         self.edit_profile_fields(token, index, updated)
 
-    def calculate(self, *, import_path=None):
+    def calculate(self, *, import_path=None, reuse_allocations=False):
         from .maintenance import Deferred, exclusive
         account = self.root
         self.check_account(account)
@@ -832,7 +832,7 @@ class ManagerInterface(BaseInterface):
             with exclusive(account.parent/'_maintenance'):
                 if import_path is not None:
                     import_inventory(account,import_path)
-                preview(account,wiki_path(),refresh=False)
+                preview(account,wiki_path(),refresh=False,reuse_allocations=reuse_allocations)
         except Deferred as exc:
             raise ValueError('插件任务或维护正在运行，请结束后再计算仓库预览。') from exc
         finally:
@@ -854,7 +854,7 @@ class ManagerInterface(BaseInterface):
         self.finish_edit(token, dict(cfg, profiles=profiles))
         self.refresh_teams(profiles[index]['name'])
 
-    def finish_edit(self, token, value):
+    def finish_edit(self, token, value, *, reuse_allocations=False):
         account, expected, _ = token
         self.check_account(account)
         try:
@@ -863,7 +863,7 @@ class ManagerInterface(BaseInterface):
             self.reload()
             raise
         if (account/'inventory.json').is_file():
-            self.calculate()
+            self.calculate(reuse_allocations=reuse_allocations)
         else:
             self.reload()
 
@@ -1010,14 +1010,15 @@ class ManagerInterface(BaseInterface):
         from .reserve_presets import scope_name
         token = self.edit_token()
         title = scope_name(selectors, self.set_names)
-        dialog = QuotaEditor(self, selectors, token[2], equipment_keys(self.set_names), title)
+        report = self.report if self.report and not self.preview_stale else None
+        dialog = QuotaEditor(self, selectors, token[2], equipment_keys(self.set_names), title, report=report)
         dialog.purpose.setCurrentText(purpose)
         if not dialog.exec(): return
         self.check_account(token[0])
         rules, summary = dialog.result_rules()
         if rules == dialog.cfg['reserve_rules']:
             return
-        self.finish_edit(token, dict(dialog.cfg, reserve_rules=rules))
+        self.finish_edit(token, dict(dialog.cfg, reserve_rules=rules), reuse_allocations=True)
         return summary
 
     def update_rules(self):

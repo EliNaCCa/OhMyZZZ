@@ -82,6 +82,11 @@ def smoke(home):
         m = scan(inventory(old, fresh, manual))
         assert m.rows[old_id]['decision'] == '弃置候选' and m.rows[new_id]['reasons'] == ['备用 · 通用']
         assert m.rows[manual_id]['reasons'] == ['游戏内已锁定']
+        from drive_disc_manager.reserve_policy import quota_impact
+        original_report = deepcopy(m.report)
+        impact = quota_impact(m.report, {'set':'SwingJazz'}, dict(cfg,reserve=0), {})
+        assert impact == dict(total=3,before=2,after=1,newCandidates=1,spares=0,groups=1)
+        assert m.report == original_report
         visit(m, 'lock', fresh)
         visit(m, 'lock', manual)
         visit(m, 'release', old)

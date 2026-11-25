@@ -85,7 +85,8 @@ def roster_catalog(z, fields, cfg, wiki, known_owned=()):
 
 
 _MAIN = {identifier(key):value for key,value in STATS.items()}
-_MAIN.update(cr='crit_', cd='crit_dmg_', ap='anomProf', am='anomMas_', er='energyRegen_', pen='pen_')
+_MAIN.update(cr='crit_', cd='crit_dmg_', cdmg='crit_dmg_', ap='anomProf', am='anomMas_', er='energyRegen_',
+             pen='pen_', elec='electric_dmg_', phys='physical_dmg_')
 _MAIN.update({e:e+'_dmg_' for e in ELEMENTS})
 
 
@@ -112,11 +113,16 @@ def parse_substats(values):
         'cr':'crit_', 'critrate':'crit_', 'cd':'crit_dmg_', 'critdmg':'crit_dmg_',
         'ap':'anomProf', 'anomalyproficiency':'anomProf', 'pen':'pen', 'flatpen':'pen',
         'atk':'atk', 'atk%':'atk_', 'flatatk':'atk', 'hp':'hp', 'hp%':'hp_',
-        'def':'def', 'def%':'def_',
+        'def':'def', 'def%':'def_', 'flathp':'hp', 'flatdef':'def',
     }
     stats = set()
     for value in values:
+        # Some guide cells distinguish build variants with a label on the first stat.
+        value = re.sub(r'^\s*(?:CRIT|Anomaly)\s*:\s*', '', value, flags=re.I)
         for part in re.split(r'[,><=/|\n]+',value):
+            if part.strip() in aliases.values():
+                stats.add(part.strip())
+                continue
             atom = re.sub(r'\([^()]*\)', '', part).strip().casefold().replace(' ', '')
             stat = aliases.get(atom, aliases.get(atom.rstrip('%')))
             if stat:

@@ -16,6 +16,17 @@ def development(row):
     return dict(initial=initial, remaining=5-spent, upgrades=5-spent-(4-visible))
 
 
+def assess_growth(row, cfg):
+    growth = development(row)
+    if growth is None:
+        row['review'].append('强化档数与等级不符')
+        return
+    row['development'] = growth
+    row['explanation'].append(f"初始 {growth['initial']} 词条 · 剩余 {growth['remaining']} 次强化机会")
+    if cfg.get('protectNaturalCrit', True) and growth['initial'] == 4 and {'crit_', 'crit_dmg_'} <= row['rolls'].keys():
+        row['reasons'].append('原生四词条双暴保护')
+
+
 def quota(value):
     if value is not None and (type(value) is not int or value < 0):
         raise ValueError('备用数量应为非负整数或 null（不限）')
@@ -64,6 +75,7 @@ def apply_reserves(rows, cfg):
         limits, trim = matching_rules(criteria, cfg)
         eligible = []
         for row in group:
+            row['keptBeforeReserves'] = bool(row['reasons'])
             if not trim:
                 row['reasons'].extend(row['recommendations'])
             if not row['reasons'] and not row['review']:
@@ -97,3 +109,20 @@ def apply_reserves(rows, cfg):
         report.append(dict(**criteria, trimRecommended=trim, eligible=len(eligible),
                            kept=len(selected), purposes=by_purpose))
     return report
+
+
+def quota_impact(report, scope, cfg, reverse):
+    """Replay only spare selection for the matching groups in this saved preview."""
+    scope = rule_selectors(scope)
+    rows = [row for row in report['discs'] if not row['marked'] and all(row[k] == v for k,v in scope.items())]
+    if any('keptBeforeReserves' not in row for row in rows):
+        return None
+    prepared = [dict(row, reasons=['独立保留'] if row['keptBeforeReserves'] else [], explanation=[]) for row in rows]
+    normalized = [normalized_rule(rule,reverse) for rule in cfg['reserve_rules']]
+    coverage = apply_reserves(prepared, dict(cfg,reserve_rules=normalized))
+    before = sum(row['decision'] == '保留' for row in rows)
+    after = sum(bool(row['reasons']) for row in prepared)
+    new_candidates = sum(old['decision'] != '弃置候选' and not new['reasons'] and not new['review']
+                         for old,new in zip(rows, prepared, strict=True))
+    return dict(total=len(rows), before=before, after=after, newCandidates=new_candidates,
+                spares=sum(group['kept'] for group in coverage), groups=len(coverage))

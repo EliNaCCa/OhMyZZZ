@@ -136,6 +136,44 @@ def smoke(home, tmp):
     page.slot.setCurrentIndex(page.slot.findData('4'))
     assert '偏暴伤' not in page.current.text()
     assert page.grid.rowCount() == 3
+    from drive_disc_manager.purpose_editor import PurposeEditor
+    assert '角色' in page.grid.item(0,4).text() and page.grid.item(2,4).text() == '暴击伤害'
+    probe_row = dict(set='SwingJazz',slot='4',main='def_',fp='demo-ap',decision='弃置候选',marked=False,
+                     keptBeforeReserves=False,rolls={'anomProf':1},development={'upgrades':4},review=[],
+                     reasons=[],recommendations=[],explanation=[])
+    draft = dict(config(account), reserve=0,reserve_rules=[])
+    dialog = QuotaEditor(widget,{'set':'SwingJazz'},draft,{},'摇摆爵士',report={'discs':[probe_row]})
+    def abnormal(editor):
+        editor.name.setText('异常队')
+        assert not editor.save_button.isEnabled()
+        editor.checks['anomProf'].click()
+        assert editor.save_button.isEnabled()
+        return True
+    with patch.object(PurposeEditor,'exec',abnormal):
+        dialog.edit_purpose(new=True)
+    dialog.try_button.click()
+    assert '保留 0 → 1 张，其中备用 1 张' in dialog.impact.text()
+    dialog.count.setValue(2)
+    assert not dialog.impact.text()
+    dialog.purpose.setCurrentText('通用')
+    dialog.purpose.setCurrentText('异常队')
+    assert dialog.result_rules()[0] == [dict(set='SwingJazz',purpose='异常队',count=2,stats=['anomProf'])]
+    assert draft['reserve_rules']==[] and probe_row['decision']=='弃置候选'
+    dialog.inherit.click()
+    assert dialog.stat_note.text() == '此用途未设名额'
+    dialog.custom.click()
+    assert dialog.stat_note.text() == '异常精通' and dialog.count.value() == 2
+    dialog.purpose.setCurrentText('通用')
+    def smart_sort(editor):
+        assert editor.by_role.isChecked() and not editor.checks['crit_'].isEnabled()
+        editor.by_role.click()
+        assert editor.checks['crit_'].isEnabled()
+        editor.by_role.click()
+        return True
+    with patch.object(PurposeEditor,'exec',smart_sort):
+        dialog.edit_purpose(new=False)
+    dialog.count.setValue(3)
+    assert dialog.result_rules()[0][-1] == dict(set='SwingJazz',purpose='通用',count=3)
     cfg = config(account)
     cfg['profiles'] = [dict(name='临时队',request=dict(roleSystem='ATTACK',characterName='艾莲'))]
     save(account/'config.json', cfg)

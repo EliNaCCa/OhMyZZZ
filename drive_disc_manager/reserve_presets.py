@@ -4,8 +4,9 @@ from PySide6.QtWidgets import QComboBox, QFormLayout, QHBoxLayout, QLabel, QPush
 
 from .disc_detail_page import fill, table
 from .main_rule_editor import NAMES
+from .purpose_editor import ranking_label
 from .quota_editor import amount
-from .reserve_policy import matching_rules, normalized_rule, rule_selectors
+from .reserve_policy import DEFAULT_STATS, matching_rules, normalized_rule, rule_selectors
 from .store import equipment_keys
 from .subscriptions import SLOT_MAIN
 
@@ -51,7 +52,7 @@ class ReservePresets(QWidget):
         layout.addWidget(self.current)
         self.change = QPushButton('设置此范围的备用数量')
         layout.addWidget(self.change)
-        self.grid = table(['已设范围', '用途', '同类名额', '推荐盘策略'])
+        self.grid = table(['已设范围', '用途', '同类名额', '推荐盘策略', '排序依据'])
         layout.addWidget(self.grid)
         self.suit.currentIndexChanged.connect(self.describe)
         self.slot.currentIndexChanged.connect(self.show_stats)
@@ -109,7 +110,9 @@ class ReservePresets(QWidget):
         self.describe()
         def row(rule):
             mode = '继承' if 'trimRecommended' not in rule else '按名额筛选' if rule['trimRecommended'] else '全部保留'
-            return (scope_name(rule_selectors(rule), names), rule.get('purpose') or '通用', amount(rule['count']), mode)
+            purpose = rule.get('purpose') or '通用'
+            return (scope_name(rule_selectors(rule), names), purpose, amount(rule['count']), mode,
+                    ranking_label(purpose, rule.get('stats', DEFAULT_STATS)))
         fill(self.grid, [row(rule) for rule in self.rules])
 
     def describe(self, *_):

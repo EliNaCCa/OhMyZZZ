@@ -2,6 +2,28 @@
 from .optimizer import NoBuildCandidates, number, select_candidate
 
 
+def reusable_assignments(report, allocation_key, groups, pool):
+    """Reuse a successful UI preview only if all six slots and group claims still match."""
+    if not report or not allocation_key or report.get('allocationKey') != allocation_key or report.get('issues'):
+        return None
+    saved = report.get('assignments')
+    names = {profile['name'] for members in groups.values() for profile, _ in members}
+    if not isinstance(saved, dict) or saved.keys() != names:
+        return None
+    slots = {disc['id']: disc['slot'] for disc in pool}
+    for members in groups.values():
+        claimed = set()
+        for profile, _ in members:
+            result = saved[profile['name']]
+            ids = result.get('ids') if isinstance(result, dict) and not result.get('error') else None
+            if not isinstance(ids, list) or not all(isinstance(fp, str) for fp in ids):
+                return None
+            if [slots.get(fp) for fp in ids] != list(range(1, 7)) or not claimed.isdisjoint(ids):
+                return None
+            claimed.update(ids)
+    return saved
+
+
 def group_conflict(profiles):
     owners = {}
     for profile in profiles:
