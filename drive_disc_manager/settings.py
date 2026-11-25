@@ -9,7 +9,7 @@ from .store import read,save,config,import_inventory,digest,equipment_names,equi
 from .service import preview
 from .subscriptions import sync, current_conflicts, can_merge, effective, resolve_conflict, save_config, save_config_draft, save_field_override
 from .manager_app import wiki_path
-from .drive_disc_manager_const import APP_ID, APP_NAME
+from .drive_disc_manager_const import APP_ID, APP_NAME, PLUGIN_VERSION
 from .reserve_policy import matching_rules, normalized_rule, SELECTORS
 from .roster import roster_catalog
 from .disc_owner import owner_label
@@ -49,7 +49,7 @@ class ManagerInterface(BaseInterface):
         box.addWidget(self.inventory_filter); box.addWidget(self.table)
         self.stat_info = QLabel(); self.stat_info.setWordWrap(True); box.addWidget(self.stat_info)
         self.reserve_info = QLabel(); self.reserve_info.setWordWrap(True); box.addWidget(self.reserve_info)
-        self.restore_unlock = self.button(box, '取消这张盘的手动解锁保护', self.clear_unlock)
+        self.restore_unlock = self.button(box, '取消这张盘的手动解锁保护', self.clear_manual_exception)
         self.restore_unlock.hide()
         self.table.itemSelectionChanged.connect(self.show_reserve)
         self.inventory_filter.changed.connect(self.show_reserve)
@@ -293,10 +293,17 @@ class ManagerInterface(BaseInterface):
         self.cfg=config(self.root); self.rules=read(self.root/'rules.json',{}); self.report=read(self.root/'preview.json',{})
         self.config_hash = digest(self.cfg)
         inventory = read(self.root/'inventory.json', {})
-        self.preview_stale = bool(self.report) and (
-            self.report.get('configuration') != self.config_hash
-            or self.report.get('rules') != self.rules.get('version')
-            or not inventory or self.report.get('inventory') != digest(inventory))
+        changed_inputs = []
+        if self.report:
+            if self.report.get('managerVersion') != PLUGIN_VERSION:
+                changed_inputs.append('插件版本')
+            if self.report.get('configuration') != self.config_hash:
+                changed_inputs.append('配置')
+            if self.report.get('rules') != self.rules.get('version'):
+                changed_inputs.append('订阅规则')
+            if not inventory or self.report.get('inventory') != digest(inventory):
+                changed_inputs.append('库存')
+        self.preview_stale = bool(changed_inputs)
         self.editor_account = self.root
         self.editor_base, text = self.editor_drafts.get(self.root, (deepcopy(self.cfg), pretty(self.cfg)))
         self.show_probe(read(self.root/'single-disc.json', {}))
@@ -324,7 +331,7 @@ class ManagerInterface(BaseInterface):
         self.filter_rules()
         summary = f"上次预览 {self.report.get('counts',{})}" if self.report else '尚无完整库存预览'
         if self.preview_stale:
-            summary += ' · 库存、配置或规则已更新，请重新计算'
+            summary += ' · '+'、'.join(changed_inputs)+'已更新，请重新计算'
         self.status.setText(f"{summary}　待处理规则冲突 {len(conflicts)}　"+' / '.join(self.report.get('issues',[])+self.report.get('warnings',[])))
         self.refresh_teams()
         self.engine_mode.setText('手动连接 · '+self.cfg['optimizer_url'] if self.cfg['optimizer_url'] else '由 OhMyZZZ 按需启动')
@@ -956,7 +963,9 @@ class ManagerInterface(BaseInterface):
         self.detail_button.setEnabled(selected or self.probe_record.get('status')=='verified')
         self.detail_button.setText('查看盘详情' if selected or self.probe_record.get('status')!='verified' else '查看上次单盘读数')
         self.stat_info.clear()
-        self.restore_unlock.setVisible(0 <= index < len(self.rows) and bool(self.rows[index].get('manualUnlock')))
+        selected_row = self.rows[index] if selected else {}
+        self.restore_unlock.setText('取消这张盘的撤销弃置保护' if selected_row.get('manualKeep') else '取消这张盘的手动解锁保护')
+        self.restore_unlock.setVisible(bool(selected_row.get('manualUnlock') or selected_row.get('manualKeep')) and not selected_row['marked'])
         self.reserve_info.setText('选择一张盘，可查看同类备用名额和各用途的实际张数。')
         if not 0 <= index < len(self.rows): return
         from .stat_reading import display_values
@@ -969,8 +978,8 @@ class ManagerInterface(BaseInterface):
             parts.append(f"{use['purpose']} {use['covered']}/{cap}")
         self.reserve_info.setText(f"同类可选 {group['eligible']} 张，实际备用 {group['kept']} 张　｜　"+'　'.join(parts))
 
-    def clear_unlock(self):
-        from .marks import clear_unlock_exception
+    def clear_manual_exception(self):
+        from .marks import clear_manual_exception
         from .store import equipment_names
         index = self.table.currentRow()
         if not 0 <= index < len(self.rows): return
@@ -978,8 +987,8 @@ class ManagerInterface(BaseInterface):
             raise ValueError('当前账号已变化，请重新打开配置页')
         names = equipment_names(read(wiki_path(), {}))
         names.update(self.cfg.get('aliases', {}))
-        clear_unlock_exception(self.root, self.rows[index], self.report['inventory'], names)
-        self.calculate()
+        clear_manual_exception(self.root, self.rows[index], self.report['inventory'], names)
+        self.calculate(reuse_allocations=True)
 
     def set_quota(self, r=None):
         if r is None:
@@ -1078,9 +1087,12 @@ class ManagerInterface(BaseInterface):
         mode = modes[title]
         selected = old['values'] if old['mode'] != 'inherit' or mode == 'only' else []
         override = None
-        if mode != 'inherit' and key.startswith('matrix/') and key.rsplit('/',1)[-1] in ('4','5','6'):
+        from .subscriptions import stat_field
+        field = key.rsplit('/',1)[-1]
+        role_field = stat_field(key)
+        if mode != 'inherit' and (role_field or (key.startswith('matrix/') and field in ('4','5','6'))):
             from .main_rule_editor import MainRuleEditor
-            dialog = MainRuleEditor(self, row[0]+' · '+row[1], key.rsplit('/',1)[-1], mode, seen_remote or [], selected)
+            dialog = MainRuleEditor(self, row[0]+' · '+row[1], field[-1], mode, seen_remote or [], selected, role_field=role_field)
             if not dialog.exec(): return
             override = dict(mode=mode, values=dialog.values())
         elif mode != 'inherit' and key.startswith('build/') and key.rsplit('/',1)[-1] in ('sets4','sets2'):
@@ -1119,17 +1131,23 @@ class ManagerInterface(BaseInterface):
         conflict = self.conflicts.get(key)
         override = self.cfg['overrides'].get(key) or {}
         mode = override.get('mode','inherit')
-        def display(values):
+        def display(values, *, show_accepted=False):
             if values is None: return '字段缺失'
             if source == 'matrix':
                 from .main_rule_editor import NAMES
                 return '、'.join(NAMES.get(v,v) for v in values) or '无'
             if source == 'build' and field in ('sets4','sets2'):
                 return '、'.join(self.set_names.get(v,v) for v in values) or '无'
+            if show_accepted and source in ('guide','build') and field in ('subs','slot4','slot5','slot6'):
+                from .main_rule_editor import NAMES
+                from .purpose_editor import SUBSTAT_NAMES
+                from .subscriptions import accepted_terms
+                names = SUBSTAT_NAMES if field == 'subs' else NAMES
+                return '、'.join(names.get(v, v) for v in sorted(accepted_terms(key, values))) or '无'
             return '、'.join(values) or '无'
-        local = '继承上游' if mode=='inherit' else ('额外接受 ' if mode=='add' else '只接受 ') + display(override['values'])
+        local = '继承上游' if mode=='inherit' else ('额外接受 ' if mode=='add' else '只接受 ') + display(override['values'], show_accepted=True)
         return [('⚠ ' if conflict else '')+subject, labels.get(field,field), '、'.join(tabs),
-                display(conflict['old']) if conflict else '—', display(remote), local, display(effective(remote,override or None))]
+                display(conflict['old']) if conflict else '—', display(remote), local, display(effective(remote,override or None), show_accepted=True)]
 
     def filter_rules(self, *_):
         if not hasattr(self, 'rule_rows'):

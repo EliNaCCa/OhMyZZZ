@@ -19,7 +19,7 @@ def smoke(home, tmp):
     from drive_disc_manager import subscriptions
     from drive_disc_manager.quota_editor import QuotaEditor
     from drive_disc_manager.settings import ManagerInterface
-    from drive_disc_manager.store import config, save
+    from drive_disc_manager.store import config, digest, save
 
     app = QApplication([])
     os_utils.set_work_dir(str(home))
@@ -224,6 +224,13 @@ def smoke(home, tmp):
                                      assignments={'常态队':dict(ids=['demo'])}))
     widget.reload()
     assert '请重新计算' in widget.status.text() and not widget.apply_button.isEnabled()
+    old_inventory = dict(format='ZOD', version=1, dbVersion=2, characters=[], wengines=[], discs=[])
+    save(account/'inventory.json', old_inventory)
+    save(account/'preview.json', dict(widget.report, managerVersion='0.0.0', rules=widget.rules['version'],
+                                      inventory=digest(old_inventory)))
+    widget.reload()
+    assert '插件版本已更新，请重新计算' in widget.status.text() and not widget.apply_button.isEnabled()
+    (account/'inventory.json').unlink()
     browser = widget.inventory_filter
     browser.search.setText('摇摆爵士 5号')
     browser.kind.setCurrentText('额外备用')
@@ -265,6 +272,22 @@ def smoke(home, tmp):
     agent = dict(label='艾莲',selected=True, builds=['Ellen'],guides=[])
     roles, _, _ = compile_roster([agent],fields,{role_key:dict(mode='add',values=['摇摆爵士'])},{'摇摆爵士':'SwingJazz'})
     assert set(roles)=={'swingjazz','polarmetal'}
+    from drive_disc_manager.main_rule_editor import MainRuleEditor
+    sub_key = 'guide/Ellen Joe/subs'
+    fields[sub_key] = ['CR% (until cap) > CD%³ = ATK%']
+    save(account/'rules.json', dict(fields=fields, version='role-stats-fixture'))
+    widget.reload()
+    widget.rule_search.setText('Ellen 副词条')
+    assert widget.visible_keys == [sub_key]
+    def choose_stats(dialog):
+        assert all(dialog.checks[k].isChecked() for k in ('crit_', 'crit_dmg_', 'atk_'))
+        assert '暴击伤害' in dialog.checks['crit_dmg_'].text()
+        dialog.checks['crit_dmg_'].click()
+        return True
+    with patch.object(QInputDialog,'getItem',return_value=('只接受',True)), patch.object(MainRuleEditor,'exec',choose_stats):
+        widget.edit_rule()
+    accepted = config(account)['overrides'][sub_key]
+    assert accepted['mode'] == 'only' and set(accepted['values']) == {'crit_', 'atk_'}
     widget.close()
 
 

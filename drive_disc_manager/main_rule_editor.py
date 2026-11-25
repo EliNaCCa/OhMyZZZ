@@ -1,4 +1,5 @@
 """Edit a single Set+Main subscription field in the host's settings page."""
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QGridLayout, QLabel, QVBoxLayout
 from .subscriptions import SLOT_EXTRA
 
@@ -12,17 +13,34 @@ NAMES = {'hp_':'生命值百分比', 'atk_':'攻击力百分比', 'def_':'防御
 
 
 class MainRuleEditor(QDialog):
-    def __init__(self, parent, title, slot, mode, remote, selected):
+    def __init__(self, parent, title, slot, mode, remote, selected, *, role_field=None):
         super().__init__(parent)
         self.setWindowTitle(title)
         outer = QVBoxLayout(self)
-        note = '勾选要额外接受的主属性，上游的推荐也会生效。' if mode=='add' else '勾选此套装和号位要接受的主属性。'
+        note = '勾选额外接受的词条，上游推荐也会生效。' if mode=='add' else '此字段只接受勾选的词条。'
         outer.addWidget(QLabel(note))
+        names = NAMES
+        if role_field:
+            from .roster import stat_parts
+            original = QLabel('上游原文 · '+(' ｜ '.join(remote) or '空'))
+            original.setTextFormat(Qt.TextFormat.PlainText)
+            original.setWordWrap(True)
+            outer.addWidget(original)
+            remote, remote_unknown = stat_parts(role_field, remote)
+            selected, selected_unknown = stat_parts(role_field, selected)
+            remote = sorted(remote | remote_unknown)
+            selected = sorted(selected | selected_unknown)
+        if role_field == 'subs':
+            from .purpose_editor import SUBSTAT_NAMES
+            names = SUBSTAT_NAMES
+            options = list(names)
+        else:
+            options = [*SLOT_EXTRA[slot], 'atk_', 'hp_', 'def_']
         grid = QGridLayout(); outer.addLayout(grid)
         self.checks = {}
-        keys = dict.fromkeys([*SLOT_EXTRA[slot], 'atk_', 'hp_', 'def_', *remote, *selected])
+        keys = dict.fromkeys([*options, *remote, *selected])
         for index, key in enumerate(keys):
-            check = QCheckBox(NAMES.get(key, key) + ('（上游推荐）' if key in remote else ''))
+            check = QCheckBox(names.get(key, key) + ('（上游推荐）' if key in remote else ''))
             check.setToolTip(key); check.setChecked(key in selected)
             grid.addWidget(check,index//2,index%2)
             self.checks[key] = check

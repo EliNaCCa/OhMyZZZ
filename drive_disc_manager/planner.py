@@ -6,7 +6,7 @@ from .drive_disc_manager_const import PLUGIN_VERSION
 from .store import digest, equipment_keys, fingerprint, inventory, roll_base
 from .subscriptions import effective, current_conflicts, SLOT_MAIN
 from .reserve_policy import apply_reserves, assess_growth, normalized_rule
-from .roster import compile_roster, explain, roster_catalog
+from .roster import compile_roster, explain, parse_main, roster_catalog
 from .stat_reading import checked_values
 
 
@@ -43,13 +43,16 @@ def assess_rules(row, cfg, fields, reverse, by_set, unresolved, excluded):
             row['recommendations'].append('角色套装 · '+agent['name'])
             continue
         field = 'guide/'+agent['name']+'/slot'+row['slot']
-        values = effective(fields.get(field), cfg['overrides'].get(field)) or []
-        # A missing/ambiguous guide cell may not downgrade a candidate to trash.
-        if not values or not agent.get('mainMap'):
-            row['review'].append('角色用途待核 · '+agent['name'])
-        elif any(main in agent['mainMap'].get(v,[]) for v in values):
+        local = cfg['overrides'].get(field) or {}
+        values = effective(fields.get(field), local) or []
+        mappings = agent.get('mainMap') or {}
+        direct, unknown = parse_main([value for value in values if value not in mappings])
+        mapped = {stat for value in values if value in mappings for stat in mappings[value]}
+        if main in direct or main in mapped:
             row['recommendations'].append('角色攻略 · '+agent['name'])
-        elif any(v not in agent['mainMap'] for v in values):
+        elif not values and local.get('mode') != 'only':
+            row['review'].append('角色用途待核 · '+agent['name'])
+        elif unknown and any(value not in mappings for value in values):
             row['review'].append('角色词条映射待核 · '+agent['name'])
         row['ruleUses'].append((field, agent['name'], '个人套装与主属性映射'))
     if main not in known and not excluded_locally and not (row['recommendations'] or row['reasons']):
@@ -121,6 +124,8 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         manual_unlock = entry.get('state') == 'manual-unlock'
         if manual_unlock:
             why.append('手动解锁后保留')
+        if entry.get('state') == 'manual-keep':
+            why.append('手动撤销弃置后保留')
         if fp in cfg['pins']:
             why.append('手动保护')
         if cfg['protect15'] and d['level']==15:
@@ -136,6 +141,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         row['scannedLock'] = d.get('lockState', 'unknown')
         row['managedSpareLock'] = managed
         row['manualUnlock'] = manual_unlock
+        row['manualKeep'] = entry.get('state') == 'manual-keep'
         if entry.get('state') in ('released', 'pending'):
             row['review'].append('上轮标记操作等待现场对账')
         if managed:
@@ -183,7 +189,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     evidence = rule_book(rows, rules, cfg['overrides'], current_conflicts(rules, cfg['overrides']))
     teams = {p['name']:dict(agent=(p.get('request') or {}).get('characterName') or p.get('agentKey'),
                             group=p.get('simultaneous') or '') for p in enabled}
-    return dict(inventory=inventory_hash, rules=rules.get('version'), configuration=digest(cfg), assignments=assignments,
+    return dict(managerVersion=PLUGIN_VERSION, inventory=inventory_hash, rules=rules.get('version'), configuration=digest(cfg), assignments=assignments,
                 allocationKey=allocation_key, reusedAssignments=saved is not None,
                 traceRules=evidence, traceTeams=teams,
                 issues=issues, roster=[a for a in catalog if a['selected']], reserveCoverage=coverage,

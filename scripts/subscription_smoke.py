@@ -1,5 +1,7 @@
 """One field across three upstream revisions. No game or account data."""
 import sys
+from http.client import IncompleteRead
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -60,6 +62,26 @@ def smoke(root):
     sub.resolve_conflict(root, key, conflict(five), 'remote')
     assert key not in config(root)['overrides'] and conflict(five) is None
     from drive_disc_manager.service import preview, rule_snapshot
+    # Short downloads and broken CSV must not replace the last successful revision.
+    header = 'Name,Disc 4,Disc 5,Disc 6,Substats,4pc_0,All 2pc_0\n'
+    assert sub.build_fields(header+'Ellen Joe,,,,,,')['build/Ellen Joe/sets2'] == []
+    save(root/'rules.json', dict(read(root/'rules.json'), updated=0))
+    snapshot_bytes = (root/'rules.json').read_bytes()
+    truncated = BytesIO(b'partial')
+    truncated.headers = {'Content-Length':'10'}
+    for downloader, parser in [(truncated, 'fetch'), (IncompleteRead(b''), 'fetch'),
+                               ('Ellen Joe,CR%', 'parse'), ('"Ellen Joe', 'parse')]:
+        if parser == 'fetch':
+            mock_args = {'side_effect':downloader} if isinstance(downloader, Exception) else {'return_value':downloader}
+            mocked = patch.object(sub.urllib.request, 'urlopen', **mock_args)
+            source = lambda: sub.fetch('fixture')
+        else:
+            mocked = patch.object(sub, 'fetch', return_value=header+downloader)
+            source = lambda: sub.build_fields(sub.fetch('fixture'))
+        with mocked, patch.object(sub, 'sources', side_effect=source):
+            _, last_good, warnings = rule_snapshot(root)
+        assert len(warnings) == 1 and '使用最近成功版本' in warnings[0] and last_good['version'] == five['version']
+        assert (root/'rules.json').read_bytes() == snapshot_bytes
     pinned = rule_snapshot(root, refresh=False)
     update(['atk_'])
     sample = dict(id='d4',setKey='SwingJazz',slotKey='4',level=0,rarity='S',mainStatKey='crit_',
@@ -125,6 +147,40 @@ def smoke(root):
     assert parse_substats(['Anomaly: AP >= ATK%', 'CRIT: CR% (until cap) >= CD%', 'Flat HP']) == {
         'anomProf', 'atk_', 'crit_', 'crit_dmg_', 'hp'}
     assert parse_substats(['hp_', 'crit_dmg_', 'anomProf']) == {'hp_', 'crit_dmg_', 'anomProf'}
+
+    role_key = 'guide/Ellen Joe/subs'
+    overrides = {role_key:dict(mode='only', values=['crit_', 'atk_'])}
+    def role_change(previous, raw):
+        return sub.merge(previous, {role_key:[raw]}, overrides, {})
+    first = role_change({}, 'CR% > ATK%')
+    reworded = role_change(first, 'ATK% = CRIT Rate')
+    assert not sub.current_conflicts(reworded, overrides)
+    changed = role_change(reworded, 'CR% > CD%')
+    detail = sub.current_conflicts(changed, overrides)[role_key]
+    assert sub.can_merge(detail) and detail['active'] == ['atk_', 'crit_'] and detail['remote'] == ['CR% > CD%']
+    restored = role_change(changed, 'CR% / ATK%')
+    assert not sub.current_conflicts(restored, overrides)
+    only_removed = role_change(restored, 'CRIT Rate')
+    assert not sub.can_merge(sub.current_conflicts(only_removed, overrides)[role_key])
+
+    from drive_disc_manager.roster import compile_roster
+    agent = dict(label='演示角色', selected=True, builds=['Example'], guides=[])
+    sets = {'build/Example/sets2':['SwingJazz'], 'build/Example/sets4':['PolarMetal']}
+    disabled = {k:dict(mode='only', values=[]) for k in sets}
+    assert not compile_roster([agent], sets, disabled)[1]
+    assert compile_roster([agent], {}, {})[1] == ['演示角色']
+
+    # A new source term protects only the matching role/set/main while ranking spares.
+    fields = {**sets, 'build/Example/slot4':['CR%'], 'build/Example/subs':['ATK% > New Stat']}
+    rules = dict(fields=fields, version='new-term')
+    cfg = dict(cfg, futureAgents=['example'], trimRecommended=True, reserve=0)
+    relevant = plan(data, cfg, rules, {})['discs'][0]
+    assert relevant['decision'] == '待复核' and any('角色副词条待核' in s and 'New Stat' in s for s in relevant['review'])
+    assert any(k=='build/Example/subs' and 'New Stat' in s for k, _, s in relevant['ruleUses'])
+    cfg['overrides'] = {'build/Example/subs':dict(mode='only',values=['atk_'])}
+    assert plan(data, cfg, rules, {})['discs'][0]['decision'] == '弃置候选'
+    unrelated = dict(data, discs=[dict(sample, setKey='Other')])
+    assert all('New Stat' not in s for s in plan(unrelated, dict(cfg, overrides={}), rules, {})['discs'][0]['review'])
 
 
 if __name__ == '__main__':

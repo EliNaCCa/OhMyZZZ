@@ -87,11 +87,15 @@ def reconcile_scan(root, inventory, names=None):
         action = mark_action(live, previous, False)
         if action in ('already-discarded','manual-keep') and action != previous:
             history[fp] = dict(state=action,time=now)
+        if action == 'manual-keep' and clear_controls and not history[fp].get('values'):
+            values = checked_values(disc, base)
+            if values:
+                history[fp]['values'] = values
     save(root/'markers.json', history)
     return {fp for fp,entry in history.items() if entry['state']=='manual-keep'}
 
 
-def clear_unlock_exception(root, row, inventory_digest, names):
+def clear_manual_exception(root, row, inventory_digest, names):
     from .maintenance import exclusive
     from .stat_reading import checked_values
     from .store import digest, fingerprint, read, roll_base, save
@@ -105,7 +109,9 @@ def clear_unlock_exception(root, row, inventory_digest, names):
             raise ValueError('库存已变化或有重复盘，请重新计算')
         disc = next(d for d in snapshot['discs'] if fingerprint(d) == fp)
         values = checked_values(disc, roll_base(snapshot))
-        if not values or values != row.get('observedValues') or entry.get('state') != 'manual-unlock' or entry.get('values') != values:
-            raise ValueError('当前盘与手动解锁记录不一致，请重新扫描')
+        expected = 'manual-unlock' if row.get('manualUnlock') else 'manual-keep' if row.get('manualKeep') else None
+        if (not expected or entry.get('state') != expected or not values or values != row.get('observedValues')
+                or entry.get('values') != values or disc.get('markState') != 'unmarked' or disc.get('trash') is not False):
+            raise ValueError('当前盘与手动保护记录不一致，请重新扫描')
         del history[fp]
         save(root/'markers.json', history)

@@ -4,6 +4,7 @@ import re
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from http.client import HTTPException
 from .maintenance import exclusive
 from .store import config, digest, read, save
 
@@ -23,16 +24,22 @@ SLOT_MAIN = {'1': ('hp',), '2': ('atk',), '3': ('def',),
 
 
 def fetch(url):
-    with urllib.request.urlopen(url, timeout=15) as response:
-        raw = response.read(4_000_001)
+    try:
+        with urllib.request.urlopen(url, timeout=15) as response:
+            size = response.headers.get('Content-Length')
+            raw = response.read(4_000_001)
+    except HTTPException as exc:
+        raise ValueError('订阅连接中断 · '+str(exc)) from exc
     if len(raw) > 4_000_000:
         raise ValueError('来源超过大小上限')
+    if size is not None and int(size) != len(raw):
+        raise ValueError('订阅下载不完整')
     return raw.decode('utf-8-sig')
 
 
 def matrix_fields(raw):
     fields, seen_slots, columns = {}, set(), {}
-    for row in csv.reader(io.StringIO(raw)):
+    for row in csv.reader(io.StringIO(raw), strict=True):
         name = row[0].strip() if row else ''
         if not name:
             continue
@@ -59,12 +66,14 @@ def matrix_fields(raw):
             continue
         if not columns:
             raise ValueError('缺少表头')
+        if len(row) <= max(columns):
+            raise ValueError(f'{slot} 号主词条表数据行缺列 · {name}')
         key = 'matrix/'+name.replace(' ','')+'/'+slot
         if key in fields:
             raise ValueError('重复套装行 '+name)
         accepted, known = [], []
         for i, stat in columns.items():
-            value = row[i].strip() if i < len(row) else ''
+            value = row[i].strip()
             if not value:
                 continue
             if not value.isdecimal():
@@ -80,7 +89,7 @@ def matrix_fields(raw):
 
 
 def guide_fields(raw):
-    rows = [r+['']*40 for r in csv.reader(io.StringIO(raw)) if any(cell.strip() for cell in r)]
+    rows = [r+['']*40 for r in csv.reader(io.StringIO(raw), strict=True) if any(cell.strip() for cell in r)]
     result, agent, cols = {}, '', {}
     for i, row in enumerate(rows):
         if row[1].strip().startswith('Last Updated:') and i:
@@ -110,17 +119,20 @@ def guide_fields(raw):
 
 
 def build_fields(raw):
-    records = csv.DictReader(io.StringIO(raw))
+    records = csv.DictReader(io.StringIO(raw), strict=True)
     columns = records.fieldnames or []
     required = {'Name', 'Disc 4', 'Disc 5', 'Disc 6', 'Substats', '4pc_0', 'All 2pc_0'}
     if not required.issubset(columns) or len(columns) != len(set(columns)):
         raise ValueError('Prydwen Builds 的角色、套装或词条表头发生变化')
     groups = {key: [col for col in columns if re.fullmatch(pattern, col)]
               for key, pattern in [('sets4', r'4pc_[0-9]+'), ('sets2', r'All 2pc_[0-9]+')]}
+    used_columns = required.union(*groups.values())
     result = {}
     for record in records:
         if not any(record.values()):
             continue
+        if None in record or any(record[col] is None for col in used_columns):
+            raise ValueError(f'Prydwen Builds 第 {records.line_num} 行列数不符')
         name = (record['Name'] or '').strip()
         prefix = 'build/' + name + '/'
         if not name or '/' in name or prefix + 'sets4' in result:
@@ -168,13 +180,29 @@ def effective(remote, override=None):
     return sorted(local)
 
 
-def conflict_view(change, override):
+def stat_field(key):
+    parts = key.split('/')
+    if len(parts) == 3 and parts[0] in ('guide', 'build') and parts[2] in ('subs', 'slot4', 'slot5', 'slot6'):
+        return parts[2]
+    return None
+
+
+def accepted_terms(key, values):
+    field = stat_field(key)
+    if field:
+        from .roster import stat_parts
+        stats, unknown = stat_parts(field, values or ())
+        return stats | unknown
+    return set(values or ())
+
+
+def conflict_view(change, override, key=''):
     if not override or override['mode'] == 'inherit':
         return None
     old, remote = change['old'], change['remote']
-    before, after = set(old or ()), set(remote or ())
+    before, after = accepted_terms(key, old), accepted_terms(key, remote)
     local = dict(mode=override['mode'], values=sorted(set(override['values'])))
-    values = set(local['values'])
+    values = accepted_terms(key, local['values'])
     # Compare the upstream delta with the player's intent. Preserve only disagreements.
     removed = (before - after) & values
     rejected = (after - before) - values if local['mode'] == 'only' else set()
@@ -183,13 +211,13 @@ def conflict_view(change, override):
     token = digest([change.get('event', change['version']), old, remote, local])
     if override.get('acknowledged') == token:
         return None
-    return dict(change, local=local, active=effective(remote, local), token=token)
+    return dict(change, fieldKey=key, local=local, active=effective(remote, local), token=token)
 
 
 def current_conflicts(snapshot, overrides):
     pending = {}
     for key, change in snapshot.get('conflicts', {}).items():
-        conflict = conflict_view(change, overrides.get(key))
+        conflict = conflict_view(change, overrides.get(key), key)
         if conflict:
             pending[key] = conflict
     return pending
@@ -206,7 +234,7 @@ def merge(previous, fields, overrides, tabs, origins=None):
         # Compare to the start of an outstanding disagreement even after intervening revisions.
         baseline = pending.pop(key, {}).get('old', before)
         change = dict(old=baseline, remote=after, version=rev, event=time.time_ns())
-        conflict = conflict_view(change, override)
+        conflict = conflict_view(change, override, key)
         if conflict:
             pending[key] = conflict
     return dict(fields=fields, version=rev, tabs=tabs, origins=origins or {}, updated=time.time(), conflicts=pending)
@@ -214,7 +242,8 @@ def merge(previous, fields, overrides, tabs, origins=None):
 
 def can_merge(conflict):
     return bool(conflict and conflict['local']['mode'] == 'only'
-                and set(conflict['remote'] or ()) - set(conflict['active']))
+                and accepted_terms(conflict.get('fieldKey', ''), conflict['remote'])
+                - accepted_terms(conflict.get('fieldKey', ''), conflict['active']))
 
 
 def resolve_conflict(root, key, seen, action):
@@ -231,7 +260,7 @@ def resolve_conflict(root, key, seen, action):
         elif action == 'union' and can_merge(actual):
             # Retain only the player's own values. Future upstream recommendations can still expire.
             override = dict(mode='add', values=actual['local']['values'])
-            conflict = conflict_view(actual, override)
+            conflict = conflict_view(actual, override, key)
             if conflict:
                 override['acknowledged'] = conflict['token']
             cfg['overrides'][key] = override

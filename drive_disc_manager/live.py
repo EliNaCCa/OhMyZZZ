@@ -98,7 +98,7 @@ class Marker:
 
     def remember(self,fp,state,intended=None,spare=False):
         entry = dict(state=state,intended=intended,inventory=self.report['inventory'],time=time.time())
-        if state in ('pending', 'released', 'manual-unlock'):
+        if state in ('pending', 'released', 'manual-unlock', 'manual-keep'):
             entry['values'] = self.rows[fp]['observedValues']
         if spare:
             entry['spareLock'] = dict(origin='verified-spare-lock-v1', values=self.rows[fp]['observedValues'])

@@ -12,7 +12,7 @@ from unittest.mock import patch
 def smoke(home):
     sys.path[:0] = [str(Path(__file__).resolve().parents[1]), str(home/'src'), str(home/'plugins')]
     from drive_disc_manager.live import Marker
-    from drive_disc_manager.marks import clear_unlock_exception, owns_spare, reconcile_scan
+    from drive_disc_manager.marks import clear_manual_exception, owns_spare, reconcile_scan
     from drive_disc_manager.planner import plan
     from drive_disc_manager.store import defaults, digest, fingerprint, read, save
 
@@ -113,7 +113,7 @@ def smoke(home):
         assert m.rows[old_id]['manualUnlock'] and m.rows[old_id]['decision'] == '保留'
         visit(m, 'lock', old)
         assert not old['lock']
-        clear_unlock_exception(root, m.rows[old_id], digest(z), names)
+        clear_manual_exception(root, m.rows[old_id], digest(z), names)
         assert old_id not in read(history_path)
         old.update(lock=True, lockState='locked')
         for z in (inventory(old, dict(old, id='4', setKey='摇摆爵士')), inventory(fresh),
@@ -148,6 +148,15 @@ def smoke(home):
         with patch('drive_disc_manager.live.marker_conflict',return_value=''), patch.object(m,'apply') as apply:
             assert m.run() == {} and m.report['discs'][0]['decision'] == '已弃置'
             apply.assert_not_called()
+        unmarked = dict(only_marked, trash=False, markState='unmarked')
+        z = inventory(unmarked, fresh, manual)
+        m = scan(z)
+        assert m.rows[old_id]['manualKeep'] and '手动撤销弃置后保留' in m.rows[old_id]['reasons']
+        assert old_id not in cfg['pins']
+        clear_manual_exception(root, m.rows[old_id], digest(z), names)
+        assert scan(z).rows[old_id]['reasons'] == ['备用 · 通用']
+        cfg['reserve'] = 0
+        assert scan(z).rows[old_id]['decision'] == '弃置候选' and len(clicked) == 4
     print('PASS three-disc spare rotation, manual and legacy protection, identity loss and interrupted release')
 
 

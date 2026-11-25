@@ -90,44 +90,50 @@ _MAIN.update(cr='crit_', cd='crit_dmg_', cdmg='crit_dmg_', ap='anomProf', am='an
 _MAIN.update({e:e+'_dmg_' for e in ELEMENTS})
 
 
-def parse_main(values):
-    stats, unknown = set(), not values
+_SUB = {
+    'cr':'crit_', 'critrate':'crit_', 'cd':'crit_dmg_', 'cdmg':'crit_dmg_', 'critdmg':'crit_dmg_',
+    'ap':'anomProf', 'anomalyproficiency':'anomProf', 'anomalyprofiency':'anomProf',
+    'pen':'pen', 'flatpen':'pen', 'atk':'atk', 'atk%':'atk_', 'flatatk':'atk',
+    'hp':'hp', 'hp%':'hp_', 'flathp':'hp', 'def':'def', 'def%':'def_', 'flatdef':'def',
+}
+_FOOTNOTES = str.maketrans('', '', '¹²³⁴⁵')
+
+
+def stat_parts(field, values):
+    """Return the stats this role field accepts plus the exact unrecognized terms."""
+    stats, unknown = set(), set()
+    substats = field == 'subs'
+    aliases = _SUB if substats else _MAIN
     for value in values:
+        if substats:
+            value = re.sub(r'^\s*(?:CRIT|Anomaly)\s*:\s*', '', value, flags=re.I)
         for part in re.split(r'[,><=/|\n]+', value):
-            if not part.strip():
+            raw = part.strip()
+            if not raw:
                 continue
-            if part.strip() in STATS.values():
-                stats.add(part.strip())
+            if raw in aliases.values():
+                stats.add(raw)
                 continue
-            token = identifier(part.translate(str.maketrans('', '', '¹²³⁴⁵')))
-            stat = _MAIN.get(token)
+            token = raw.translate(_FOOTNOTES)
+            if substats:
+                token = re.sub(r'\([^()]*\)', '', token).casefold().replace(' ', '')
+                stat = aliases.get(token) or aliases.get(token.rstrip('%'))
+            else:
+                stat = aliases.get(identifier(token))
             if stat:
                 stats.add(stat)
             else:
-                unknown = True
-    return stats, unknown or not stats
+                unknown.add(raw)
+    return stats, unknown
+
+
+def parse_main(values):
+    stats, unknown = stat_parts('main', values)
+    return stats, bool(unknown) or not stats
 
 
 def parse_substats(values):
-    aliases = {
-        'cr':'crit_', 'critrate':'crit_', 'cd':'crit_dmg_', 'critdmg':'crit_dmg_',
-        'ap':'anomProf', 'anomalyproficiency':'anomProf', 'pen':'pen', 'flatpen':'pen',
-        'atk':'atk', 'atk%':'atk_', 'flatatk':'atk', 'hp':'hp', 'hp%':'hp_',
-        'def':'def', 'def%':'def_', 'flathp':'hp', 'flatdef':'def',
-    }
-    stats = set()
-    for value in values:
-        # Some guide cells distinguish build variants with a label on the first stat.
-        value = re.sub(r'^\s*(?:CRIT|Anomaly)\s*:\s*', '', value, flags=re.I)
-        for part in re.split(r'[,><=/|\n]+',value):
-            if part.strip() in aliases.values():
-                stats.add(part.strip())
-                continue
-            atom = re.sub(r'\([^()]*\)', '', part).strip().casefold().replace(' ', '')
-            stat = aliases.get(atom, aliases.get(atom.rstrip('%')))
-            if stat:
-                stats.add(stat)
-    return stats
+    return stat_parts('subs', values)[0]
 
 
 def compile_roster(catalog, fields, overrides, set_aliases=None):
@@ -143,11 +149,16 @@ def compile_roster(catalog, fields, overrides, set_aliases=None):
         slot_rules = defaultdict(list)
         preferred = set()
         sub_fields = []
+        unknown_substats = {}
+        all_set_fields_excluded = bool(item['builds'])
         for source, names in [('build',item['builds']), ('guide',item['guides'])]:
             for name in names:
                 prefix = f'{source}/{name}/'
                 sub_field = prefix+'subs'
-                substats = parse_substats(effective(fields.get(sub_field),overrides.get(sub_field)) or [])
+                values = effective(fields.get(sub_field), overrides.get(sub_field)) or []
+                substats, unknown = stat_parts('subs', values)
+                if unknown:
+                    unknown_substats[sub_field] = sorted(unknown)
                 preferred.update(substats)
                 if substats:
                     sub_fields.append(sub_field)
@@ -155,6 +166,8 @@ def compile_roster(catalog, fields, overrides, set_aliases=None):
                     for group in ('sets4','sets2'):
                         field = prefix+group
                         accepted = effective(fields.get(field), overrides.get(field)) or []
+                        if overrides.get(field, {}).get('mode') != 'only' or accepted:
+                            all_set_fields_excluded = False
                         accepted_ids = {set_id(value) for value in accepted}
                         for key in sorted(accepted_ids):
                             sets[key].append(field)
@@ -164,11 +177,13 @@ def compile_roster(catalog, fields, overrides, set_aliases=None):
                     field = prefix+'slot'+slot
                     values = effective(fields.get(field),overrides.get(field)) or []
                     stats, uncertain = parse_main(values)
+                    if not values and overrides.get(field, {}).get('mode') == 'only':
+                        uncertain = False
                     slot_rules[slot].append((field,stats,uncertain))
-        if not sets:
+        if not sets and not all_set_fields_excluded:
             unresolved.append(item['label'])
         for key, set_fields in sets.items():
-            by_set[key].append((item['label'],set_fields,slot_rules,preferred,sub_fields))
+            by_set[key].append((item['label'],set_fields,slot_rules,preferred,sub_fields,unknown_substats))
     return by_set, unresolved, excluded
 
 
@@ -178,7 +193,7 @@ def explain(row, by_set, unresolved, excluded):
     key = identifier(row['set'])
     for label, field in excluded.get(key, ()):
         rules.append((field, label, '个人规则排除了这套盘'))
-    for label, set_fields, slots, preferred, sub_fields in by_set.get(key, ()):
+    for label, set_fields, slots, preferred, sub_fields, unknown_substats in by_set.get(key, ()):
         matched = [field for field, stats, _ in slots.get(row['slot'], ()) if row['main'] in stats]
         rules.extend((field, label, '角色使用此套装') for field in set_fields)
         for field, stats, uncertain in slots.get(row['slot'], ()):
@@ -187,6 +202,10 @@ def explain(row, by_set, unresolved, excluded):
         if fixed or matched:
             evidence = '、'.join([*set_fields,*matched])
             row['recommendations'].append(f'角色留盘 · {label} · {row["main"]} · {evidence}')
+            for field, terms in unknown_substats.items():
+                note = '角色副词条待核 · '+label+' · '+'、'.join(terms)
+                row['review'].append(note)
+                rules.append((field, label, note))
             if preferred:
                 rolls = sum(row['rolls'].get(stat,0) for stat in preferred)
                 row.setdefault('roleRolls',{})[label] = rolls

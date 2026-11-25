@@ -124,7 +124,7 @@ class DiscDetails(QWidget):
         self.spares.setText('　｜　'.join(lines))
         rev = (report.get('rules') or '')[:12] or '无'
         scope = '单盘实测 · 当前规则' if probe else '库存预览 · 计算时规则'
-        self.version.setText(f'{scope} {rev}' + ('　｜　配置或规则已有更新' if stale else ''))
+        self.version.setText(f'{scope} {rev}' + ('　｜　预览已过期，请重新计算' if stale else ''))
         self.tabs.setCurrentIndex(0 if self.uses else 2)
 
     def select_rule(self):
