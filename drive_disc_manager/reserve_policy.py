@@ -6,18 +6,18 @@ DEFAULT_STATS = ('crit_', 'crit_dmg_', 'atk_')
 SELECTORS = ('set', 'slot', 'main')
 
 
-def development(row):
+def development(level, rolls):
     """Normalize S-rank history into original lines and remaining upgrade events."""
-    spent = row['level'] // 3
-    visible = len(row['rolls'])
-    initial = sum(row['rolls'].values()) - spent
+    spent = level // 3
+    visible = len(rolls)
+    initial = sum(rolls.values()) - spent
     if initial not in (3, 4) or visible != min(initial + spent, 4):
         return None
     return dict(initial=initial, remaining=5-spent, upgrades=5-spent-(4-visible))
 
 
 def assess_growth(row, cfg):
-    growth = development(row)
+    growth = development(row['level'], row['rolls'])
     if growth is None:
         row['review'].append('强化档数与等级不符')
         return

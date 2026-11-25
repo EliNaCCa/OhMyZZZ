@@ -49,8 +49,15 @@ def read_row(row, labels):
     return key, Decimal(value[1]), upgrade
 
 
+def valid_slot_main(disc):
+    from .subscriptions import SLOT_MAIN
+    return disc['mainStatKey'] in SLOT_MAIN.get(str(disc['slotKey']), ())
+
+
 def measure(items, disc, parser):
     from .optimizer import STATS
+    if not valid_slot_main(disc):
+        return None
     entries = []
     for item in items:
         pos = item.get('position')
@@ -107,6 +114,8 @@ def measure(items, disc, parser):
 def checked_values(disc, roll_base):
     """Validate snapshot evidence before using it in a plan or matching a live disc."""
     from .optimizer import STATS
+    if not valid_slot_main(disc):
+        return None
     values = disc.get('observedValues')
     if not isinstance(values, dict) or not isinstance(values.get('main'), dict) or not isinstance(values.get('subs'), dict):
         return None

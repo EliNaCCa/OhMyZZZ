@@ -38,6 +38,14 @@ def smoke():
     extra.update(setKey='FutureSet', mainStatValue=12)
     row = calculate(cfg)['discs'][-1]
     assert any('套装译名' in text for text in row['review'])
+    extra.update(setKey='SwingJazz', mainStatValue='12%')
+    assert calculate(cfg)['discs'][-1]['decision'] == '待复核'
+    extra.update(slotKey='1', mainStatValue=12)
+    row = calculate(cfg)['discs'][-1]
+    assert row['decision'] == '待复核' and any('1 号位不能出现' in text for text in row['review'])
+    extra.update(slotKey='4', level=15, mainStatValue=48)
+    report = calculate(cfg)
+    assert not report['issues'] and '强化档数与等级不符' in report['discs'][-1]['review']
     extra.update(trash=True, markState='marked')
     row = calculate(cfg)['discs'][-1]
     assert row['decision'] == '已弃置' and not row['review']

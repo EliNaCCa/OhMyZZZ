@@ -133,11 +133,12 @@ with TemporaryDirectory() as tmp:
     cfg=defaults(); cfg.update(fieldProfile='冰队',run_scanner=True,profiles=[dict(name='冰队',agentKey='Ellen')])
     save(root/'config.json',cfg)
     six=[dict(sample(i,0),slotKey=str(i),level=15,markState='unmarked') for i in range(1,7)]
-    for d in six:
-        d['observedValues'] = {'main':{'def_':48}, 'subs':{'crit_':2.4, 'atk':19, 'hp':112}}
+    for d, (main, value) in zip(six, [('hp',2200),('atk',316),('def',184),('def_',48),('ice_dmg_',30),('atk_',30)]):
+        d.update(mainStatKey=main, substats=[dict(key=k,upgrades=1) for k in ('crit_', 'crit_dmg_', 'pen', 'anomProf')])
+        d['observedValues'] = {'main':{main:value}, 'subs':{'crit_':4.8, 'crit_dmg_':9.6, 'pen':18, 'anomProf':18}}
     from drive_disc_manager.optimizer import as_disc
     from drive_disc_manager.store import roll_base
-    host_disc=dict(six[3],substats=[dict(key=k,upgrades=1) for k in ('crit_','crit_dmg_','atk')])
+    host_disc=dict(six[3],substats=[dict(key=k,upgrades=u) for k,u in [('crit_',1),('crit_dmg_',1),('atk',3),('pen',3)]])
     host_disc.pop('observedValues')  # legacy +15 export for preview
     parsed=as_disc(host_disc,{'SwingJazz':'摇摆爵士'},roll_base({'source':'Zenless Optimizer'}))
     stats={s['type']:s['value'] for s in parsed['subStats']}

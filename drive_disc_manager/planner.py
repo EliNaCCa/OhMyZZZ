@@ -169,6 +169,8 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
             row['review'].append('无法识别的副词条 · '+'、'.join(unknown))
         if row['main'] not in STATS or STATS[row['main']][2] is None:
             row['review'].append('无法识别的主词条 · '+row['main'])
+        elif row['main'] not in SLOT_MAIN[row['slot']]:
+            row['review'].append(f"{row['slot']} 号位不能出现此主属性 · {row['main']}")
         if row['main'] in row['rolls']:
             row['review'].append('主副词条重复')
         if d['rarity']=='S':

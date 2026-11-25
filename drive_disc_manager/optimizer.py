@@ -17,7 +17,9 @@ STATS = {'hp':('HP_FLAT',112,2200), 'atk':('ATK_FLAT',19,316), 'def':('DEF_FLAT'
 
 
 def as_disc(d, names, roll_base=0):
-    if d['rarity'] != 'S' or d['setKey'] not in names:
+    from .reserve_policy import development
+    from .stat_reading import valid_slot_main
+    if d['rarity'] != 'S' or d['setKey'] not in names or not valid_slot_main(d):
         return None
     main = STATS.get(d['mainStatKey'])
     if not main or main[2] is None:
@@ -30,14 +32,17 @@ def as_disc(d, names, roll_base=0):
         if not observed:
             return None
         value = observed['main'][d['mainStatKey']]
-    if value is None or len(d['substats']) < 3:
+    if type(value) not in (int, float) or not 0 < value <= main[2] or (d['level'] == 15 and value != main[2]):
+        return None
+    rolls = {s['key']:1 + s['upgrades'] - roll_base for s in d['substats']}
+    if development(d['level'], rolls) is None:
         return None
     subs = []
     for s in d['substats']:
         stat = STATS.get(s['key'])
         if not stat or stat[1] is None or s['key']==d['mainStatKey']:
             return None
-        quantity = observed['subs'][s['key']] if observed else round(stat[1]*(1+s['upgrades']-roll_base), 4)
+        quantity = observed['subs'][s['key']] if observed else round(stat[1] * rolls[s['key']], 4)
         subs.append(dict(type=stat[0], value=quantity))
     return dict(id=fingerprint(d), setName=names[d['setKey']], slot=int(d['slotKey']), level=d['level'],
                 rarity='S', mainStat=dict(type=main[0], value=value),subStats=subs,
