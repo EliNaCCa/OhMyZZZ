@@ -3,8 +3,8 @@ from threading import Thread
 from PySide6.QtCore import Signal, Qt
 from one_dragon_qt.widgets.base_interface import BaseInterface
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QTabWidget,QWidget,QLabel,QPushButton,
-    QPlainTextEdit,QTableWidget,QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView,QCheckBox)
-from .store import read,save,config,import_inventory,digest
+    QPlainTextEdit,QTableWidget,QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView,QCheckBox,QLineEdit)
+from .store import read,save,config,import_inventory,digest,equipment_names
 from .service import preview
 from .subscriptions import sync, current_conflicts, can_merge, effective, resolve_conflict, save_config
 from .manager_app import wiki_path
@@ -47,6 +47,11 @@ class ManagerInterface(BaseInterface):
         self.table.itemSelectionChanged.connect(self.show_reserve)
         self.table.cellDoubleClicked.connect(lambda *_:self.open_disc_detail())
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'规则订阅')
+        bar = QHBoxLayout(); box.addLayout(bar)
+        self.rule_search = QLineEdit(); self.rule_search.setPlaceholderText('搜索角色、套装、号位或来源'); self.rule_search.setClearButtonEnabled(True)
+        self.only_conflicts = QCheckBox('只看冲突'); self.rule_total = QLabel()
+        bar.addWidget(self.rule_search,1); bar.addWidget(self.only_conflicts); bar.addWidget(self.rule_total)
+        self.rule_search.textChanged.connect(self.filter_rules); self.only_conflicts.toggled.connect(self.filter_rules)
         bar = QHBoxLayout(); box.addLayout(bar)
         self.button(bar,'更新来源',self.update_rules)
         self.rule_actions = {action:self.button(bar, title, lambda a=action:self.resolve(a)) for action, title in
@@ -146,6 +151,8 @@ class ManagerInterface(BaseInterface):
         self.reload()
         if self.conflicts:
             self.tabs.setCurrentIndex(1)
+            self.rule_search.clear()
+            self.only_conflicts.setChecked(True)
 
     def grid(self,headers):
         table=QTableWidget(0,len(headers)); table.setHorizontalHeaderLabels(headers)
@@ -260,13 +267,16 @@ class ManagerInterface(BaseInterface):
         self.show_reserve()
         conflicts=self.conflicts=current_conflicts(self.rules,self.cfg['overrides']); fields=self.rules.get('fields',{})
         self.keys=sorted((set(fields)|set(self.cfg['overrides']))-{k for k in fields if k.endswith('/known')},key=lambda k:(k not in conflicts,k))
-        self.fill(self.fields,[self.rule_row(key) for key in self.keys])
-        if conflicts: self.fields.selectRow(0)
-        self.select_rule()
+        wiki = read(wiki_path(), {})
+        self.refresh_roster(wiki)
+        self.set_names = equipment_names(wiki) | self.cfg.get('aliases', {})
+        self.agent_names = {name:a['label'] for a in self.agents for name in [*a['builds'],*a['guides']]}
+        self.rule_rows = {key:self.rule_row(key) for key in self.keys}
+        if not conflicts: self.only_conflicts.setChecked(False)
+        self.filter_rules()
         self.status.setText(f"上次预览 {self.report.get('counts',{})}　待处理规则冲突 {len(conflicts)}　"+' / '.join(self.report.get('issues',[])+self.report.get('warnings',[])))
         self.refresh_teams()
         self.engine_mode.setText('手动连接 · '+self.cfg['optimizer_url'] if self.cfg['optimizer_url'] else '由 OhMyZZZ 按需启动')
-        self.refresh_roster()
         from .salvage_audit import needs_review
         salvage = read(self.root/'dismantle-result.json', {})
         from .task_order import account_order
@@ -292,11 +302,11 @@ class ManagerInterface(BaseInterface):
             parts.append('上次换装待核对 · '+receipt.get('error','下次从实际穿戴情况继续'))
         self.equip_status.setText('　｜　'.join(parts))
 
-    def refresh_roster(self):
+    def refresh_roster(self, wiki):
         self.owned_toggle.setChecked(self.cfg['includeOwned'])
         inventory = read(self.root/'inventory.json', {})
         fields = self.rules.get('fields', {})
-        self.agents = roster_catalog(inventory, fields, self.cfg, read(wiki_path(), {}),
+        self.agents = roster_catalog(inventory, fields, self.cfg, wiki,
                                      read(self.root/'owned-agents.json', []))
         def display(agent):
             selected = '手动纳入' if agent['future'] else ('自动纳入' if agent['selected'] else '未纳入')
@@ -778,7 +788,8 @@ class ManagerInterface(BaseInterface):
             self.on_interface_shown(); return
         self.on_interface_shown()
         if key in self.keys:
-            self.tabs.setCurrentIndex(1); self.fields.selectRow(self.keys.index(key))
+            self.only_conflicts.setChecked(False); self.rule_search.clear()
+            self.tabs.setCurrentIndex(1); self.fields.selectRow(self.visible_keys.index(key))
 
     def open_detail_team(self, name):
         if self.root.name != str(self.ctx.current_instance_idx):
@@ -860,21 +871,34 @@ class ManagerInterface(BaseInterface):
     def edit_rule(self):
         i=self.fields.currentRow()
         if i<0: return
-        key=self.keys[i]; old=self.cfg['overrides'].get(key,{'mode':'inherit','values':self.rules.get('fields',{}).get(key,[])})
+        key=self.visible_keys[i]; old=self.cfg['overrides'].get(key,{'mode':'inherit','values':self.rules.get('fields',{}).get(key,[])})
         modes = {'继承上游':'inherit','额外接受':'add','只接受':'only'}
         title,ok=QInputDialog.getItem(self,'字段规则','覆盖方式',list(modes),list(modes.values()).index(old['mode']),False)
         if not ok: return
         mode = modes[title]
         if mode == 'inherit':
             self.cfg['overrides'].pop(key,None); self.edit_cfg(); return
-        values,ok=QInputDialog.getMultiLineText(self,'字段规则','每行一个值',text='\n'.join(old['values']))
-        if ok:
-            self.cfg['overrides'][key]=dict(mode=mode,values=[v.strip() for v in values.splitlines() if v.strip()]); self.edit_cfg()
+        remote = self.rules.get('fields', {}).get(key) or []
+        selected = old['values'] if old['mode'] != 'inherit' or mode == 'only' else []
+        if key.startswith('matrix/') and key.rsplit('/',1)[-1] in ('4','5','6'):
+            from .main_rule_editor import MainRuleEditor
+            row = self.rule_rows[key]
+            dialog = MainRuleEditor(self, row[0]+' · '+row[1], key.rsplit('/',1)[-1], mode, remote, selected)
+            if not dialog.exec(): return
+            values = dialog.values()
+        else:
+            text,ok=QInputDialog.getMultiLineText(self,'字段规则','每行一个值',text='\n'.join(selected))
+            if not ok: return
+            values = [v.strip() for v in text.splitlines() if v.strip()]
+        self.cfg['overrides'][key]=dict(mode=mode,values=values); self.edit_cfg()
 
     def rule_row(self, key):
         parts = key.split('/')
         source, field = parts[0], parts[-1]
         subject = '/'.join(parts[1:-1]) or key
+        localized = (self.set_names if source=='matrix' else self.agent_names).get(subject)
+        if localized and localized != subject:
+            subject = localized+' · '+subject
         labels = {'sets4':'四件套','sets2':'两件套','subs':'副词条'}
         for slot in '456':
             labels[slot] = labels['slot'+slot] = f'{slot} 号主词条'
@@ -885,21 +909,48 @@ class ManagerInterface(BaseInterface):
         mode = override.get('mode','inherit')
         def display(values):
             if values is None: return '字段缺失'
+            if source == 'matrix':
+                from .main_rule_editor import NAMES
+                return '、'.join(NAMES.get(v,v) for v in values) or '无'
             return '、'.join(values) or '无'
         local = '继承上游' if mode=='inherit' else ('额外接受 ' if mode=='add' else '只接受 ') + display(override['values'])
         return [('⚠ ' if conflict else '')+subject, labels.get(field,field), '、'.join(tabs),
                 display(conflict['old']) if conflict else '—', display(remote), local, display(effective(remote,override or None))]
 
+    def filter_rules(self, *_):
+        if not hasattr(self, 'rule_rows'):
+            return
+        old = getattr(self, 'visible_keys', [])
+        index = self.fields.currentRow()
+        selected = old[index] if 0 <= index < len(old) else None
+        terms = self.rule_search.text().casefold().split()
+        self.visible_keys = []
+        for key, row in self.rule_rows.items():
+            if self.only_conflicts.isChecked() and key not in self.conflicts:
+                continue
+            searchable = ' '.join([key, *row[:3]]).casefold().replace(' ', '')
+            if all(term in searchable for term in terms):
+                self.visible_keys.append(key)
+        self.fields.blockSignals(True)
+        try:
+            self.fill(self.fields, [self.rule_rows[k] for k in self.visible_keys])
+            if self.visible_keys:
+                self.fields.selectRow(self.visible_keys.index(selected) if selected in self.visible_keys else 0)
+        finally:
+            self.fields.blockSignals(False)
+        self.rule_total.setText(f'{len(self.visible_keys)} / {len(self.keys)} 条')
+        self.select_rule()
+
     def select_rule(self):
         index = self.fields.currentRow()
-        conflict = self.conflicts.get(self.keys[index]) if 0 <= index < len(self.keys) else None
+        conflict = self.conflicts.get(self.visible_keys[index]) if 0 <= index < len(self.visible_keys) else None
         for action, button in self.rule_actions.items():
             button.setEnabled(can_merge(conflict) if action=='union' else bool(conflict))
 
     def resolve(self,action):
         i=self.fields.currentRow()
         if i<0: return
-        key=self.keys[i]; conflict=self.conflicts.get(key)
+        key=self.visible_keys[i]; conflict=self.conflicts.get(key)
         if not conflict: return
         try:
             resolve_conflict(self.root,key,conflict,action)
