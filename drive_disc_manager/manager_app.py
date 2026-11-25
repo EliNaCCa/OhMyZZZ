@@ -50,13 +50,22 @@ class ManagerApp(ZApplication):
             report = preview(self.root,wiki_path())
             if report['issues']:
                 return self.round_fail('配装待复核 · '+' / '.join(report['issues']))
+            if cfg.get('fieldProfile') and scanner is None:
+                return self.round_fail('应用出场方案需要本轮重新扫描')
+            messages = []
             if cfg.get('applyMarkers'):
                 if scanner is None:
                     return self.round_fail('请开启本轮重新扫描后再标记')
                 from .live import Marker
                 observed = Marker(self,scanner,report).run()
+            if cfg.get('fieldProfile'):
+                from .loadout import apply_loadout
+                from .equip_ui import EquipUI
+                receipt = apply_loadout(self.root,cfg,report,snapshot,EquipUI(self,scanner,wiki_path()))
+                messages.append(f"{receipt['profile']} · 已复读 {len(receipt['verified'])} 个号位")
+            if cfg.get('applyMarkers'):
                 from .dismantle import handoff
-                return self.round_success(handoff(self,report,observed))
-            return self.round_success('预览 · '+str(report['counts']))
+                messages.append(handoff(self,report,observed))
+            return self.round_success(' / '.join(messages) if messages else '预览 · '+str(report['counts']))
         except (KeyError,ValueError,OSError,TypeError) as exc:
             return self.round_fail(str(exc))

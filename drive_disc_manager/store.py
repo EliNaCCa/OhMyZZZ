@@ -46,12 +46,19 @@ def fingerprint(d):
                    d.get('mainStatValue'), sorted((s['key'], s['upgrades'], s.get('value')) for s in d['substats'])])
 
 
+def roll_base(z):
+    # inventory_scan v1.4.7 writes the initial roll as 1. Keep raw fields
+    # intact so upgrading this calculation preserves pins and marker history.
+    return 1 if z.get('source') == 'Zenless Optimizer' else 0
+
+
 def inventory(z):
     if not isinstance(z, dict) or (z.get('format'), z.get('dbVersion'), z.get('version')) != ('ZOD', 2, 1):
         raise ValueError('需要 ZOD v1 / dbVersion 2 完整导出')
     if not all(isinstance(z.get(k), list) for k in ('discs', 'characters', 'wengines')):
         raise ValueError('缺少盘、角色或音擎清单')
     ds = z['discs']
+    base = roll_base(z)
     audit = z.get('audit') or {}
     if audit.get('partial') or any(type(audit.get(k)) is not int or audit[k] != v
                                    for k, v in [('game_total',len(ds)),('exported',len(ds)),('delta',0)]):
@@ -66,7 +73,7 @@ def inventory(z):
             raise ValueError('副词条格式异常')
         keys = set()
         for s in d['substats']:
-            if not isinstance(s,dict) or not isinstance(s.get('key'),str) or not s['key'] or s['key'] in keys or type(s.get('upgrades')) is not int or not 0 <= s['upgrades'] <= 5:
+            if not isinstance(s,dict) or not isinstance(s.get('key'),str) or not s['key'] or s['key'] in keys or type(s.get('upgrades')) is not int or not base <= s['upgrades'] <= base+5:
                 raise ValueError('副词条重复或缺失强化档数')
             keys.add(s['key'])
         ids.add(d['id'])
@@ -75,7 +82,8 @@ def inventory(z):
 
 def defaults():
     return dict(reserve=2, reserve_rules=[], trimRecommended=False, pins=[], protect15=True, profiles=[], overrides={},
-                auto_sync=True, run_scanner=False, afterEarly=False, applyMarkers=False, optimizer_url='', roster=[], aliases={})
+                auto_sync=True, run_scanner=False, afterEarly=False, applyMarkers=False, fieldProfile='',
+                optimizer_url='', roster=[], aliases={})
 
 
 def config(root):

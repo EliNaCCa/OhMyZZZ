@@ -2,16 +2,17 @@
 from collections import Counter, defaultdict
 from .optimizer import as_disc, candidate_pool
 from .allocation import assign_group
-from .store import digest, fingerprint, inventory
+from .store import digest, fingerprint, inventory, roll_base
 from .subscriptions import effective
 from .reserve_policy import apply_reserves
 
 
 def plan(z,cfg,rules,names,fetch_candidates=candidate_pool):
     ds, counts = inventory(z)
+    base = roll_base(z)
     fields = rules.get('fields',{})
     by_fp = {fingerprint(d):d for d in ds}
-    inputs = {fp:as_disc(d,names) for fp,d in by_fp.items() if counts[fp]==1 and not d.get('trash') and d.get('markState')!='unknown'}
+    inputs = {fp:as_disc(d,names,base) for fp,d in by_fp.items() if counts[fp]==1 and not d.get('trash') and d.get('markState')!='unknown'}
     enabled = [p for p in cfg['profiles'] if p.get('enabled',True)]
     assignments, groups, issues = {}, defaultdict(list), []
     used_by = defaultdict(list)
@@ -46,7 +47,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool):
         if cfg['protect15'] and d['level']==15:
             why.append('已满级')
         row = dict(fp=fp, id=d['id'], set=d['setKey'], slot=str(d['slotKey']), main=d['mainStatKey'],
-                   level=d['level'], location=d.get('location',''), rolls={s['key']:1+s['upgrades'] for s in d['substats']}, reasons=why, recommendations=[], explanation=[], review=[])
+                   level=d['level'], location=d.get('location',''), rolls={s['key']:1+s['upgrades']-base for s in d['substats']}, reasons=why, recommendations=[], explanation=[], review=[])
         row['marked'] = d.get('trash') is True
         if d.get('markState')=='unknown':
             row['review'].append('现场弃置状态待核')

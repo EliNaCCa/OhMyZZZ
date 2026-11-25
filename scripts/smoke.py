@@ -70,4 +70,35 @@ with TemporaryDirectory() as tmp:
     group = assign_group(members,pool,'',shortlist)
     assert group[0][1]['ids'][0]=='7' and group[0][1]['relativeLossPct']==0.2
     assert set(group[0][1]['ids']).isdisjoint(group[1][1]['ids'])
+    # One required swap goes through just before the (simulated) disconnect.
+    from drive_disc_manager.loadout import apply_loadout
+    from drive_disc_manager.store import digest, fingerprint
+    cfg=defaults(); cfg.update(fieldProfile='冰队',run_scanner=True,profiles=[dict(name='冰队',agentKey='Ellen')])
+    save(root/'config.json',cfg)
+    six=[dict(sample(i,0),slotKey=str(i),level=15,markState='unmarked') for i in range(1,7)]
+    from drive_disc_manager.optimizer import as_disc
+    from drive_disc_manager.store import roll_base
+    host_disc=dict(six[3],substats=[dict(key=k,upgrades=1) for k in ('crit_','crit_dmg_','atk')])
+    parsed=as_disc(host_disc,{'SwingJazz':'摇摆爵士'},roll_base({'source':'Zenless Optimizer'}))
+    stats={s['type']:s['value'] for s in parsed['subStats']}
+    assert stats['CRIT_RATE']==2.4 and stats['CRIT_DMG']==4.8
+    snapshot=dict(z,discs=six,audit=dict(game_total=6,exported=6,delta=0))
+    ids=[fingerprint(d) for d in six]
+    report=dict(configuration=digest(cfg),inventory=digest(snapshot),assignments={'冰队':dict(ids=ids)})
+    class SimulatedEquipment:
+        def __init__(self):
+            self.worn=set(ids[1:]); self.clicks=0
+        def guard(self): pass
+        def inspect(self,target): return 'equipped' if target['fp'] in self.worn else 'available'
+        def equip(self,target,checkpoint):
+            checkpoint(); self.clicks+=1; self.worn.add(target['fp'])
+            raise ConnectionError('模拟换装后断线')
+    ui=SimulatedEquipment()
+    try:
+        apply_loadout(root,cfg,report,snapshot,ui)
+    except ConnectionError:
+        assert read(root/'equip-result.json')['actions'][0]['state']=='pending'
+    else: raise AssertionError('未观察到模拟中断')
+    result=apply_loadout(root,cfg,report,snapshot,ui)
+    assert result['verified']==ids and result['actions']==[] and ui.clicks==1
 print('smoke OK: two discs, one reserve, team preference')

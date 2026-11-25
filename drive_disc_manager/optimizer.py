@@ -14,7 +14,7 @@ STATS = {'hp':('HP_FLAT',112,2200), 'atk':('ATK_FLAT',19,316), 'def':('DEF_FLAT'
          **{e+'_dmg_':(e.upper()+'_DMG',None,30) for e in ('physical','electric','fire','ice','ether','wind','lumiflux')}}
 
 
-def as_disc(d, names):
+def as_disc(d, names, roll_base=0):
     if d['rarity'] != 'S' or d['setKey'] not in names:
         return None
     main = STATS.get(d['mainStatKey'])
@@ -28,7 +28,7 @@ def as_disc(d, names):
         stat = STATS.get(s['key'])
         if not stat or stat[1] is None or s['key']==d['mainStatKey']:
             return None
-        subs.append(dict(type=stat[0], value=round(stat[1]*(1+s['upgrades']), 4)))
+        subs.append(dict(type=stat[0], value=round(stat[1]*(1+s['upgrades']-roll_base), 4)))
     return dict(id=fingerprint(d), setName=names[d['setKey']], slot=int(d['slotKey']), level=d['level'],
                 rarity='S', mainStat=dict(type=main[0], value=value),subStats=subs,
                 equippedBy=d.get('location',''),locked=bool(d.get('lock')),discarded=bool(d.get('trash')))

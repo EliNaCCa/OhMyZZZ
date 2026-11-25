@@ -25,6 +25,11 @@ def validate(value):
             raise ValueError('配队名重复或参数缺失')
         names.add(p['name'])
         if not 0<=number(p.get('tolerancePct',0.5))<=100: raise ValueError('配队输出容差无效')
+    field = cfg['fieldProfile']
+    if not isinstance(field,str) or (field and not any(p['name']==field and p.get('enabled',True) for p in cfg['profiles'])):
+        raise ValueError('选择一个已启用的出场方案，或清空 fieldProfile 停用换装')
+    if field and not cfg['run_scanner']:
+        raise ValueError('应用配队需要本次运行先扫描库存')
     for item in cfg['overrides'].values():
         if item['mode'] not in ('inherit','add','only') or not isinstance(item['values'],list) or not all(isinstance(s,str) for s in item['values']):
             raise ValueError('字段覆盖无效')

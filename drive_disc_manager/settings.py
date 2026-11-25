@@ -46,6 +46,7 @@ class ManagerDialog(QDialog):
         self.button(bar,'从配装器保存为配队',self.import_profile)
         self.button(bar,'设置满暴容差',self.edit_tolerance)
         self.button(bar,'启用 / 停用',self.toggle_profile)
+        self.button(bar,'设为出场 / 取消',self.set_field_profile)
         self.button(bar,'重新计算',self.calculate)
         self.teams = self.grid(['方案','同时出场组','输出容差','有效暴击','输出差距','选择依据'])
         self.teams.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -53,6 +54,7 @@ class ManagerDialog(QDialog):
         self.team_score = QLabel(); self.team_score.setWordWrap(True); box.addWidget(self.team_score)
         self.slots = self.grid(['号位','套装','主属性','等级','当前装备者','该盘用途'])
         box.addWidget(self.slots)
+        self.equip_status = QLabel(); self.equip_status.setWordWrap(True); box.addWidget(self.equip_status)
         self.teams.itemSelectionChanged.connect(self.show_build)
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'运行设置')
         flags = QHBoxLayout(); box.addLayout(flags)
@@ -104,6 +106,14 @@ class ManagerDialog(QDialog):
         self.fill(self.fields,[(k,fields.get(k,''),self.cfg['overrides'].get(k,''),conflicts.get(k,'')) for k in self.keys])
         self.status.setText(f"上次预览 {self.report.get('counts',{})}　待处理规则冲突 {len(conflicts)}　"+' / '.join(self.report.get('issues',[])+self.report.get('warnings',[])))
         self.refresh_teams()
+        field = self.cfg.get('fieldProfile')
+        receipt = read(self.root/'equip-result.json', {})
+        parts = [f'下次运行出场方案 · {field}' if field else '只计算配装']
+        if receipt.get('status')=='verified':
+            parts.append(f"上次已核对 · {receipt['profile']} · {len(receipt['verified'])} 个号位")
+        elif receipt.get('status') in ('checking','interrupted'):
+            parts.append('上次换装待核对 · '+receipt.get('error','下次从实际穿戴情况继续'))
+        self.equip_status.setText('　｜　'.join(parts))
 
     def refresh_teams(self, selected=None):
         profiles = self.cfg['profiles']
@@ -114,7 +124,8 @@ class ManagerDialog(QDialog):
             reason = result.get('error') or result.get('reason') or '等待计算'
             if not p.get('enabled',True):
                 reason = '已停用'; result = {}
-            return (p['name'],p.get('simultaneous') or '可借盘',pct(p.get('tolerancePct',0.5)),
+            title = ('出场 · ' if p['name']==self.cfg.get('fieldProfile') else '')+p['name']
+            return (title,p.get('simultaneous') or '可借盘',pct(p.get('tolerancePct',0.5)),
                     pct(result.get('effectiveCritRate',result.get('critRate'))),pct(result.get('relativeLossPct')),reason)
         self.fill(self.teams,[row(p) for p in profiles])
         self.teams.resizeColumnsToContents()
@@ -160,7 +171,22 @@ class ManagerDialog(QDialog):
         if index < 0: return
         profile = self.cfg['profiles'][index]
         profile['enabled'] = not profile.get('enabled',True)
+        if not profile['enabled'] and self.cfg.get('fieldProfile')==profile['name']:
+            self.cfg['fieldProfile']=''
         self.edit_cfg(); self.refresh_teams(profile['name'])
+
+    def set_field_profile(self):
+        index = self.teams.currentRow()
+        if index < 0: return
+        profile = self.cfg['profiles'][index]
+        name = profile['name']
+        if self.cfg.get('fieldProfile') == name:
+            self.cfg['fieldProfile'] = ''
+        else:
+            if not profile.get('enabled',True) or not profile.get('agentKey'):
+                raise ValueError('请选择已启用且已关联代理人的方案')
+            self.cfg.update(fieldProfile=name, run_scanner=True)
+        self.edit_cfg(); self.refresh_teams(name)
 
     def save_text(self):
         value = json.loads(self.editor.toPlainText())
@@ -176,7 +202,7 @@ class ManagerDialog(QDialog):
         if checked and key in ('afterEarly','applyMarkers'):
             cfg['run_scanner'] = True
         if key=='run_scanner' and not checked:
-            cfg.update(afterEarly=False,applyMarkers=False)
+            cfg.update(afterEarly=False,applyMarkers=False,fieldProfile='')
         from .validation import validate
         validate(cfg)
         save(self.root/'config.json',cfg); self.reload()
@@ -206,7 +232,7 @@ class ManagerDialog(QDialog):
         simultaneous,ok=QInputDialog.getText(self,'同时出场','同时上场的角色填写相同分组，互斥配队可留空')
         if not ok: return
         wiki=read(wiki_path(),{})
-        agent_key=next((a['EN'].replace(' ','') for a in wiki.get('character',{}).values()
+        agent_key=next((a.get('code') or a['EN'].replace(' ','') for a in wiki.get('character',{}).values()
                         if a.get('CHS')==source['agent'] and a.get('EN')),'')
         self.cfg['optimizer_url']=url.strip()
         self.cfg['profiles'].append(dict(name=name.strip(),agentKey=agent_key,request=source['request'],
