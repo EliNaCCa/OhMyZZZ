@@ -19,6 +19,7 @@ def pretty(value):
 
 class ManagerInterface(BaseInterface):
     probe_finished = Signal(object, str)
+    equip_finished = Signal(str, str, str)
 
     def __init__(self, ctx, parent=None):
         super().__init__('ohmyzzz_settings', APP_NAME, '', parent)
@@ -67,6 +68,9 @@ class ManagerInterface(BaseInterface):
         self.engine_mode = QLabel(); engine_bar.addWidget(self.engine_mode); engine_bar.addStretch()
         self.button(engine_bar,'连接设置',self.configure_optimizer)
         self.button(engine_bar,'分组与优先级',self.edit_allocation)
+        self.apply_button = self.button(engine_bar,'应用当前配队',self.apply_current)
+        self.equip_busy = False
+        self.equip_finished.connect(self.finish_equip, Qt.ConnectionType.QueuedConnection)
         bar = QHBoxLayout(); box.addLayout(bar)
         self.button(bar,'从配装器保存为配队',self.import_profile)
         self.button(bar,'设置满暴容差',self.edit_tolerance)
@@ -323,6 +327,11 @@ class ManagerInterface(BaseInterface):
 
     def show_build(self):
         index = self.teams.currentRow()
+        profiles = self.cfg['profiles']
+        selected = profiles[index] if 0 <= index < len(profiles) else {}
+        ready = selected.get('enabled',True) and self.report.get('assignments',{}).get(selected.get('name'),{}).get('ids')
+        self.apply_button.setEnabled(bool(ready) and not self.equip_busy)
+        self.apply_button.setToolTip('查看本次要穿戴的盘' if ready else '导入完整库存并计算所选配队后可用')
         self.fill(self.slots,[])
         self.team_score.setText('在配装器保存角色目标后，可导入为独立配队。')
         if index < 0 or index >= len(self.cfg['profiles']): return
@@ -411,6 +420,54 @@ class ManagerInterface(BaseInterface):
         if not profile['enabled'] and self.cfg.get('fieldProfile')==profile['name']:
             self.cfg['fieldProfile']=''
         self.edit_cfg(); self.refresh_teams(profile['name'])
+
+    def apply_current(self):
+        from .manual_equip import confirmation, run_confirmed
+        account, root = self.ctx.current_instance_idx, self.root
+        index = self.teams.currentRow()
+        if self.equip_busy or not self.ctx.run_context.is_context_stop or str(account) != root.name:
+            raise ValueError('请在当前账号的一条龙空闲时应用配队')
+        if not 0 <= index < len(self.cfg['profiles']):
+            return
+        name = self.cfg['profiles'][index]['name']
+        request, targets = confirmation(account, name, config(root), self.report, read(root/'inventory.json'))
+        dialog = QDialog(self); dialog.setWindowTitle('应用当前配队'); dialog.resize(720,420)
+        panel = QVBoxLayout(dialog)
+        panel.addWidget(QLabel(f'{name} · {len(targets)} 个号位'))
+        from .store import equipment_names
+        from .stat_reading import display_values
+        sets = equipment_names(read(wiki_path(), {})) | self.cfg.get('aliases',{})
+        agents = {p['name']:p.get('request',{}).get('characterName') for p in self.cfg['profiles']}
+        table = self.grid(['方案','目标角色','号位','套装','主副词条','上次扫描装备者'])
+        self.fill(table,[(t['profile'], agents.get(t['profile']) or t['agent'], t['slot'], sets.get(t['set'],t['set']),
+                          display_values(t['observedValues']), t['location'] or '背包 / 未识别') for t in targets])
+        table.resizeColumnsToContents(); panel.addWidget(table)
+        note = QLabel('请先进入游戏大世界。确认后会重新扫描驱动盘，按清单换装并复读各个号位。目标变化时会返回预览。')
+        note.setWordWrap(True); panel.addWidget(note)
+        actions = QHBoxLayout(); panel.addLayout(actions); actions.addStretch()
+        back = self.button(actions,'返回',dialog.reject); back.setDefault(True)
+        self.button(actions,'重扫并换装',dialog.accept).setAutoDefault(False)
+        if not dialog.exec():
+            return
+        self.equip_busy = True; self.apply_button.setEnabled(False)
+        self.equip_status.setText(f'正在应用 {name} · 本次仅换装')
+        def worker():
+            error = ''
+            try:
+                run_confirmed(self.ctx, request)
+            except Exception as exc:
+                error = str(exc)
+            self.equip_finished.emit(str(root),name,error)
+        Thread(target=worker, name='OhMyZZZ equip', daemon=True).start()
+
+    def finish_equip(self, root, name, error):
+        self.equip_busy = False
+        if str(self.root) == root and str(self.ctx.current_instance_idx) == self.root.name:
+            self.reload(); self.refresh_teams(name)
+            if error:
+                self.equip_status.setText(f'{name} · {error}')
+        else:
+            self.on_interface_shown()
 
     def set_field_profile(self):
         index = self.teams.currentRow()

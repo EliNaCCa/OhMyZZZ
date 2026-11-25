@@ -29,7 +29,7 @@ def target_loadout(cfg, report, snapshot, name):
             if counts[fp] != 1 or fp in claimed:
                 raise ValueError('目标盘不唯一或同时出场的方案重盘')
             disc = by_fp[fp]
-            if int(disc['slotKey']) != slot or disc.get('trash') or disc.get('markState') == 'unknown':
+            if int(disc['slotKey']) != slot or disc.get('trash') or disc.get('markState') != 'unmarked':
                 raise ValueError('目标盘号位或弃置状态不适合换装')
             observed = checked_values(disc, roll_base(snapshot))
             if not observed:
@@ -41,9 +41,10 @@ def target_loadout(cfg, report, snapshot, name):
     return targets
 
 
-def apply_loadout(root, cfg, report, snapshot, ui):
-    targets = target_loadout(cfg, report, snapshot, cfg['fieldProfile'])
-    receipt = dict(profile=cfg['fieldProfile'],configuration=report['configuration'],inventory=report['inventory'],
+def apply_loadout(root, cfg, report, snapshot, ui, *, name=None):
+    name = name or cfg['fieldProfile']
+    targets = target_loadout(cfg, report, snapshot, name)
+    receipt = dict(profile=name,configuration=report['configuration'],inventory=report['inventory'],
                    started=time(),status='checking',targets=targets,actions=[],verified=[])
     path = root/'equip-result.json'
 

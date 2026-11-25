@@ -39,6 +39,9 @@ class EquipUI:
         self.page = 'start'
 
     def guard(self):
+        extra = getattr(self.app, 'guard_game', None)
+        if extra:
+            extra()
         if self.app.ctx.current_instance_idx != self.app.account or not self.app.ctx.run_context.is_context_running:
             raise ValueError('换装时账号或运行状态已变化')
         if not self.controller.game_win.is_win_active:
@@ -82,7 +85,9 @@ class EquipUI:
             self.page = 'wheel'
         if self.page == 'start':
             self.frame()
-            if not BackToNormalWorld(self.app.ctx).execute().success:
+            back = BackToNormalWorld(self.app.ctx, timeout_seconds=25)
+            back.need_check_game_win = False
+            if not back.execute().success:
                 raise ValueError('无法返回大世界')
             self.frame()
             self.controller.keyboard_controller.tap('c')

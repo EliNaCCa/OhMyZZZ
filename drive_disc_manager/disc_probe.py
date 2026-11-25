@@ -41,14 +41,17 @@ def interactive_slot():
         march = settings.get('March7Executable')
         source = Path(march).parent/'config.yaml' if march else Path('E:/Program Files/March7thAssistant/config.yaml')
         tasks = yaml.safe_load(source.read_text('utf-8-sig'))['scheduled_tasks']
-        now = datetime.now()
-        for task in tasks:
-            if task.get('enabled', True) and task.get('trigger_mode', 'time') == 'time':
-                hour, minute = map(int, task['time'].split(':'))
+        starts = [tuple(map(int, task['time'].split(':'))) for task in tasks
+                  if task.get('enabled', True) and task.get('trigger_mode', 'time') == 'time']
+        def check_slot():
+            check_display()
+            now = datetime.now()
+            for hour, minute in starts:
                 start = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
                 if any(-300 <= (start + timedelta(days=offset) - now).total_seconds() <= 120 for offset in (-1,0,1)):
-                    raise ValueError('临近已启用的业务时段，请稍后读盘')
-        yield session, check_display
+                    raise ValueError('临近已启用的业务时段，请稍后再操作驱动盘')
+        check_slot()
+        yield session, check_slot
     finally:
         lock.Close()
 
@@ -91,14 +94,33 @@ def read_selected(scanner, total, guard):
         time.sleep(.35)
 
 
-def probe(ctx, root, account):
+def game_guard(ctx, session, check_display):
     import psutil
     import win32gui
     import win32process
     import win32ts
-    from .maintenance import exclusive
     controller = ctx.controller
     configured = Path(ctx.game_account_config.game_path)
+    if not controller.init_game_win():
+        raise ValueError('请先在当前桌面打开绝区零并进入大世界')
+    window = controller.game_win
+    hwnd = window.get_hwnd()
+    pid = win32process.GetWindowThreadProcessId(hwnd)[1]
+    game = psutil.Process(pid)
+    if (configured.name.casefold() != 'zenlesszonezero.exe' or Path(game.exe()).resolve() != configured.resolve()
+            or win32ts.ProcessIdToSessionId(pid) != session):
+        raise ValueError('游戏窗口与本账号配置或会话不一致')
+
+    def guard():
+        check_display()
+        if (not game.is_running() or hwnd != win32gui.GetForegroundWindow() or hwnd != window.get_hwnd()
+                or pid != win32process.GetWindowThreadProcessId(hwnd)[1]):
+            raise ValueError('游戏已退出或失去焦点')
+    return guard, pid
+
+
+def probe(ctx, root, account):
+    from .maintenance import exclusive
     record = dict(account=account, started=time.time(), route=[])
     def idle():
         if not ctx.run_context.is_context_stop or ctx.current_instance_idx != account:
@@ -108,25 +130,13 @@ def probe(ctx, root, account):
             idle()
             with interactive_slot() as (session, check_display):
                 record['session'] = session
-                if not controller.init_game_win():
-                    raise ValueError('请先在当前桌面打开绝区零并进入大世界')
-                window = controller.game_win
-                hwnd = window.get_hwnd()
-                pid = win32process.GetWindowThreadProcessId(hwnd)[1]
-                game = psutil.Process(pid)
-                if (configured.name.casefold() != 'zenlesszonezero.exe' or Path(game.exe()).resolve() != configured.resolve()
-                        or win32ts.ProcessIdToSessionId(pid) != session):
-                    raise ValueError('游戏窗口与本账号配置或会话不一致')
-                record['game'] = pid
+                check_game, record['game'] = game_guard(ctx, session, check_display)
                 def guard():
                     idle()
-                    check_display()
-                    if (not game.is_running() or hwnd != win32gui.GetForegroundWindow() or hwnd != window.get_hwnd()
-                            or pid != win32process.GetWindowThreadProcessId(hwnd)[1]):
-                        raise ValueError('游戏已退出或失去焦点')
+                    check_game()
                 scanner = ctx.run_context.get_application('inventory_scan', account, 'one_dragon')
                 scanner._ensure_screen_areas()
-                window.active()
+                ctx.controller.game_win.active()
                 total = enter_warehouse(scanner, guard, trace=record['route'])
                 record['warehouseCount'] = total
                 record['disc'] = read_selected(scanner, total, guard)

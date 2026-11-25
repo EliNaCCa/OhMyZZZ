@@ -138,4 +138,21 @@ with TemporaryDirectory() as tmp:
     else: raise AssertionError('未观察到模拟中断')
     result=apply_loadout(root,cfg,report,snapshot,ui)
     assert result['verified']==ids and result['actions']==[] and ui.clicks==1
+    # One-shot wear must use the selected team even with a different daily default.
+    from drive_disc_manager.manual_equip import confirmation, verify_selection
+    other = dict(name='临时队',agentKey='Miyabi')
+    cfg['profiles'].append(other); cfg['applyMarkers']=True
+    save(root/'config.json',cfg)
+    report['configuration']=digest(cfg); report['assignments'][other['name']]=dict(ids=ids)
+    request,targets=confirmation(1,other['name'],cfg,report,snapshot)
+    assert {t['agent'] for t in targets}=={'Miyabi'}
+    verify_selection(request,cfg,report,snapshot)
+    result=apply_loadout(root,cfg,report,snapshot,ui,name=request['name'])
+    assert result['profile']==other['name'] and result['verified']==ids and read(root/'config.json')==cfg
+    snapshot['discs'][0]['location']='ChangedOwner'; report['inventory']=digest(snapshot)
+    try:
+        verify_selection(request,cfg,report,snapshot)
+    except ValueError as exc:
+        assert '重新应用' in str(exc)
+    else: raise AssertionError('changed donor was accepted')
 print('smoke OK: two discs, one reserve, team preference')
