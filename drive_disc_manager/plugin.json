@@ -2,8 +2,8 @@
   "id": "drive_disc_manager",
   "name": "OhMyZZZ",
   "summary": "订阅留盘规则、分配配队及备用盘，按盘锁定和标记，核对拆解记录。",
-  "version": "0.1.17",
-  "versionCode": 18,
+  "version": "0.1.18",
+  "versionCode": 19,
   "defaultGroup": true,
   "needNotify": false,
   "author": {

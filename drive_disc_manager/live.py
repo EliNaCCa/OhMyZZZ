@@ -13,7 +13,7 @@ from one_dragon.utils import os_utils, cv2_utils
 from inventory_scan.warehouse_nav import goto_drive_warehouse
 from .store import digest, fingerprint, read, save, config
 from .marks import mark_action
-from .scan_marks import mark_hint, observed_grade
+from .scan_marks import mark_hint, observed_grade, read_controls
 from .stat_reading import measure
 
 
@@ -98,9 +98,10 @@ class Marker:
         if not expected or measure(items, disc, self.parser) != expected:
             return None
         open_icon = cv2.cvtColor(screen[806:854,1508:1552],cv2.COLOR_RGB2GRAY)
-        unlocked = float(cv2.matchTemplate(open_icon,self.template,cv2.TM_CCOEFF_NORMED).max())>=0.90
+        mark, lock = read_controls(self.app.ctx.ocr, screen[985:1070,1050:1920])
+        unlocked = lock == 'unlocked' and float(cv2.matchTemplate(open_icon,self.template,cv2.TM_CCOEFF_NORMED).max())>=0.90
         equipped = bool(disc.get('location')) or self.parser.icon_matcher.is_region_colorful(part,54,54,85,85)
-        return fp, unlocked, hints(self.app.ctx.ocr,screen), equipped
+        return fp, unlocked, mark, equipped
 
     def remember(self,fp,state,intended=None):
         self.history[fp] = dict(state=state,intended=intended,inventory=self.report['inventory'],time=time.time())
@@ -176,8 +177,7 @@ class Marker:
 
     def locked_hint(self):
         screen=self.frame()
-        text=''.join(self.app.ctx.ocr.run_ocr(screen[985:1070,1050:1920])).replace(' ','')
-        return '解锁' in text or '解除锁定' in text
+        return read_controls(self.app.ctx.ocr, screen[985:1070,1050:1920])[1] == 'locked'
 
     def run(self):
         reason = marker_conflict(os_utils.get_work_dir(),self.app.account,self.app.group)

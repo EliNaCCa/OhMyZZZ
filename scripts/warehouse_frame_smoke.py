@@ -57,8 +57,9 @@ def smoke(home):
             part = frame[267:768,1408:1838]
             items = [dict(text=text,confidence=m.confidence,position=(m.x,m.y,m.x+m.w,m.y+m.h))
                      for text,matches in ocr.run_ocr(part).items() for m in matches]
-            scanned = MarkReader(parser, ocr, frame[995:1065,1550:1920]).parse_ocr_result(items,part)
+            scanned = MarkReader(parser, ocr, frame[985:1070,1050:1920]).parse_ocr_result(items,part)
             assert scanned['observedValues'] == values and fingerprint(scanned) == fp and scanned['markState'] == state
+            assert scanned['lockState'] == 'unlocked' and not scanned['lock']
             candidate = as_disc(scanned, {scanned['setKey']:'谶羽之誓'}, roll_base=1)
             assert candidate['level'] == 3 and candidate['mainStat'] == dict(type='ATK_PERCENT', value=12)
             wrong_roll = [dict(i,text='24%') if i['text']=='2.4%' else i for i in items]
@@ -67,6 +68,13 @@ def smoke(home):
         assert marker.detail() is None  # same set, slot, level and fingerprint, different numeric main
         marker.rows[fp].pop('observedValues')
         assert marker.detail() is None  # old fingerprints cannot authorize a click on their own
+        # A previously unseen manual lock is preserved even when the player's quota is zero.
+        from drive_disc_manager.scan_marks import read_controls
+        def controls(*labels):
+            return read_controls(SimpleNamespace(run_ocr=lambda _: {t:[SimpleNamespace(confidence=.99)] for t in labels}),None)
+        assert controls('弃置', '解锁') == ('unmarked', 'locked')
+        assert controls('解除', '锁定') == ('unknown', 'unknown')
+        assert controls('弃置', '锁定', '解锁') == ('unmarked', 'unknown')
         sample['observedValues'] = values
         rules = {'version':'frame-smoke','fields':{'matrix/FeatheredFate/5':['atk_']}}
         cfg = dict(defaults(), reserve=0, pins=[fp])
@@ -75,6 +83,12 @@ def smoke(home):
         names = equipment_names(read(dictionary))
         row, = plan(z,cfg,rules,names)['discs']
         assert row['set']=='FeatheredFate' and row['fp']==fp and '手动保护' in row['reasons'] and row['recommendations']
+        policy = dict(cfg, pins=[], trimRecommended=True)
+        locked = dict(sample, lock=True, lockState='locked')
+        row, = plan(dict(z, discs=[locked]),policy,rules,names)['discs']
+        assert row['decision']=='保留' and '游戏内已锁定' in row['reasons']
+        row, = plan(dict(z, discs=[dict(sample, lockState='unknown')]),policy,rules,names)['discs']
+        assert row['decision']=='待复核' and '现场锁定状态待核' in row['review']
         duplicate = dict(sample,id='2',setKey='FeatheredFate')
         mixed = dict(z,discs=[dict(sample,setKey='谶羽之誓'),duplicate],audit=dict(game_total=2,exported=2,delta=0))
         assert all(row['ambiguous'] and row['review'] for row in plan(mixed,cfg,rules,names)['discs'])

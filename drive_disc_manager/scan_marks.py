@@ -22,9 +22,8 @@ class MarkReader:
         result = self.parser.parse_ocr_result([dict(i) for i in items], image)
         if result is None:
             return None
-        state = mark_hint(self.ocr, self.footer)
-        result['markState'] = state
-        result['trash'] = state == 'marked'
+        mark, lock = read_controls(self.ocr, self.footer)
+        result.update(markState=mark, trash=mark == 'marked', lockState=lock, lock=lock == 'locked')
         result['observedGrade'] = observed_grade(items)
         if result['observedGrade']:
             result['rarity'] = result['observedGrade']
@@ -33,13 +32,22 @@ class MarkReader:
         return result
 
 
+def read_controls(ocr, footer):
+    # These are actions offered by the game: an Unlock button means the disc IS locked.
+    matches = ocr.run_ocr(footer) or {}
+    tokens = {text.replace(' ', '') for text, boxes in matches.items() if any(box.confidence >= .9 for box in boxes)}
+    # A detached prefix can reverse either button. Never interpret the remaining suffix alone.
+    if any(text.strip() in ('解','解除','取消') for text in matches):
+        return 'unknown', 'unknown'
+    def control(mapping):
+        values = {mapping[token] for token in tokens if token in mapping}
+        return values.pop() if len(values) == 1 else 'unknown'
+    return (control({'解除弃置':'marked', '弃置':'unmarked'}),
+            control({'解除锁定':'locked', '解锁':'locked', '锁定':'unlocked'}))
+
+
 def mark_hint(ocr, footer):
-    text = ''.join(ocr.run_ocr(footer) or {}).replace(' ', '')
-    if '解除弃置' in text:
-        return 'marked'
-    if '弃置' in text:
-        return 'unmarked'
-    return 'unknown'
+    return read_controls(ocr, footer)[0]
 
 
 @contextmanager
@@ -51,7 +59,7 @@ def capture_marks(scanner):
     pending = local()
 
     def capture(row, col, image):
-        pending.footer = image[995:1065,1550:1920].copy()
+        pending.footer = image[985:1070,1050:1920].copy()
         try:
             return save_image(row, col, image)
         finally:

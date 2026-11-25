@@ -57,7 +57,9 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         why = list(used_by[fp])
         if d.get('location'):
             why.append('已装备 · '+d['location'])
-        if d.get('lock') is True or fp in cfg['pins']:
+        if d.get('lock') is True:
+            why.append('游戏内已锁定')
+        if fp in cfg['pins']:
             why.append('手动保护')
         if cfg['protect15'] and d['level']==15:
             why.append('已满级')
@@ -69,6 +71,8 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
             row['review'].append('本次扫描未核实完整的主副词条数值')
         if d.get('markState')=='unknown':
             row['review'].append('现场弃置状态待核')
+        if d.get('lockState')=='unknown':
+            row['review'].append('现场锁定状态待核')
         row['ambiguous'] = identities[canonical_fps[fp]] > 1
         if row['ambiguous'] or d.get('setKey')=='Unknown' or d['rarity']!='S' or not 3<=len(row['rolls'])<=4:
             row['review'].append('身份、品级或副词条待核')
