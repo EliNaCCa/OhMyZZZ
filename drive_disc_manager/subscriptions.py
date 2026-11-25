@@ -66,7 +66,7 @@ def matrix_fields(raw):
 
 
 def guide_fields(raw):
-    rows = [r+['']*40 for r in csv.reader(io.StringIO(raw))]
+    rows = [r+['']*40 for r in csv.reader(io.StringIO(raw)) if any(cell.strip() for cell in r)]
     result, agent, cols = {}, '', {}
     for i, row in enumerate(rows):
         if row[1].strip().startswith('Last Updated:') and i:

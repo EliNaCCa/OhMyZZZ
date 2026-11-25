@@ -1,7 +1,7 @@
 import time
 from pathlib import Path
 from .planner import plan
-from .store import config, digest, read, save
+from .store import config, digest, equipment_names, read, save
 from .subscriptions import sync
 
 
@@ -17,9 +17,7 @@ def preview(root, wiki=None, refresh=True):
             warnings.append('订阅失败，使用最近成功版本 · '+str(exc))
     names = {}
     if wiki and Path(wiki).is_file():
-        for entry in read(wiki).get('equipment',{}).values():
-            if entry.get('EN') and entry.get('CHS'):
-                names[entry['EN'].replace(' ','')] = entry['CHS']
+        names = equipment_names(read(wiki))
     names.update(cfg.get('aliases',{}))
     manual = [fp for fp, entry in read(root/'markers.json', {}).items() if entry.get('state')=='manual-keep']
     report = plan(z,dict(cfg,pins=sorted(set(cfg['pins'])|set(manual))),rules,names)

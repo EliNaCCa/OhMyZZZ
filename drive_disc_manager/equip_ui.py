@@ -6,7 +6,7 @@ import time
 from one_dragon.base.geometry.point import Point
 from zzz_od.operation.back_to_normal_world import BackToNormalWorld
 
-from .store import fingerprint, read
+from .store import equipment_names, fingerprint, read
 from .scan_marks import observed_grade
 
 
@@ -31,8 +31,7 @@ class EquipUI:
         wiki = read(wiki_path)
         self.names = {key:a['CHS'] for a in wiki['character'].values() if a.get('CHS')
                       for key in (a.get('code'),a.get('EN','').replace(' ','')) if key}
-        self.set_names = {s['EN'].replace(' ',''):s['CHS'] for s in wiki.get('equipment',{}).values()
-                          if s.get('EN') and s.get('CHS')}
+        self.set_names = equipment_names(wiki)
         self.page = 'start'
 
     def guard(self):

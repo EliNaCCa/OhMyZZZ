@@ -52,6 +52,22 @@ def roll_base(z):
     return 1 if z.get('source') == 'Zenless Optimizer' else 0
 
 
+def equipment_names(wiki):
+    """Map a scanner setKey to its Chinese name in flat and localized wiki exports."""
+    names = {}
+    for entry in wiki.get('equipment', {}).values():
+        if not isinstance(entry, dict):
+            continue
+        en, zh = entry.get('EN'), entry.get('CHS')
+        if isinstance(en, dict):
+            en = en.get('name')
+        if isinstance(zh, dict):
+            zh = zh.get('name')
+        if isinstance(en, str) and en.strip() and isinstance(zh, str) and zh.strip():
+            names[en.replace(' ', '')] = zh.strip()
+    return names
+
+
 def inventory(z):
     if not isinstance(z, dict) or (z.get('format'), z.get('dbVersion'), z.get('version')) != ('ZOD', 2, 1):
         raise ValueError('需要 ZOD v1 / dbVersion 2 完整导出')
