@@ -21,6 +21,13 @@ def as_disc(d, names, roll_base=0):
     if not main or main[2] is None:
         return None
     value = d.get('mainStatValue', main[2] if d['level']==15 else None)
+    observed = None
+    if 'observedValues' in d:
+        from .stat_reading import checked_values
+        observed = checked_values(d, roll_base)
+        if not observed:
+            return None
+        value = observed['main'][d['mainStatKey']]
     if value is None or len(d['substats']) < 3:
         return None
     subs = []
@@ -28,7 +35,8 @@ def as_disc(d, names, roll_base=0):
         stat = STATS.get(s['key'])
         if not stat or stat[1] is None or s['key']==d['mainStatKey']:
             return None
-        subs.append(dict(type=stat[0], value=round(stat[1]*(1+s['upgrades']-roll_base), 4)))
+        quantity = observed['subs'][s['key']] if observed else round(stat[1]*(1+s['upgrades']-roll_base), 4)
+        subs.append(dict(type=stat[0], value=quantity))
     return dict(id=fingerprint(d), setName=names[d['setKey']], slot=int(d['slotKey']), level=d['level'],
                 rarity='S', mainStat=dict(type=main[0], value=value),subStats=subs,
                 equippedBy=d.get('location',''),locked=bool(d.get('lock')),discarded=bool(d.get('trash')))

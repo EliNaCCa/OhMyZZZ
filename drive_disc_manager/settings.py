@@ -36,6 +36,7 @@ class ManagerDialog(QDialog):
         for title,callback in [('导入本账号扫描',self.load_inventory),('重新计算',self.calculate),('始终保留 / 取消',self.pin),('同类备用数量',self.set_quota)]:
             self.button(bar,title,callback)
         self.table = self.grid(['套装','号位','主属性','等级','建议','原因']); box.addWidget(self.table)
+        self.stat_info = QLabel(); self.stat_info.setWordWrap(True); box.addWidget(self.stat_info)
         self.reserve_info = QLabel(); self.reserve_info.setWordWrap(True); box.addWidget(self.reserve_info)
         self.table.itemSelectionChanged.connect(self.show_reserve)
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'规则订阅')
@@ -469,8 +470,11 @@ class ManagerDialog(QDialog):
 
     def show_reserve(self):
         index = self.table.currentRow()
+        self.stat_info.clear()
         self.reserve_info.setText('选择一张盘，可查看同类备用名额和各用途的实际张数。')
         if not 0 <= index < len(self.rows): return
+        from .stat_reading import display_values
+        self.stat_info.setText(display_values(self.rows[index].get('observedValues')))
         group = self.coverage.get(tuple(self.rows[index][k] for k in SELECTORS))
         if not group: return
         parts = []

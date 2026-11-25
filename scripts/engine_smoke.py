@@ -39,6 +39,10 @@ def smoke(source):
             subs = [dict(key=k, upgrades=u) for k,u in zip(('crit_dmg_', 'pen', 'hp_' , 'anomProf'), (2,1,1,1))]
             discs.append(dict(id=str(i),setKey='FeatheredFate',slotKey=str(i),level=15,rarity='S',
                               mainStatKey=main,substats=subs,lock=False,trash=False,location=''))
+        # Recorded +3 slot 5 among five demo +15 pieces (this fixture uses zero-based upgrades).
+        subs = {'atk':19, 'crit_':2.4, 'def_':4.8, 'hp':112}
+        discs[4].update(level=3, mainStatKey='atk_', substats=[dict(key=k,upgrades=0) for k in subs],
+                        observedValues={'main':{'atk_':12}, 'subs':subs})
         save(root/'inventory.json', dict(format='ZOD', dbVersion=2, version=1, discs=discs,
              characters=[], wengines=[], audit=dict(game_total=6,exported=6,delta=0)))
         report = preview(root, refresh=False)

@@ -14,6 +14,7 @@ from inventory_scan.warehouse_nav import goto_drive_warehouse
 from .store import digest, fingerprint, read, save, config
 from .marks import mark_action
 from .scan_marks import mark_hint, observed_grade
+from .stat_reading import measure
 
 
 def marker_conflict(home, account, group):
@@ -86,12 +87,15 @@ class Marker:
         rank = observed_grade(items)
         if not slot or not level or rank is None or ('主属性' not in texts and 'MainStat' not in texts):
             return None
-        disc = self.parser.parse_ocr_result(items,part)
+        disc = self.parser.parse_ocr_result([dict(i) for i in items],part)
         if not disc or str(disc['slotKey'])!=slot[1] or disc['level']!=int(level[1]):
             return None
         disc['rarity'] = rank
         fp = fingerprint(disc)
         if fp not in self.rows or self.seen_counts[fp]!=1:
+            return None
+        expected = self.rows[fp].get('observedValues')
+        if not expected or measure(items, disc, self.parser) != expected:
             return None
         open_icon = cv2.cvtColor(screen[806:854,1508:1552],cv2.COLOR_RGB2GRAY)
         unlocked = float(cv2.matchTemplate(open_icon,self.template,cv2.TM_CCOEFF_NORMED).max())>=0.90

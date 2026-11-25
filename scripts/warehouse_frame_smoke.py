@@ -20,6 +20,9 @@ def smoke(home):
     from drive_disc_manager.live import Marker
     from drive_disc_manager.manager_app import wiki_path
     from drive_disc_manager.planner import plan
+    from drive_disc_manager.optimizer import as_disc
+    from drive_disc_manager.scan_marks import MarkReader
+    from drive_disc_manager.stat_reading import measure
     from drive_disc_manager.store import defaults, equipment_names, fingerprint, read
 
     os_utils.set_work_dir(str(home))
@@ -42,14 +45,29 @@ def smoke(home):
                       slotKey='5',level=3,rarity='S',mainStatKey='atk_',
                       substats=[dict(key=k, upgrades=1) for k in ('atk','crit_','def_','hp')])
         fp = fingerprint(sample)
+        values = {'main':{'atk_':12},'subs':{'atk':19,'crit_':2.4,'def_':4.8,'hp':112}}
         # Only the title count uses 319. There is no inventory traversal.
-        marker = Marker(app, scanner, dict(discs=[dict(fp=fp)]+[dict(fp=f'fixture-{i}') for i in range(318)]))
+        marker = Marker(app, scanner, dict(discs=[dict(fp=fp,observedValues=values)]+[dict(fp=f'fixture-{i}') for i in range(318)]))
         for name, state in [('mark_before','unmarked'), ('mark_after','marked')]:
             path = repo/'docs/e2e/recap_20261101'/f'{name}.jpg'
             frame = cv2.imdecode(np.frombuffer(path.read_bytes(), np.uint8), cv2.IMREAD_COLOR_RGB)
             frame = cv2.resize(frame,(1920,1080),interpolation=cv2.INTER_CUBIC)
             app.screenshot = lambda: frame
             assert marker.detail() == (fp, True, state, False), name
+            part = frame[267:768,1408:1838]
+            items = [dict(text=text,confidence=m.confidence,position=(m.x,m.y,m.x+m.w,m.y+m.h))
+                     for text,matches in ocr.run_ocr(part).items() for m in matches]
+            scanned = MarkReader(parser, ocr, frame[995:1065,1550:1920]).parse_ocr_result(items,part)
+            assert scanned['observedValues'] == values and fingerprint(scanned) == fp and scanned['markState'] == state
+            candidate = as_disc(scanned, {scanned['setKey']:'谶羽之誓'}, roll_base=1)
+            assert candidate['level'] == 3 and candidate['mainStat'] == dict(type='ATK_PERCENT', value=12)
+            wrong_roll = [dict(i,text='24%') if i['text']=='2.4%' else i for i in items]
+            assert measure(wrong_roll, scanned, parser) is None
+        marker.rows[fp]['observedValues'] = dict(values, main={'atk_':21})
+        assert marker.detail() is None  # same set, slot, level and fingerprint, different numeric main
+        marker.rows[fp].pop('observedValues')
+        assert marker.detail() is None  # old fingerprints cannot authorize a click on their own
+        sample['observedValues'] = values
         rules = {'version':'frame-smoke','fields':{'matrix/FeatheredFate/5':['atk_']}}
         cfg = dict(defaults(), reserve=0, pins=[fp])
         z = dict(format='ZOD',version=1,dbVersion=2,source='Zenless Optimizer',characters=[],wengines=[],
@@ -60,7 +78,7 @@ def smoke(home):
         duplicate = dict(sample,id='2',setKey='FeatheredFate')
         mixed = dict(z,discs=[dict(sample,setKey='谶羽之誓'),duplicate],audit=dict(game_total=2,exported=2,delta=0))
         assert all(row['ambiguous'] and row['review'] for row in plan(mixed,cfg,rules,names)['discs'])
-    print('PASS two archived frames, one physical fingerprint, subscribed set and existing pin')
+    print('PASS one +3 disc across two frames, five stat readings, correct optimizer input, mismatch blocked, pin preserved')
 
 
 if __name__ == '__main__':

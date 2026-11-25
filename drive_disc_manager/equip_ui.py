@@ -8,6 +8,7 @@ from zzz_od.operation.back_to_normal_world import BackToNormalWorld
 
 from .store import equipment_names, fingerprint, read
 from .scan_marks import observed_grade
+from .stat_reading import measure
 
 
 # Navigation geometry from samsaq/ZZZ-Scanner's getImages.py. Every mutation
@@ -120,17 +121,17 @@ class EquipUI:
         if not slot or int(slot[1]) != target['slot'] or not level or '主属性' not in raw or '副属性' not in raw:
             return None
         for i in data: i['text'] = i['text'].replace('【','[').replace('】',']')
-        disc = self.parser.parse_ocr_result(data, None)
+        disc = self.parser.parse_ocr_result([dict(i) for i in data], None)
         if not disc or observed_grade(data) != 'S' or disc['level'] != int(level[1]): return None
-        main_text = raw.split('主属性',1)[1].split('副属性',1)[0]
-        if not any(stat in main_text and key.rstrip('_')==disc['mainStatKey'].rstrip('_')
-                   for stat,key in self.parser.MAIN_STAT_MAP.items()): return None
+        disc['observedValues'] = measure(data, disc, self.parser)
         return disc, raw
 
     def current(self, screen, target):
         detail = self.detail(screen,target)
         if not detail: return None, None
         disc, raw = detail
+        if not disc['observedValues'] or disc['observedValues'] != target.get('observedValues'):
+            return None, None
         if self.set_names.get(target['set'],'\0') not in raw or fingerprint(disc) != target['fp']:
             return None, None
         # The wheel's Equipment tab is outside the picker. It must never be

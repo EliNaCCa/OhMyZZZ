@@ -18,7 +18,8 @@ class MarkReader:
         self.footer = footer
 
     def parse_ocr_result(self, items, image):
-        result = self.parser.parse_ocr_result(items, image)
+        # The host's spelling dictionary mutates its input. Preserve raw value tokens.
+        result = self.parser.parse_ocr_result([dict(i) for i in items], image)
         if result is None:
             return None
         state = mark_hint(self.ocr, self.footer)
@@ -27,6 +28,8 @@ class MarkReader:
         result['observedGrade'] = observed_grade(items)
         if result['observedGrade']:
             result['rarity'] = result['observedGrade']
+        from .stat_reading import measure
+        result['observedValues'] = measure(items, result, self.parser) if result['observedGrade'] else None
         return result
 
 

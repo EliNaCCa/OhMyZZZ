@@ -1,6 +1,7 @@
 """Resolve one fielded lineup and verify physical ownership after every equip."""
 from time import time
-from .store import config, digest, fingerprint, inventory, save
+from .store import config, digest, fingerprint, inventory, roll_base, save
+from .stat_reading import checked_values
 
 
 def target_loadout(cfg, report, snapshot, name):
@@ -30,9 +31,13 @@ def target_loadout(cfg, report, snapshot, name):
             disc = by_fp[fp]
             if int(disc['slotKey']) != slot or disc.get('trash') or disc.get('markState') == 'unknown':
                 raise ValueError('目标盘号位或弃置状态不适合换装')
+            observed = checked_values(disc, roll_base(snapshot))
+            if not observed:
+                raise ValueError(f'{agent} 的 {slot} 号盘缺少实测词条数值，请用 OhMyZZZ 重新扫描')
             claimed.add(fp)
             targets.append(dict(profile=profile['name'],agent=agent,slot=slot,fp=fp,
-                                location=disc.get('location',''),set=disc['setKey'],main=disc['mainStatKey']))
+                                location=disc.get('location',''),set=disc['setKey'],main=disc['mainStatKey'],
+                                observedValues=observed))
     return targets
 
 

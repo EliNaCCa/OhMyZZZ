@@ -6,6 +6,7 @@ from .store import digest, equipment_keys, fingerprint, inventory, roll_base
 from .subscriptions import effective
 from .reserve_policy import apply_reserves, development
 from .roster import compile_roster, explain, roster_catalog
+from .stat_reading import checked_values
 
 
 def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_owned=()):
@@ -63,6 +64,9 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         row = dict(fp=fp, id=d['id'], set=set_key(d), slot=str(d['slotKey']), main=d['mainStatKey'],
                    level=d['level'], location=d.get('location',''), rolls={s['key']:1+s['upgrades']-base for s in d['substats']}, reasons=why, recommendations=[], explanation=[], review=[])
         row['marked'] = d.get('trash') is True
+        row['observedValues'] = checked_values(d, base)
+        if 'observedValues' in d and not row['observedValues']:
+            row['review'].append('本次扫描未核实完整的主副词条数值')
         if d.get('markState')=='unknown':
             row['review'].append('现场弃置状态待核')
         row['ambiguous'] = identities[canonical_fps[fp]] > 1
