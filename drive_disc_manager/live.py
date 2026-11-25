@@ -164,14 +164,16 @@ class Marker:
             self.change(mode, detail, 'marked')
         return True
 
-    def apply(self, mode):
+    def phase_targets(self, mode):
         todo = {}
         for fp,row in self.rows.items():
             if row['review'] or self.seen_counts[fp]!=1: continue
             if mode=='lock' and row['decision']=='保留': todo[fp]=row
             if mode=='mark' and row['decision']=='弃置候选': todo[fp]=row
             if mode=='release' and row['decision']=='弃置候选' and row.get('managedSpareLock'): todo[fp]=row
-        if not todo: return
+        return todo
+
+    def apply(self, mode, todo):
         seen = set()
         for page in range(400):
             points = self.grid._detect_points(self.frame())
@@ -210,11 +212,14 @@ class Marker:
                 raise ValueError('有待复核的保留盘，本轮暂缓备用换代')
             phases.insert(1, 'release')
         for phase in phases:
+            todo = self.phase_targets(phase)
+            if not todo:
+                continue
             # Re-enter the warehouse for each pass (the previous pass can leave a scrolled page).
             from zzz_od.operation.back_to_normal_world import BackToNormalWorld
             if not BackToNormalWorld(self.app.ctx).execute().success: raise ValueError('无法返回大世界')
             self.scanner._ensure_screen_areas()
             if enter_warehouse(self.app, self.guard) != len(self.report['discs']):
                 raise ValueError('当前驱动仓库数量与计划不匹配')
-            self.apply(phase)
+            self.apply(phase, todo)
         return self.observed

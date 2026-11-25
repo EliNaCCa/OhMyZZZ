@@ -4,7 +4,7 @@ from threading import Thread
 from PySide6.QtCore import Signal, Qt
 from one_dragon_qt.widgets.base_interface import BaseInterface
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QTabWidget,QWidget,QLabel,QPushButton,
-    QPlainTextEdit,QTableWidget,QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView,QCheckBox,QLineEdit)
+    QPlainTextEdit,QTableWidget,QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView,QCheckBox,QLineEdit,QMenu)
 from .store import read,save,config,import_inventory,digest,equipment_names,equipment_keys
 from .service import preview
 from .subscriptions import sync, current_conflicts, can_merge, effective, resolve_conflict, save_config, save_config_draft, save_field_override
@@ -34,19 +34,25 @@ class ManagerInterface(BaseInterface):
         self.tabs = tabs = QTabWidget(); layout.addWidget(tabs)
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'仓库预览')
         bar = QHBoxLayout(); box.addLayout(bar)
-        for title,callback in [('导入本账号扫描',self.load_inventory),('重新计算',self.calculate),('始终保留 / 取消',self.pin),('同类备用数量',self.set_quota)]:
-            self.button(bar,title,callback)
+        self.button(bar,'导入本账号扫描',self.load_inventory)
+        self.button(bar,'重新计算',self.calculate)
+        self.pin_button = self.button(bar,'始终保留 / 取消',self.pin)
+        self.quota_button = self.button(bar,'同类备用数量',self.set_quota)
         self.probe_button = self.button(bar, '读一张盘', self.start_probe)
         self.detail_button = self.button(bar, '查看盘详情', self.open_disc_detail)
         self.probe_button.setToolTip('进入已打开游戏的驱动仓库，复读当前盘的主副词条和标记。')
         self.probe_note = QLabel(); self.probe_note.setWordWrap(True); box.addWidget(self.probe_note)
         self.probe_finished.connect(self.finish_probe, Qt.ConnectionType.QueuedConnection)
-        self.table = self.grid(['套装','号位','主属性','等级','建议','原因']); box.addWidget(self.table)
+        self.table = self.grid(['套装','号位','主属性','等级','建议','原因'])
+        from .inventory_filter import InventoryFilter
+        self.inventory_filter = InventoryFilter(self.table)
+        box.addWidget(self.inventory_filter); box.addWidget(self.table)
         self.stat_info = QLabel(); self.stat_info.setWordWrap(True); box.addWidget(self.stat_info)
         self.reserve_info = QLabel(); self.reserve_info.setWordWrap(True); box.addWidget(self.reserve_info)
         self.restore_unlock = self.button(box, '取消这张盘的手动解锁保护', self.clear_unlock)
         self.restore_unlock.hide()
         self.table.itemSelectionChanged.connect(self.show_reserve)
+        self.inventory_filter.changed.connect(self.show_reserve)
         self.table.cellDoubleClicked.connect(lambda *_:self.open_disc_detail())
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'规则订阅')
         bar = QHBoxLayout(); box.addLayout(bar)
@@ -84,6 +90,12 @@ class ManagerInterface(BaseInterface):
         self.button(engine_bar,'打开配装器',self.open_optimizer)
         self.engine_mode = QLabel(); engine_bar.addWidget(self.engine_mode); engine_bar.addStretch()
         self.button(engine_bar,'连接设置',self.configure_optimizer)
+        self.profile_menu = QPushButton('管理方案'); engine_bar.addWidget(self.profile_menu)
+        menu = QMenu(self.profile_menu)
+        self.profile_menu.setMenu(menu)
+        for title, duplicate in [('复制为另一配队', True), ('重命名', False)]:
+            action = menu.addAction(title)
+            action.triggered.connect(lambda _, copy=duplicate:self.name_profile(copy))
         self.button(engine_bar,'分组与优先级',self.edit_allocation)
         self.apply_button = self.button(engine_bar,'应用当前配队',self.apply_current)
         self.equip_busy = False
@@ -280,8 +292,11 @@ class ManagerInterface(BaseInterface):
                 self.editor_drafts.pop(self.editor_account, None)
         self.cfg=config(self.root); self.rules=read(self.root/'rules.json',{}); self.report=read(self.root/'preview.json',{})
         self.config_hash = digest(self.cfg)
-        self.preview_stale = bool(self.report) and (self.report.get('configuration') != self.config_hash
-                                                   or self.report.get('rules') != self.rules.get('version'))
+        inventory = read(self.root/'inventory.json', {})
+        self.preview_stale = bool(self.report) and (
+            self.report.get('configuration') != self.config_hash
+            or self.report.get('rules') != self.rules.get('version')
+            or not inventory or self.report.get('inventory') != digest(inventory))
         self.editor_account = self.root
         self.editor_base, text = self.editor_drafts.get(self.root, (deepcopy(self.cfg), pretty(self.cfg)))
         self.show_probe(read(self.root/'single-disc.json', {}))
@@ -296,16 +311,12 @@ class ManagerInterface(BaseInterface):
         self.rule_stamp.setText('最近成功同步 · '+stamp+(f' · {revision[:8]}' if revision else ''))
         self.rule_stamp.setToolTip(revision)
         self.coverage = {tuple(group[k] for k in SELECTORS):group for group in self.report.get('reserveCoverage',[])}
-        def row_info(row):
-            notes = dict.fromkeys(row['reasons'] + row['review'] + row.get('explanation',[]) + row.get('recommendations',[]))
-            return '、'.join(notes)
-        self.fill(self.table,[(r['set'],r['slot'],r['main'],r['level'],r['decision'],row_info(r)) for r in self.rows])
-        self.show_reserve()
         conflicts=self.conflicts=current_conflicts(self.rules,self.cfg['overrides']); fields=self.rules.get('fields',{})
         self.keys=sorted((set(fields)|set(self.cfg['overrides']))-{k for k in fields if k.endswith('/known')},key=lambda k:(k not in conflicts,k))
         wiki = read(wiki_path(), {})
-        self.refresh_roster(wiki)
+        self.refresh_roster(wiki, inventory)
         self.set_names = equipment_names(wiki) | self.cfg.get('aliases', {})
+        self.inventory_filter.present(self.rows, self.set_names, self.root, self.fill)
         self.reserve_presets.present(self.cfg, self.set_names, fields, self.root)
         self.agent_names = {name:a['label'] for a in self.agents for name in [*a['builds'],*a['guides']]}
         self.rule_rows = {key:self.rule_row(key) for key in self.keys}
@@ -313,7 +324,7 @@ class ManagerInterface(BaseInterface):
         self.filter_rules()
         summary = f"上次预览 {self.report.get('counts',{})}" if self.report else '尚无完整库存预览'
         if self.preview_stale:
-            summary += ' · 配置或规则已更新，请重新计算'
+            summary += ' · 库存、配置或规则已更新，请重新计算'
         self.status.setText(f"{summary}　待处理规则冲突 {len(conflicts)}　"+' / '.join(self.report.get('issues',[])+self.report.get('warnings',[])))
         self.refresh_teams()
         self.engine_mode.setText('手动连接 · '+self.cfg['optimizer_url'] if self.cfg['optimizer_url'] else '由 OhMyZZZ 按需启动')
@@ -348,9 +359,8 @@ class ManagerInterface(BaseInterface):
             parts.append('上次换装待核对 · '+receipt.get('error','下次从实际穿戴情况继续'))
         self.equip_status.setText('　｜　'.join(parts))
 
-    def refresh_roster(self, wiki):
+    def refresh_roster(self, wiki, inventory):
         self.owned_toggle.setChecked(self.cfg['includeOwned'])
-        inventory = read(self.root/'inventory.json', {})
         fields = self.rules.get('fields', {})
         self.agents = roster_catalog(inventory, fields, self.cfg, wiki,
                                      read(self.root/'owned-agents.json', []))
@@ -416,6 +426,7 @@ class ManagerInterface(BaseInterface):
         index = self.teams.currentRow()
         profiles = self.cfg['profiles']
         selected = profiles[index] if 0 <= index < len(profiles) else {}
+        self.profile_menu.setEnabled(bool(selected) and not self.equip_busy)
         self.refresh_target_button.setEnabled(bool(selected.get('sourceId')) and not self.equip_busy)
         ready = not self.preview_stale and selected.get('enabled',True) and self.report.get('assignments',{}).get(selected.get('name'),{}).get('ids')
         self.apply_button.setEnabled(bool(ready) and not self.equip_busy)
@@ -477,7 +488,8 @@ class ManagerInterface(BaseInterface):
                 details.append(f"扣除前序占用后可选 {scope['availableBuilds']} 套")
             if scope.get('limited'):
                 details.append('已达到联合搜索上限')
-        if self.report.get('configuration') != digest(self.cfg): details.append('配置已修改 · 上次计算结果')
+        if self.preview_stale:
+            details.append('上次计算结果 · 请用当前库存和规则重新计算')
         self.team_score.setText('　｜　'.join(details))
 
     @staticmethod
@@ -507,6 +519,42 @@ class ManagerInterface(BaseInterface):
             if not ok: return
         self.finish_edit(token, dict(token[2], profiles=arrange_profile(profiles, index, group, rank)))
         self.refresh_teams(profile['name'])
+
+    def name_profile(self, duplicate):
+        try:
+            token = self.edit_token()
+            cfg = token[2]
+            profiles = cfg['profiles']
+            index = self.teams.currentRow()
+            if not 0 <= index < len(profiles) or self.equip_busy:
+                return
+            profile = profiles[index]
+            old = profile['name']
+            names = {p['name'] for p in profiles}
+            suggestion = old
+            if duplicate:
+                suggestion = old+' · 副本'
+                serial = 2
+                while suggestion in names:
+                    suggestion = f'{old} · 副本 {serial}'
+                    serial += 1
+            name, ok = QInputDialog.getText(self, '复制为另一配队' if duplicate else '重命名',
+                '新方案名称（副本可借盘，可单独编辑输出窗口）' if duplicate else '方案名称', text=suggestion)
+            name = name.strip()
+            if not ok or not duplicate and name == old:
+                return
+            if not name or name in names:
+                raise ValueError('请输入尚未使用的方案名称')
+            if duplicate:
+                profiles.insert(index+1, dict(deepcopy(profile), name=name, simultaneous=''))
+            else:
+                profiles[index] = dict(profile, name=name)
+                if cfg['fieldProfile'] == old:
+                    cfg['fieldProfile'] = name
+            self.finish_edit(token, cfg)
+            self.refresh_teams(name)
+        except Exception as exc:
+            QMessageBox.warning(self,APP_NAME,str(exc))
 
     def edit_windows(self):
         index = self.teams.currentRow()
@@ -646,7 +694,7 @@ class ManagerInterface(BaseInterface):
         path,_=QFileDialog.getOpenFileName(self,'选择属于当前账号的 ZOD 扫描','','JSON (*.json)')
         if path:
             self.check_account(account)
-            import_inventory(account,path); self.calculate()
+            self.calculate(import_path=path)
 
     def start_probe(self):
         from .disc_probe import probe
@@ -665,8 +713,9 @@ class ManagerInterface(BaseInterface):
 
     def finish_probe(self, record, root):
         self.probe_button.setEnabled(True)
-        if str(self.root) == root:
+        if str(self.root) == root and self.root.name == str(self.ctx.current_instance_idx):
             self.show_probe(record)
+            self.show_reserve()
 
     def show_probe(self, record):
         from .stat_reading import display_values
@@ -774,8 +823,20 @@ class ManagerInterface(BaseInterface):
             return
         self.edit_profile_fields(token, index, updated)
 
-    def calculate(self):
-        preview(self.root,wiki_path(),refresh=False); self.reload()
+    def calculate(self, *, import_path=None):
+        from .maintenance import Deferred, exclusive
+        account = self.root
+        self.check_account(account)
+        try:
+            # The game worker holds this same lock from its fresh scan through marking/equip.
+            with exclusive(account.parent/'_maintenance'):
+                if import_path is not None:
+                    import_inventory(account,import_path)
+                preview(account,wiki_path(),refresh=False)
+        except Deferred as exc:
+            raise ValueError('插件任务或维护正在运行，请结束后再计算仓库预览。') from exc
+        finally:
+            self.reload()
 
     def check_account(self, account):
         if account != self.root or account.name != str(self.ctx.current_instance_idx):
@@ -798,9 +859,12 @@ class ManagerInterface(BaseInterface):
         self.check_account(account)
         try:
             save_config(account, value, expected)
-            if (account/'inventory.json').is_file():
-                preview(account,wiki_path(),refresh=False)
-        finally:
+        except Exception:
+            self.reload()
+            raise
+        if (account/'inventory.json').is_file():
+            self.calculate()
+        else:
             self.reload()
 
     def edit_cfg(self, **changes):
@@ -810,7 +874,9 @@ class ManagerInterface(BaseInterface):
     def pin(self):
         index=self.table.currentRow()
         if index < 0: return
-        fp=self.rows[index]['fp']; pins=set(self.cfg['pins'])
+        row = self.rows[index]
+        if row['marked']: return
+        fp=row['fp']; pins=set(self.cfg['pins'])
         self.edit_cfg(pins=sorted(pins^{fp}))
 
     def open_disc_detail(self, *, probe=None):
@@ -858,7 +924,7 @@ class ManagerInterface(BaseInterface):
                 if change is None: return
             if not probe:
                 match = next((i for i, d in enumerate(self.rows) if d['id'] == row['id'] and d['fp'] == row['fp']), None)
-                if match is None: return
+                if match is None or self.table.isRowHidden(match): return
                 self.table.selectRow(match)
             self.open_disc_detail(probe=probe)
             self.detail.tabs.setCurrentIndex(1 if change else tab)
@@ -884,7 +950,11 @@ class ManagerInterface(BaseInterface):
 
     def show_reserve(self):
         index = self.table.currentRow()
-        self.detail_button.setEnabled(0 <= index < len(self.rows) or self.probe_record.get('status')=='verified')
+        selected = 0 <= index < len(self.rows)
+        self.pin_button.setEnabled(selected and not self.rows[index]['marked'])
+        self.quota_button.setEnabled(selected)
+        self.detail_button.setEnabled(selected or self.probe_record.get('status')=='verified')
+        self.detail_button.setText('查看盘详情' if selected or self.probe_record.get('status')!='verified' else '查看上次单盘读数')
         self.stat_info.clear()
         self.restore_unlock.setVisible(0 <= index < len(self.rows) and bool(self.rows[index].get('manualUnlock')))
         self.reserve_info.setText('选择一张盘，可查看同类备用名额和各用途的实际张数。')
@@ -920,8 +990,8 @@ class ManagerInterface(BaseInterface):
         before = self.coverage.get(tuple(selectors.values()))
         summary = self.edit_quota(selectors, '通用')
         if summary is None: return
-        match = next((i for i,item in enumerate(self.rows) if item['fp']==r['fp']),None)
-        if match is not None: self.table.selectRow(match)
+        match = next((i for i,item in enumerate(self.rows) if item['fp']==r['fp'] and item['id']==r.get('id')),None)
+        if match is not None and not self.table.isRowHidden(match): self.table.selectRow(match)
         after = self.coverage.get(tuple(selectors.values()))
         if before and after:
             change = f"调整前 {before['kept']} 张 → 调整后 {after['kept']} 张"
@@ -1012,6 +1082,13 @@ class ManagerInterface(BaseInterface):
             dialog = MainRuleEditor(self, row[0]+' · '+row[1], key.rsplit('/',1)[-1], mode, seen_remote or [], selected)
             if not dialog.exec(): return
             override = dict(mode=mode, values=dialog.values())
+        elif mode != 'inherit' and key.startswith('build/') and key.rsplit('/',1)[-1] in ('sets4','sets2'):
+            from .set_rule_editor import SetRuleEditor
+            matrix_sets = {k.split('/')[1] for k in self.keys if k.startswith('matrix/') and k.count('/') == 2}
+            choices = {k:self.set_names.get(k,k) for k in matrix_sets | self.set_names.keys()}
+            dialog = SetRuleEditor(self, row[0]+' · '+row[1], mode, choices, seen_remote or [], selected)
+            if not dialog.exec(): return
+            override = dict(mode=mode, values=dialog.values())
         elif mode != 'inherit':
             text,ok=QInputDialog.getMultiLineText(self,'字段规则','每行一个值',text='\n'.join(selected))
             if not ok: return
@@ -1046,6 +1123,8 @@ class ManagerInterface(BaseInterface):
             if source == 'matrix':
                 from .main_rule_editor import NAMES
                 return '、'.join(NAMES.get(v,v) for v in values) or '无'
+            if source == 'build' and field in ('sets4','sets2'):
+                return '、'.join(self.set_names.get(v,v) for v in values) or '无'
             return '、'.join(values) or '无'
         local = '继承上游' if mode=='inherit' else ('额外接受 ' if mode=='add' else '只接受 ') + display(override['values'])
         return [('⚠ ' if conflict else '')+subject, labels.get(field,field), '、'.join(tabs),

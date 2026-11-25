@@ -70,7 +70,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     base = roll_base(z)
     fields = rules.get('fields',{})
     catalog = roster_catalog(z, fields, cfg, wiki or {}, known_owned)
-    by_set, unresolved, excluded = compile_roster(catalog, fields, cfg['overrides'])
+    by_set, unresolved, excluded = compile_roster(catalog, fields, cfg['overrides'], reverse)
     by_fp = {fingerprint(d):d for d in ds}
     inputs = {fp:as_disc(d,optimizer_names,base) for fp,d in by_fp.items()
               if counts[fp] == 1 and not d.get('trash') and d.get('markState')!='unknown' and d.get('ownerState') != 'unknown'}

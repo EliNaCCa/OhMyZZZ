@@ -124,7 +124,11 @@ def parse_substats(values):
     return stats
 
 
-def compile_roster(catalog, fields, overrides):
+def compile_roster(catalog, fields, overrides, set_aliases=None):
+    aliases = set_aliases or {}
+    def set_id(name):
+        return identifier(aliases.get(name, name))
+
     by_set, unresolved, excluded = defaultdict(list), [], defaultdict(list)
     for item in catalog:
         if not item['selected']:
@@ -145,9 +149,10 @@ def compile_roster(catalog, fields, overrides):
                     for group in ('sets4','sets2'):
                         field = prefix+group
                         accepted = effective(fields.get(field), overrides.get(field)) or []
-                        for value in accepted:
-                            sets[identifier(value)].append(field)
-                        for removed in {identifier(v) for v in fields.get(field, [])} - {identifier(v) for v in accepted}:
+                        accepted_ids = {set_id(value) for value in accepted}
+                        for key in sorted(accepted_ids):
+                            sets[key].append(field)
+                        for removed in {set_id(v) for v in fields.get(field, [])} - accepted_ids:
                             excluded[removed].append((item['label'],field))
                 for slot in '456':
                     field = prefix+'slot'+slot

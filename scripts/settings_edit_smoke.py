@@ -163,10 +163,70 @@ def smoke(home, tmp):
         raise AssertionError('concurrent change to the same advanced option was lost')
     assert config(account) == newer
     widget.reset_text()
-    save(account/'preview.json',dict(configuration=widget.config_hash,rules='older',counts={},discs=[],
-                                     assignments={'临时队':dict(ids=['demo'])}))
+    team = dict(config(account)['profiles'][0], simultaneous='第一队', tolerancePct=.3, sourceId='test-agent',
+                mainWindow='常态', windows=[dict(name='常态',weight=1,buffs=[])])
+    save(account/'config.json',dict(config(account), profiles=[team], fieldProfile=team['name'], run_scanner=True))
+    widget.reload()
+    with patch.object(QInputDialog, 'getText', return_value=('爆发队',True)):
+        widget.profile_menu.menu().actions()[0].trigger()
+    current = config(account)
+    original_team, variant = current['profiles']
+    assert original_team == team and variant == dict(team, name='爆发队', simultaneous='')
+    assert current['fieldProfile'] == original_team['name'] and widget.teams.currentRow() == 1
+    widget.teams.selectRow(0)
+    with patch.object(QInputDialog, 'getText', return_value=('常态队',True)):
+        widget.profile_menu.menu().actions()[1].trigger()
+    assert config(account)['fieldProfile'] == '常态队' and config(account)['profiles'][1] == variant
+    def disc(key, slot, decision, reasons, marked=False):
+        return dict(id=key,fp=key,set='SwingJazz',slot=slot, main='atk_',level=0,decision=decision,
+                    marked=marked,reasons=reasons,review=[])
+    discs = [disc('chosen','4','保留',['配队 · 常态队']),disc('spare','5','保留',['备用 · 偏暴击']),
+             disc('old','5','已弃置',['游戏已标记弃置'],True)]
+    save(account/'preview.json',dict(configuration=widget.config_hash,rules='older',counts={},discs=discs,
+                                     assignments={'常态队':dict(ids=['demo'])}))
     widget.reload()
     assert '请重新计算' in widget.status.text() and not widget.apply_button.isEnabled()
+    browser = widget.inventory_filter
+    browser.search.setText('摇摆爵士 5号')
+    browser.kind.setCurrentText('额外备用')
+    assert browser.total.text() == '1 / 3 张' and browser.selected_identity() == ('spare','spare')
+    with patch.object(widget, 'edit_cfg') as change:
+        widget.pin()
+        change.assert_called_once_with(pins=['spare'])
+    browser.kind.setCurrentText('已标记弃置')
+    assert browser.selected_identity() == ('old','old') and widget.table.isRowHidden(1) and not widget.pin_button.isEnabled()
+    browser.search.setText('无匹配')
+    assert widget.table.currentRow() == -1 and browser.total.text() == '0 / 3 张'
+    from drive_disc_manager.maintenance import exclusive
+    with exclusive(account.parent/'_maintenance'), patch('drive_disc_manager.settings.import_inventory') as importer:
+        try:
+            widget.calculate(import_path='sample.json')
+        except ValueError as exc:
+            assert '任务或维护正在运行' in str(exc)
+        else:
+            raise AssertionError('the game worker did not retain its inventory')
+        importer.assert_not_called()
+    from PySide6.QtCore import Qt
+    from drive_disc_manager.set_rule_editor import SetRuleEditor
+    from drive_disc_manager.roster import compile_roster
+    role_key = 'build/Ellen/sets2'
+    fields = {role_key:['PolarMetal'],key:['atk_']}
+    save(account/'rules.json',dict(fields=fields,version='sets-fixture'))
+    widget.reload()
+    widget.rule_search.setText('Ellen 两件套')
+    assert widget.visible_keys == [role_key]
+    def choose_set(dialog):
+        dialog.search.setText('摇摆爵士')
+        shown = [dialog.sets.item(i) for i in range(dialog.sets.count()) if not dialog.sets.item(i).isHidden()]
+        assert len(shown)==1 and shown[0].toolTip()=='SwingJazz'
+        shown[0].setCheckState(Qt.CheckState.Checked)
+        return True
+    with patch.object(QInputDialog,'getItem',return_value=('额外接受',True)), patch.object(SetRuleEditor,'exec',choose_set):
+        widget.edit_rule()
+    assert config(account)['overrides'][role_key] == dict(mode='add',values=['SwingJazz'])
+    agent = dict(label='艾莲',selected=True, builds=['Ellen'],guides=[])
+    roles, _, _ = compile_roster([agent],fields,{role_key:dict(mode='add',values=['摇摆爵士'])},{'摇摆爵士':'SwingJazz'})
+    assert set(roles)=={'swingjazz','polarmetal'}
     widget.close()
 
 

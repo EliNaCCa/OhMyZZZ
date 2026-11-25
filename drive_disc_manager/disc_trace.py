@@ -58,6 +58,6 @@ def probe_trace(record, cfg, rules, wiki, known_owned):
     else:
         fields = rules.get('fields', {})
         catalog = roster_catalog({}, fields, cfg, wiki, known_owned)
-        assess_rules(row, cfg, fields, reverse, *compile_roster(catalog, fields, cfg['overrides']))
+        assess_rules(row, cfg, fields, reverse, *compile_roster(catalog, fields, cfg['overrides'], reverse))
     return row, dict(rules=rules.get('version'), traceRules=rule_book([row], rules, cfg['overrides'],
                                                                      current_conflicts(rules,cfg['overrides'])))

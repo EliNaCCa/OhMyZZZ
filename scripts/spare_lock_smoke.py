@@ -1,5 +1,6 @@
 """Three-disc smoke for replacing a spare with no game, account or network access."""
 import argparse
+from collections import Counter
 from copy import deepcopy
 from pathlib import Path
 import sys
@@ -46,6 +47,7 @@ def smoke(home):
             marker.history = read(history_path, {})
             marker.report = plan(z, cfg, rules, names, history=marker.history)
             marker.rows = {row['fp']:row for row in marker.report['discs']}
+            marker.seen_counts = Counter(row['fp'] for row in marker.report['discs'])
             marker.observed, marker.released = {}, set()
             return marker
 
@@ -134,6 +136,13 @@ def smoke(home):
         assert retired['state']=='absent-after-rescan' and retired['intended']=='mark'
         assert retired['values']==old['observedValues'] and 'spareLock' not in retired
         assert len(clicked) == 4
+        # A fresh scan containing only an already discarded piece has no reversible work.
+        only_marked = dict(old, trash=True, markState='marked', lock=False,lockState='unlocked')
+        m = scan(inventory(only_marked))
+        m.app = SimpleNamespace(ctx=None, account=1, group='one_dragon')
+        with patch('drive_disc_manager.live.marker_conflict',return_value=''), patch.object(m,'apply') as apply:
+            assert m.run() == {} and m.report['discs'][0]['decision'] == '已弃置'
+            apply.assert_not_called()
     print('PASS three-disc spare rotation, manual and legacy protection, identity loss and interrupted release')
 
 
