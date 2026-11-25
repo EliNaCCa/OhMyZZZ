@@ -1,0 +1,61 @@
+"""Values and sources used at planning time, shared across the inventory report."""
+from .subscriptions import effective
+
+
+def rule_book(rows, rules, overrides, conflicts):
+    keys = {key for row in rows for key, _, _ in row['ruleUses']}
+    book = {}
+    for key in sorted(keys):
+        remote = rules.get('fields', {}).get(key)
+        local = overrides.get(key) or {}
+        conflict = conflicts.get(key)
+        book[key] = dict(remote=remote, mode=local.get('mode', 'inherit'), local=local.get('values'),
+                         active=effective(remote, local), old=conflict['old'] if conflict else None,
+                         conflict=bool(conflict), tabs=rules.get('origins', {}).get(key, []))
+    return book
+
+
+def teams_for_disc(report, row):
+    teams = report.get('traceTeams', {})
+    return [(name, teams.get(name, {}), result) for name, result in report.get('assignments', {}).items()
+            if not result.get('error') and row['fp'] in result.get('ids', ())]
+
+
+def probe_trace(record, cfg, rules, wiki, known_owned):
+    """Explain the last verified observation without fabricating an inventory or allocation."""
+    from .optimizer import STATS
+    from .planner import assess_rules
+    from .roster import roster_catalog, compile_roster
+    from .store import equipment_names, equipment_keys
+    from .subscriptions import current_conflicts
+    if record.get('status') != 'verified':
+        raise ValueError('需要先读一张盘')
+    disc = record['disc']
+    names = equipment_names(wiki) | cfg.get('aliases', {})
+    reverse = equipment_keys(names)
+    values = disc['observedValues']
+    reasons = []
+    if disc['lockState'] == 'locked':
+        reasons.append('读取时游戏内已锁定')
+    if cfg['protect15'] and disc['level'] == 15:
+        reasons.append('已满级')
+    if disc['fingerprint'] in cfg['pins']:
+        reasons.append('手动保护')
+    rolls = {}
+    if disc['rarity'] == 'S':
+        for key, quantity in values['subs'].items():
+            step = STATS.get(key, (None, None))[1]
+            if step and 1 <= round(quantity/step) <= 6 and abs(round(quantity/step)*step-quantity) < 1e-6:
+                rolls[key] = round(quantity/step)
+    row = dict(fp=disc['fingerprint'], set=reverse.get(disc['setKey'],disc['setKey']), slot=str(disc['slotKey']),
+               level=disc['level'], main=next(iter(values['main'])), observedValues=values, rolls=rolls,
+               reasons=reasons, recommendations=[], review=[], explanation=[], ruleUses=[],
+               decision='单盘观察', marked=disc['markState']=='marked')
+    if row['marked']:
+        reasons.append('读取时游戏已标记弃置')
+    else:
+        fields = rules.get('fields', {})
+        catalog = roster_catalog({}, fields, cfg, wiki, known_owned)
+        assess_rules(row, cfg, fields, reverse, *compile_roster(catalog, fields, cfg['overrides']))
+    return row, dict(rules=rules.get('version'), traceRules=rule_book([row], rules, cfg['overrides'],
+                                                                     current_conflicts(rules,cfg['overrides'])))

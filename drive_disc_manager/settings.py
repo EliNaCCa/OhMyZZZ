@@ -34,6 +34,7 @@ class ManagerInterface(BaseInterface):
         for title,callback in [('导入本账号扫描',self.load_inventory),('重新计算',self.calculate),('始终保留 / 取消',self.pin),('同类备用数量',self.set_quota)]:
             self.button(bar,title,callback)
         self.probe_button = self.button(bar, '读一张盘', self.start_probe)
+        self.detail_button = self.button(bar, '查看盘详情', self.open_disc_detail)
         self.probe_button.setToolTip('进入已打开游戏的驱动仓库，复读当前盘的主副词条和标记。')
         self.probe_note = QLabel(); self.probe_note.setWordWrap(True); box.addWidget(self.probe_note)
         self.probe_finished.connect(self.finish_probe, Qt.ConnectionType.QueuedConnection)
@@ -43,6 +44,7 @@ class ManagerInterface(BaseInterface):
         self.restore_unlock = self.button(box, '取消这张盘的手动解锁保护', self.clear_unlock)
         self.restore_unlock.hide()
         self.table.itemSelectionChanged.connect(self.show_reserve)
+        self.table.cellDoubleClicked.connect(lambda *_:self.open_disc_detail())
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'规则订阅')
         bar = QHBoxLayout(); box.addLayout(bar)
         self.button(bar,'更新来源',self.update_rules)
@@ -117,6 +119,13 @@ class ManagerInterface(BaseInterface):
         self.button(bar,'取消待办',lambda:self.queue_maintenance(''))
         self.button(bar,'刷新状态',self.show_maintenance)
         box.addStretch()
+        from .disc_detail_page import DiscDetails
+        self.detail = DiscDetails(); self.detail_tab = tabs.addTab(self.detail, '盘详情')
+        tabs.setTabVisible(self.detail_tab,False)
+        self.detail.back.connect(lambda:tabs.setCurrentIndex(0))
+        self.detail.rule.connect(self.open_detail_rule)
+        self.detail.team.connect(self.open_detail_team)
+        tabs.currentChanged.connect(lambda index:tabs.setTabVisible(self.detail_tab,False) if index!=self.detail_tab else None)
 
     def on_interface_shown(self):
         # OneDragon caches embedded pages by navigation stack, not by account.
@@ -224,6 +233,8 @@ class ManagerInterface(BaseInterface):
                 item=QTableWidgetItem(str(value)); item.setToolTip(str(value)); table.setItem(r,col,item)
 
     def reload(self):
+        if self.tabs.currentIndex() == self.detail_tab:
+            self.tabs.setCurrentIndex(0)
         self.cfg=config(self.root); self.rules=read(self.root/'rules.json',{}); self.report=read(self.root/'preview.json',{})
         self.config_hash = digest(self.cfg)
         self.show_probe(read(self.root/'single-disc.json', {}))
@@ -532,6 +543,8 @@ class ManagerInterface(BaseInterface):
 
     def show_probe(self, record):
         from .stat_reading import display_values
+        self.probe_record = record
+        self.detail_button.setEnabled(record.get('status')=='verified' or self.table.currentRow() >= 0)
         text = record.get('error', '')
         if record.get('status') == 'verified':
             disc = record['disc']
@@ -623,8 +636,43 @@ class ManagerInterface(BaseInterface):
         fp=self.rows[index]['fp']; pins=set(self.cfg['pins'])
         self.cfg['pins']=sorted(pins^{fp}); self.edit_cfg()
 
+    def open_disc_detail(self):
+        from .disc_trace import probe_trace
+        from .store import equipment_names
+        if self.root.name != str(self.ctx.current_instance_idx):
+            self.on_interface_shown(); return
+        idx = self.table.currentRow()
+        report = self.report
+        wiki = read(wiki_path(), {})
+        names = equipment_names(wiki) | self.cfg.get('aliases', {})
+        probe = not 0 <= idx < len(self.rows)
+        if probe:
+            row, report = probe_trace(self.probe_record,self.cfg,self.rules,wiki,read(self.root/'owned-agents.json', []))
+        else:
+            row = self.rows[idx]
+        self.detail.present(row, report, set_name=names.get(row['set'],row['set']), probe=probe,
+                            coverage=None if probe or row['marked'] else self.coverage.get(tuple(row[k] for k in SELECTORS)),
+                            rule_keys=self.keys, team_names=[p['name'] for p in self.cfg['profiles']],
+                            stale=not probe and (report.get('rules')!=self.rules.get('version') or report.get('configuration')!=self.config_hash))
+        self.tabs.setTabVisible(self.detail_tab,True); self.tabs.setCurrentIndex(self.detail_tab)
+
+    def open_detail_rule(self, key):
+        if self.root.name != str(self.ctx.current_instance_idx):
+            self.on_interface_shown(); return
+        self.on_interface_shown()
+        if key in self.keys:
+            self.tabs.setCurrentIndex(1); self.fields.selectRow(self.keys.index(key))
+
+    def open_detail_team(self, name):
+        if self.root.name != str(self.ctx.current_instance_idx):
+            self.on_interface_shown(); return
+        self.on_interface_shown()
+        if any(p['name']==name for p in self.cfg['profiles']):
+            self.tabs.setCurrentIndex(3); self.refresh_teams(name)
+
     def show_reserve(self):
         index = self.table.currentRow()
+        self.detail_button.setEnabled(0 <= index < len(self.rows) or self.probe_record.get('status')=='verified')
         self.stat_info.clear()
         self.restore_unlock.setVisible(0 <= index < len(self.rows) and bool(self.rows[index].get('manualUnlock')))
         self.reserve_info.setText('选择一张盘，可查看同类备用名额和各用途的实际张数。')

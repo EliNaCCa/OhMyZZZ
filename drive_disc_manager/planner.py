@@ -3,10 +3,47 @@ from collections import Counter, defaultdict
 from .optimizer import as_disc, candidate_pool, STATS
 from .allocation import assign_group, group_conflict
 from .store import digest, equipment_keys, fingerprint, inventory, roll_base
-from .subscriptions import effective
+from .subscriptions import effective, current_conflicts
 from .reserve_policy import apply_reserves, development
 from .roster import compile_roster, explain, roster_catalog
 from .stat_reading import checked_values
+
+
+def assess_rules(row, cfg, fields, reverse, by_set, unresolved, excluded):
+    key = 'matrix/'+row['set']+'/'+row['slot']
+    main = row['main']
+    fixed = {'1':'hp','2':'atk','3':'def'}.get(row['slot']) == main
+    verified_fixed = fixed and ('matrix/'+row['set']+'/4') in fields
+    if verified_fixed:
+        row['recommendations'].append('已知套装固定主属性')
+        row['ruleUses'].append(('matrix/'+row['set']+'/4', '', '四号位表收录了该套装，当前号位主属性固定'))
+    allowed = effective(fields.get(key),cfg['overrides'].get(key))
+    known = fields.get(key+'/known',[])
+    row['field'] = key
+    if main in (allowed or []):
+        row['recommendations'].append('套装主词条规则 · '+key)
+    if row['slot'] in '456' or key in fields or key in cfg['overrides']:
+        outcome = ('主属性符合' if main in (allowed or []) else '主属性不符' if main in known else '该主属性缺少明确规则')
+        row['ruleUses'].append((key, '', outcome))
+    explain(row, by_set, unresolved, excluded)
+    for agent in cfg['roster']:
+        if row['set'] not in {reverse.get(s, s) for s in agent.get('sets',[])}:
+            continue
+        if verified_fixed:
+            row['recommendations'].append('角色套装 · '+agent['name'])
+            continue
+        field = 'guide/'+agent['name']+'/slot'+row['slot']
+        values = effective(fields.get(field), cfg['overrides'].get(field)) or []
+        # A missing/ambiguous guide cell may not downgrade a candidate to trash.
+        if not values or not agent.get('mainMap'):
+            row['review'].append('角色用途待核 · '+agent['name'])
+        elif any(main in agent['mainMap'].get(v,[]) for v in values):
+            row['recommendations'].append('角色攻略 · '+agent['name'])
+        elif any(v not in agent['mainMap'] for v in values):
+            row['review'].append('角色词条映射待核 · '+agent['name'])
+        row['ruleUses'].append((field, agent['name'], '个人套装与主属性映射'))
+    if main not in known and not (row['recommendations'] or row['reasons']):
+        row['review'].append('缺少明确规则')
 
 
 def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_owned=(),history=None):
@@ -24,7 +61,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     base = roll_base(z)
     fields = rules.get('fields',{})
     catalog = roster_catalog(z, fields, cfg, wiki or {}, known_owned)
-    by_set, unresolved = compile_roster(catalog, fields, cfg['overrides'])
+    by_set, unresolved, excluded = compile_roster(catalog, fields, cfg['overrides'])
     by_fp = {fingerprint(d):d for d in ds}
     inputs = {fp:as_disc(d,optimizer_names,base) for fp,d in by_fp.items()
               if counts[fp] == 1 and not d.get('trash') and d.get('markState')!='unknown'}
@@ -74,7 +111,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         if cfg['protect15'] and d['level']==15:
             why.append('已满级')
         row = dict(fp=fp, id=d['id'], set=set_key(d), slot=str(d['slotKey']), main=d['mainStatKey'],
-                   level=d['level'], location=d.get('location',''), rolls={s['key']:1+s['upgrades']-base for s in d['substats']}, reasons=why, recommendations=[], explanation=[], review=[])
+                   level=d['level'], location=d.get('location',''), rolls={s['key']:1+s['upgrades']-base for s in d['substats']}, reasons=why, recommendations=[], explanation=[], review=[], ruleUses=[])
         row['marked'] = d.get('trash') is True
         row['observedValues'] = values
         row['scannedLock'] = d.get('lockState', 'unknown')
@@ -111,41 +148,13 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
                     row['reasons'].append('原生四词条双暴保护')
         rows.append(row)
     for row in rows:
-        key = 'matrix/'+row['set']+'/'+row['slot']
         if row['marked']:
             if row['ambiguous']:
                 row.update(decision='待复核',reasons=['游戏已标记弃置，实物属性重复'])
             else:
                 row.update(decision='已弃置',reasons=['游戏已标记弃置'],review=[])
             continue
-        main = row['main']
-        fixed = {'1':'hp','2':'atk','3':'def'}.get(row['slot']) == main
-        verified_fixed = fixed and ('matrix/'+row['set']+'/4') in fields
-        if verified_fixed:
-            row['recommendations'].append('已知套装固定主属性')
-        allowed = effective(fields.get(key),cfg['overrides'].get(key))
-        known = fields.get(key+'/known',[])
-        row['field'] = key
-        if main in (allowed or []):
-            row['recommendations'].append('套装主词条规则 · '+key)
-        explain(row, by_set, unresolved)
-        for agent in cfg['roster']:
-            if row['set'] not in {reverse.get(s, s) for s in agent.get('sets',[])}:
-                continue
-            if verified_fixed:
-                row['recommendations'].append('角色套装 · '+agent['name'])
-                continue
-            field = 'guide/'+agent['name']+'/slot'+row['slot']
-            values = effective(fields.get(field), cfg['overrides'].get(field)) or []
-            # A missing/ambiguous guide cell may not downgrade a candidate to trash.
-            if not values or not agent.get('mainMap'):
-                row['review'].append('角色用途待核 · '+agent['name'])
-            elif any(main in agent['mainMap'].get(v,[]) for v in values):
-                row['recommendations'].append('角色攻略 · '+agent['name'])
-            elif any(v not in agent['mainMap'] for v in values):
-                row['review'].append('角色词条映射待核 · '+agent['name'])
-        if main not in known and not (row['recommendations'] or row['reasons']):
-            row['review'].append('缺少明确规则')
+        assess_rules(row, cfg, fields, reverse, by_set, unresolved, excluded)
         if issues:
             row['review'].append('有启用配队尚未完成计算')
     quotas = [dict(rule, set=reverse.get(rule['set'], rule['set'])) if 'set' in rule else rule
@@ -157,6 +166,11 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         row['decision'] = '保留' if row['reasons'] else ('待复核' if row['review'] else '弃置候选')
         if row['managedSpareLock'] and row['decision'] == '弃置候选':
             row['explanation'].append('新保留盘锁定后，解除本插件的旧备用锁')
+    from .disc_trace import rule_book
+    evidence = rule_book(rows, rules, cfg['overrides'], current_conflicts(rules, cfg['overrides']))
+    teams = {p['name']:dict(agent=(p.get('request') or {}).get('characterName') or p.get('agentKey'),
+                            group=p.get('simultaneous') or '') for p in enabled}
     return dict(inventory=digest(z), rules=rules.get('version'), configuration=digest(cfg), assignments=assignments,
+                traceRules=evidence, traceTeams=teams,
                 issues=issues, roster=[a for a in catalog if a['selected']], reserveCoverage=coverage,
                 counts=dict(Counter(r['decision'] for r in rows)), discs=rows)

@@ -125,23 +125,30 @@ def parse_substats(values):
 
 
 def compile_roster(catalog, fields, overrides):
-    by_set, unresolved = defaultdict(list), []
+    by_set, unresolved, excluded = defaultdict(list), [], defaultdict(list)
     for item in catalog:
         if not item['selected']:
             continue
         sets = defaultdict(list)
         slot_rules = defaultdict(list)
         preferred = set()
+        sub_fields = []
         for source, names in [('build',item['builds']), ('guide',item['guides'])]:
             for name in names:
                 prefix = f'{source}/{name}/'
                 sub_field = prefix+'subs'
-                preferred.update(parse_substats(effective(fields.get(sub_field),overrides.get(sub_field)) or []))
+                substats = parse_substats(effective(fields.get(sub_field),overrides.get(sub_field)) or [])
+                preferred.update(substats)
+                if substats:
+                    sub_fields.append(sub_field)
                 if source == 'build':
                     for group in ('sets4','sets2'):
                         field = prefix+group
-                        for value in effective(fields.get(field), overrides.get(field)) or []:
+                        accepted = effective(fields.get(field), overrides.get(field)) or []
+                        for value in accepted:
                             sets[identifier(value)].append(field)
+                        for removed in {identifier(v) for v in fields.get(field, [])} - {identifier(v) for v in accepted}:
+                            excluded[removed].append((item['label'],field))
                 for slot in '456':
                     field = prefix+'slot'+slot
                     values = effective(fields.get(field),overrides.get(field)) or []
@@ -150,14 +157,22 @@ def compile_roster(catalog, fields, overrides):
         if not sets:
             unresolved.append(item['label'])
         for key, set_fields in sets.items():
-            by_set[key].append((item['label'],set_fields,slot_rules,preferred))
-    return by_set, unresolved
+            by_set[key].append((item['label'],set_fields,slot_rules,preferred,sub_fields))
+    return by_set, unresolved, excluded
 
 
-def explain(row, by_set, unresolved):
+def explain(row, by_set, unresolved, excluded):
     fixed = {'1':'hp','2':'atk','3':'def'}.get(row['slot']) == row['main']
-    for label, set_fields, slots, preferred in by_set.get(identifier(row['set']), ()):
+    rules = row['ruleUses']
+    key = identifier(row['set'])
+    for label, field in excluded.get(key, ()):
+        rules.append((field, label, '个人规则排除了这套盘'))
+    for label, set_fields, slots, preferred, sub_fields in by_set.get(key, ()):
         matched = [field for field, stats, _ in slots.get(row['slot'], ()) if row['main'] in stats]
+        rules.extend((field, label, '角色使用此套装') for field in set_fields)
+        for field, stats, uncertain in slots.get(row['slot'], ()):
+            outcome = '主属性符合' if row['main'] in stats else ('主属性待核' if uncertain else '主属性不符')
+            rules.append((field, label, outcome))
         if fixed or matched:
             evidence = '、'.join([*set_fields,*matched])
             row['recommendations'].append(f'角色留盘 · {label} · {row["main"]} · {evidence}')
@@ -166,6 +181,7 @@ def explain(row, by_set, unresolved):
                 row.setdefault('roleRolls',{})[label] = rolls
                 row.setdefault('roleHits',{})[label] = len(preferred.intersection(row['rolls']))
                 row['explanation'].append(f'{label}适用副词条合计 {rolls} 档')
+                rules.extend((field, label, '用于备用盘副词条排序') for field in sub_fields)
         elif any(unknown for _, _, unknown in slots.get(row['slot'], ())):
             row['review'].append('角色主词条待核 · '+label)
     if unresolved:

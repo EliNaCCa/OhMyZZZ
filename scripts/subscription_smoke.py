@@ -62,9 +62,19 @@ def smoke(root):
     from drive_disc_manager.service import preview, rule_snapshot
     pinned = rule_snapshot(root, refresh=False)
     update(['atk_'])
-    save(root/'inventory.json', dict(format='ZOD', version=1, dbVersion=2, characters=[], wengines=[], discs=[],
-                                     audit=dict(game_total=0, exported=0, delta=0)))
-    assert preview(root, snapshot=pinned)['rules'] == five['version'] != read(root/'rules.json')['version']
+    sample = dict(id='d4',setKey='SwingJazz',slotKey='4',level=0,rarity='S',mainStatKey='crit_',
+                  substats=[dict(key=k,upgrades=0) for k in ('crit_dmg_','atk','hp')])
+    save(root/'inventory.json', dict(format='ZOD', version=1, dbVersion=2, characters=[], wengines=[], discs=[sample],
+                                     audit=dict(game_total=1, exported=1, delta=0)))
+    report = preview(root, snapshot=pinned)
+    assert report['rules'] == five['version'] != read(root/'rules.json')['version']
+    assert report['traceRules'][key]['remote']==['anomProf'] and report['discs'][0]['ruleUses'][0][0]==key
+    # The pending-conflict preview must also keep all three values, even after a later resolution.
+    cfg['overrides'][key] = dict(mode='only',values=['crit_'])
+    report = preview(root, snapshot=(cfg,one,[]))
+    trace = report['traceRules'][key]
+    assert trace['tabs']==['Set+Main'] and trace['conflict'] and trace['old']==['atk_', 'crit_']
+    assert trace['remote']==['atk_', 'crit_dmg_'] and trace['active']==['crit_'] and trace['local']==['crit_']
 
 
 if __name__ == '__main__':
