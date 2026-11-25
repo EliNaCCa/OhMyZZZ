@@ -1,0 +1,10 @@
+# Generated from plugin.json. Run scripts/generate_const.py after editing manifest.
+APP_ID = "drive_disc_manager"
+APP_NAME = "驱动盘管理"
+DEFAULT_GROUP = False
+NEED_NOTIFY = False
+
+PLUGIN_AUTHOR = "EliNaCCa / upstream idk500"
+PLUGIN_HOMEPAGE = "https://github.com/EliNaCCa/zzzod-plugin-drive-disc-manager"
+PLUGIN_VERSION = "0.1.0"
+PLUGIN_DESCRIPTION = "按账号订阅留盘规则、分配配队用盘，生成可追溯的仓库预览。"

@@ -1,0 +1,33 @@
+name: Review upstream changes
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '16 4 * * 1'
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update vendored source in review branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          git fetch --depth=1 https://github.com/idk500/zzzod-plugin-disc-cleanup.git HEAD
+          new=$(git rev-parse FETCH_HEAD)
+          [ "$new" != "$(cat upstream-revision.txt)" ] || exit 0
+          branch=sync/cleanup-${new:0:12}
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then exit 0; fi
+          git switch -c "$branch"
+          mkdir -p vendor/upstream_cleanup
+          git archive "$new" disc_cleanup | tar -x --strip-components=1 -C vendor/upstream_cleanup
+          echo "$new" > upstream-revision.txt
+          git add vendor/upstream_cleanup upstream-revision.txt
+          git -c user.name=github-actions -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m 'Review upstream cleanup changes'
+          python scripts/smoke.py
+          git push origin "$branch"
+          gh pr create --base "$GITHUB_REF_NAME" --head "$branch" --title '审核上游清理插件变更' --body '原始改动位于 vendor/upstream_cleanup。请审核现场识别与规则兼容性，再选择移植到管理插件。'

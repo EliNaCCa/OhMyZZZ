@@ -1,0 +1,22 @@
+{
+  "id": "drive_disc_manager",
+  "name": "驱动盘管理",
+  "summary": "按账号订阅留盘规则、分配配队用盘，生成可追溯的仓库预览。",
+  "version": "0.1.0",
+  "versionCode": 1,
+  "defaultGroup": false,
+  "needNotify": false,
+  "author": {
+    "name": "EliNaCCa / upstream idk500"
+  },
+  "homepage": "https://github.com/EliNaCCa/zzzod-plugin-drive-disc-manager",
+  "risk": [
+    "network"
+  ],
+  "compatibility": {
+    "minAppVersion": "0.0.0",
+    "minCoreApiVersion": 1,
+    "python": ">=3.11"
+  },
+  "apps": []
+}

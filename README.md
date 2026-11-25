@@ -1,48 +1,21 @@
-# 驱动盘清理标记（disc_cleanup）
+# 一条龙驱动盘管理
 
-按内置规则矩阵（套装分类×死主词条）在仓库内逐盘指纹匹配并标记弃置；余位≥门槛自动跳过，满级盘永不标记。依赖仓库扫描器插件的解析模块。
+当前版本提供按账号保存的库存预览。在一条龙插件管理页导入 Release 中的 ZIP，点「驱动盘管理」的设置。安装仓库扫描器后可导入当前账号的 ZOD 扫描，或在配置中启用 run_scanner 让应用生成新扫描。扫描器需开启驱动盘识别，背包总数须与导出数一致。
 
-## 功能状态对账
+- 在「规则订阅」点「更新来源」获取角色攻略和套装主词条规则。有本地覆盖的字段可在同一页处理三方冲突。自动同步时沿用最近成功的整版快照。
+- 在「仓库预览」选中一张盘可调整同类额外备用数或手动保护。按用途区分暴击、暴伤时，在配置的 reserve_rules 中填写 purpose、stats 和 count。count 为 0 表示零张，null 表示不限。
+- 在「配队与配置」填写配装器窗口的本机地址 optimizer_url 和所需方案。每项直接使用配装器的请求参数，插件沿用该配队的实战暴击率和预期输出。当前适配 +15 S 盘和已有明确主属性数值的 S 盘。按 profiles 数组依次分配，同一 simultaneous 分组按顺序独占，其他分组可共用盘。任何启用方案缺少结果时其余候选待复核。
 
-| 功能 | 状态 | 说明 |
-|---|---|---|
-| probe 探测（遍历+解析+决策） | ✅ 实机验证 | 548 格遍历、翻页滚动、安全跳过全通过（2026-11-06 实机） |
-| 弃置标记（可逆，非拆解） | ✅ 实机验证 | 标记动作实机执行并核对（2026-11-06） |
-| 拆解执行 | ➖ 不在本插件 | 拆解由官方「驱动盘拆解」应用承担，本插件只标记 |
-| GUI 配置页 | ❌ 未开发 | 配置改 yml：`probe_mode` / `mark_limit`（单轮标记上限） / `capacity_free_min`（余位门槛，低于才清理） |
+示例配置片段，角色参数应来自自己的配装器方案。
 
-运行产物（可审计）：逐盘日志与汇总进 `.log/log.txt`；标记状态 `​.debug/cleanup_state.json`（即点即存，中断不丢）；结果汇总 `.debug/cleanup_result.json`；标记前后截图 `.debug/mark_debug/`。
+~~~json
+{
+  "reserve": 2,
+  "reserve_rules": [{"set":"WoodpeckerElectro","slot":"4","main":"crit_dmg_","purpose":"偏暴击","stats":["crit_"],"count":3}],
+  "profiles": [{"name":"常用队 · 主C","agentKey":"Ellen","simultaneous":"日常","tolerancePct":0.5,"request":{"characterName":"艾莲","roleSystem":"ATTACK","characterElement":"ICE","baseATK":1500,"baseCritRate":5,"baseCritDmg":50}}]
+}
+~~~
 
-- 版本：1.0.6（versionCode 7）
-- 作者：[idk500](https://github.com/idk500)
-- 仓库：https://github.com/idk500/zzzod-plugin-disc-cleanup
+两张表订阅源分别是 [角色攻略](https://docs.google.com/spreadsheets/d/e/2PACX-1vTj2PaPq6Py_1B5fsOPj_Moc-tN_7mut7fICczI6lz1njyEIAInTnfB7lAraX4pYCRGNbaHGlIbFZ90/pubhtml) 与 [主词条统计](https://docs.google.com/spreadsheets/d/1ZIZa4zg0zkkPIP2TrHQaMw9XzjJLvO2iOpUAyREDFwY/edit?gid=133245023)。攻略中以图片表示的套装和含条件的词条可在 roster 中通过 sets 和 mainMap 建立个人映射。市场版本更新和游戏内换装、标记、拆解仍待接入。
 
-## 运行产物与主仓 Git 干净承诺（v1.0.6 起）
-
-识别管线 yml 由框架硬编码路径加载（需临时写入一条龙安装目录 `assets/image_analysis_pipelines/`）：进程正常退出自动删除；强杀残留由下次启动清理；旧版残留首次启动自动收编。git 克隆用户跑完一条龙 `git status` 保持干净。
-
-## 安装
-
-在 ZZZOD 一条龙的「插件商店」中搜索 **驱动盘清理标记** 订阅安装；或从 Releases 下载 `disc_cleanup.zip` 手动导入。
-
-## 配置
-
-应用配置见一条龙 GUI 的应用设置页；`probe` 类开关默认开启（只读出报告，不执行真实动作）。
-
-## 推荐工具（友链支持）
-
-- **[WorkBuddy](https://www.workbuddy.cn/events/invite?inviteCode=bz944mufovr)** —— 腾讯出品的全场景 AI 工作台，本插件的设计、编码、测试与发版流程均在其 AI 助手协助下完成。
-- **[ZCode](https://zcode.z.ai/invite/F9M8N3LD)** —— 智谱 GLM 编程助手，本项目的代码生成与重构主力。
-- **[Kimi](https://kimi-bot.com/activities/zh-cn/invite/share?scenario=subscribe&from=share_poster&invitation_code=VFU7S5)** —— Moonshot AI 助手，长文档阅读与资料调研好帮手。
-
-## 遇到问题？推荐 AI 自助排查 + 社区协作
-
-本项目由 AI 协作开发，同样推荐你用 AI 自主解决问题，把维护精力留给真正的疑难：
-
-1. **AI 自助排查**：把运行日志（`config/<实例>/log/log.txt`）与现象描述投喂给顺手的 AI 助手（WorkBuddy / ZCode / Kimi 均可，见上方友链），大多数环境与配置问题都能直接定位解决。
-2. **提交 Issue**：AI 排查无法解决时再提 issue，请附运行日志、复现步骤，条件允许附录屏；标题带环境信息（基座版本 / 插件版本 / 游戏窗口分辨率）能显著加快定位。
-3. **欢迎本地验证过的 PR**：修复类 PR 请先本地实测通过，描述中附验证环境与运行日志片段；由 AI 协助完成的修复同样欢迎，注明验证结论即可。
-
-## 许可
-
-见 [LICENSE](LICENSE)（GPL-3.0）。
+数据在一条龙安装目录 plugin_data/drive_disc_manager 下按账号分开，版本替换时保留。开发仓库保留 idk500 清理插件 v1.0.6 的基线和 GPL-3.0 许可。配装结果来自 [本地多角色配装器](https://github.com/xliuforge/ZZZ_Multi_Agent_Drive_Optimizer)。验证仅运行 python scripts/smoke.py。使用 python scripts/package_manager.py 生成 ZIP 和 SHA-256。
