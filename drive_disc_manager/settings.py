@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from threading import Thread
 from PySide6.QtCore import Signal, Qt
 from one_dragon_qt.widgets.base_interface import BaseInterface
@@ -6,7 +7,7 @@ from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QTabWidget,QWidge
     QPlainTextEdit,QTableWidget,QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView,QCheckBox,QLineEdit)
 from .store import read,save,config,import_inventory,digest,equipment_names,equipment_keys
 from .service import preview
-from .subscriptions import sync, current_conflicts, can_merge, effective, resolve_conflict, save_config, save_field_override
+from .subscriptions import sync, current_conflicts, can_merge, effective, resolve_conflict, save_config, save_config_draft, save_field_override
 from .manager_app import wiki_path
 from .drive_disc_manager_const import APP_ID, APP_NAME
 from .reserve_policy import matching_rules, normalized_rule, SELECTORS
@@ -48,6 +49,11 @@ class ManagerInterface(BaseInterface):
         self.table.itemSelectionChanged.connect(self.show_reserve)
         self.table.cellDoubleClicked.connect(lambda *_:self.open_disc_detail())
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'规则订阅')
+        bar = QHBoxLayout(); box.addLayout(bar)
+        self.auto_sync = QCheckBox('运行时自动更新订阅（间隔 24 小时）')
+        self.auto_sync.clicked.connect(lambda checked:self.set_flag('auto_sync',checked))
+        self.rule_stamp = QLabel(); self.rule_stamp.setWordWrap(True)
+        bar.addWidget(self.auto_sync); bar.addWidget(self.rule_stamp,1)
         bar = QHBoxLayout(); box.addLayout(bar)
         self.rule_search = QLineEdit(); self.rule_search.setPlaceholderText('搜索角色、套装、号位或来源'); self.rule_search.setClearButtonEnabled(True)
         self.only_conflicts = QCheckBox('只看冲突'); self.rule_total = QLabel()
@@ -122,7 +128,10 @@ class ManagerInterface(BaseInterface):
         self.salvage_info = QLabel(); self.salvage_info.setWordWrap(True); box.addWidget(self.salvage_info)
         self.button(box,'查看拆解记录',self.show_salvage)
         self.editor = QPlainTextEdit(); box.addWidget(self.editor)
-        self.button(box,'保存配置',self.save_text)
+        self.editor_drafts = {}; self.editor_account = None
+        bar = QHBoxLayout(); box.addLayout(bar)
+        self.button(bar,'保存配置',self.save_text)
+        self.button(bar,'放弃草稿，载入已保存配置',self.reset_text)
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'版本维护')
         self.updates_enabled = QCheckBox('启动一条龙时提示 OhMyZZZ 更新（所有账号）')
         self.updates_enabled.clicked.connect(self.set_updates)
@@ -263,12 +272,29 @@ class ManagerInterface(BaseInterface):
     def reload(self):
         if self.tabs.currentIndex() == self.detail_tab:
             self.tabs.setCurrentIndex(0)
+        if self.editor_account is not None:
+            text = self.editor.toPlainText()
+            if text != pretty(self.editor_base):
+                self.editor_drafts[self.editor_account] = (self.editor_base, text)
+            else:
+                self.editor_drafts.pop(self.editor_account, None)
         self.cfg=config(self.root); self.rules=read(self.root/'rules.json',{}); self.report=read(self.root/'preview.json',{})
         self.config_hash = digest(self.cfg)
-        self.editor_hash = self.config_hash
+        self.preview_stale = bool(self.report) and (self.report.get('configuration') != self.config_hash
+                                                   or self.report.get('rules') != self.rules.get('version'))
+        self.editor_account = self.root
+        self.editor_base, text = self.editor_drafts.get(self.root, (deepcopy(self.cfg), pretty(self.cfg)))
         self.show_probe(read(self.root/'single-disc.json', {}))
-        self.editor.setPlainText(pretty(self.cfg)); self.rows=self.report.get('discs',[])
+        if text != self.editor.toPlainText(): self.editor.setPlainText(text)
+        self.rows=self.report.get('discs',[])
         for key,toggle in self.flags.items(): toggle.setChecked(bool(self.cfg.get(key)))
+        self.auto_sync.setChecked(self.cfg['auto_sync'])
+        from datetime import datetime
+        updated = self.rules.get('updated')
+        stamp = datetime.fromtimestamp(updated).strftime('%Y-%m-%d %H:%M') if updated else '暂无记录'
+        revision = self.rules.get('version', '')
+        self.rule_stamp.setText('最近成功同步 · '+stamp+(f' · {revision[:8]}' if revision else ''))
+        self.rule_stamp.setToolTip(revision)
         self.coverage = {tuple(group[k] for k in SELECTORS):group for group in self.report.get('reserveCoverage',[])}
         def row_info(row):
             notes = dict.fromkeys(row['reasons'] + row['review'] + row.get('explanation',[]) + row.get('recommendations',[]))
@@ -285,7 +311,10 @@ class ManagerInterface(BaseInterface):
         self.rule_rows = {key:self.rule_row(key) for key in self.keys}
         if not conflicts: self.only_conflicts.setChecked(False)
         self.filter_rules()
-        self.status.setText(f"上次预览 {self.report.get('counts',{})}　待处理规则冲突 {len(conflicts)}　"+' / '.join(self.report.get('issues',[])+self.report.get('warnings',[])))
+        summary = f"上次预览 {self.report.get('counts',{})}" if self.report else '尚无完整库存预览'
+        if self.preview_stale:
+            summary += ' · 配置或规则已更新，请重新计算'
+        self.status.setText(f"{summary}　待处理规则冲突 {len(conflicts)}　"+' / '.join(self.report.get('issues',[])+self.report.get('warnings',[])))
         self.refresh_teams()
         self.engine_mode.setText('手动连接 · '+self.cfg['optimizer_url'] if self.cfg['optimizer_url'] else '由 OhMyZZZ 按需启动')
         from .salvage_audit import needs_review
@@ -336,8 +365,10 @@ class ManagerInterface(BaseInterface):
         self.agent_summary.setText(f'已纳入 {count} 名，扫描识别 {owned} 名。可多选准备培养的角色。')
 
     def set_include_owned(self, enabled):
-        self.cfg['includeOwned'] = enabled
-        self.edit_cfg()
+        try:
+            self.edit_cfg(includeOwned=enabled)
+        except Exception as exc:
+            QMessageBox.warning(self,APP_NAME,str(exc))
 
     def select_roster(self, include):
         selected = self.agent_table.selectionModel().selectedRows()
@@ -355,8 +386,7 @@ class ManagerInterface(BaseInterface):
             else:
                 future.discard(key)
                 excluded.add(key)
-        self.cfg.update(futureAgents=sorted(future), excludedAgents=sorted(excluded))
-        self.edit_cfg()
+        self.edit_cfg(futureAgents=sorted(future), excludedAgents=sorted(excluded))
 
     def refresh_teams(self, selected=None):
         profiles = self.cfg['profiles']
@@ -387,9 +417,9 @@ class ManagerInterface(BaseInterface):
         profiles = self.cfg['profiles']
         selected = profiles[index] if 0 <= index < len(profiles) else {}
         self.refresh_target_button.setEnabled(bool(selected.get('sourceId')) and not self.equip_busy)
-        ready = selected.get('enabled',True) and self.report.get('assignments',{}).get(selected.get('name'),{}).get('ids')
+        ready = not self.preview_stale and selected.get('enabled',True) and self.report.get('assignments',{}).get(selected.get('name'),{}).get('ids')
         self.apply_button.setEnabled(bool(ready) and not self.equip_busy)
-        self.apply_button.setToolTip('查看本次要穿戴的盘' if ready else '导入完整库存并计算所选配队后可用')
+        self.apply_button.setToolTip('查看本次要穿戴的盘' if ready else '用当前配置和完整库存计算所选配队后可用')
         self.fill(self.slots,[])
         self.fill(self.panel_stats,[])
         self.panel_note.setText('选择已计算的支援、击破、异常或防护等职业方案，可查看目标与装备差值。')
@@ -418,6 +448,13 @@ class ManagerInterface(BaseInterface):
                 details.append('当前穿戴六盘未核实')
         if 'outputScore' in result:
             details += [f"所选输出 {result.get('rawOutput', result['outputScore'])}", f"候选最高 {result.get('rawBestOutput', result['bestOutput'])}"]
+            from .optimizer import number
+            worn = result.get('wornOutput')
+            if worn is not None and number(worn) > 0:
+                change = (number(result.get('rawOutput',result['outputScore'])) / number(worn) - 1) * 100
+                details.append(f'当前六盘输出 {worn} · 换装后 {float(change):+.6g}%')
+            else:
+                details.append('当前六盘输出待核')
             if result.get('metric'):
                 details.append(self.crit_summary(result))
                 details.append(f"实战{result['metric']} {result['metricValue']:g} · 暴伤 {result['critDamage']:g}% · 增伤 {result['damageBonus']:g}%")
@@ -452,6 +489,7 @@ class ManagerInterface(BaseInterface):
 
     def edit_allocation(self):
         from .allocation import arrange_profile
+        token = self.edit_token()
         profiles = self.cfg['profiles']
         index = self.teams.currentRow()
         if not 0 <= index < len(profiles): return
@@ -467,28 +505,28 @@ class ManagerInterface(BaseInterface):
             current = 1 + sum(i < index for i in peers) if profile.get('simultaneous') == group else len(peers)+1
             rank, ok = QInputDialog.getInt(self,'组内分盘顺序','优先级（1 最先分盘）',current,1,len(peers)+1)
             if not ok: return
-        self.cfg['profiles'] = arrange_profile(profiles, index, group, rank)
-        self.edit_cfg(); self.refresh_teams(profile['name'])
+        self.finish_edit(token, dict(token[2], profiles=arrange_profile(profiles, index, group, rank)))
+        self.refresh_teams(profile['name'])
 
     def edit_windows(self):
         index = self.teams.currentRow()
         if index < 0: return
         from .window_editor import WindowEditor
+        token = self.edit_token()
         profile = self.cfg['profiles'][index]
         editor = WindowEditor(profile,self)
         if editor.exec():
-            profile.update(editor.changes)
-            self.edit_cfg(); self.refresh_teams(profile['name'])
+            self.edit_profile_fields(token, index, editor.changes)
 
     def edit_tolerance(self):
         index = self.teams.currentRow()
         if index < 0: return
+        token = self.edit_token()
         profile = self.cfg['profiles'][index]
         value, ok = QInputDialog.getDouble(self,profile['name'],'为实战暴击 ≥ 97.6% 最多接受的输出差距（%）',
                                             profile.get('tolerancePct',0.5),0,100,4)
         if ok:
-            profile['tolerancePct'] = value
-            self.edit_cfg(); self.refresh_teams(profile['name'])
+            self.edit_profile_fields(token, index, {'tolerancePct':value})
 
     def toggle_profile(self):
         index = self.teams.currentRow()
@@ -500,10 +538,11 @@ class ManagerInterface(BaseInterface):
             conflict = group_conflict(dict(p, enabled=True) if i == index else p
                                       for i,p in enumerate(self.cfg['profiles']) if p.get('simultaneous') == profile['simultaneous'])
             if conflict: raise ValueError(conflict)
-        profile['enabled'] = enabled
-        if not profile['enabled'] and self.cfg.get('fieldProfile')==profile['name']:
-            self.cfg['fieldProfile']=''
-        self.edit_cfg(); self.refresh_teams(profile['name'])
+        profiles = list(self.cfg['profiles'])
+        profiles[index] = dict(profile, enabled=enabled)
+        field = self.cfg.get('fieldProfile', '')
+        self.edit_cfg(profiles=profiles, fieldProfile='' if not enabled and field==profile['name'] else field)
+        self.refresh_teams(profile['name'])
 
     def apply_current(self):
         from .manual_equip import confirmation, run_confirmed
@@ -513,6 +552,9 @@ class ManagerInterface(BaseInterface):
             raise ValueError('请在当前账号的一条龙空闲时应用配队')
         if not 0 <= index < len(self.cfg['profiles']):
             return
+        if self.report.get('rules') != read(root/'rules.json',{}).get('version'):
+            self.reload()
+            raise ValueError('规则已更新，请重新计算后应用配队')
         name = self.cfg['profiles'][index]['name']
         request, targets = confirmation(account, name, config(root), self.report, read(root/'inventory.json'))
         dialog = QDialog(self); dialog.setWindowTitle('应用当前配队'); dialog.resize(720,420)
@@ -559,40 +601,52 @@ class ManagerInterface(BaseInterface):
         profile = self.cfg['profiles'][index]
         name = profile['name']
         if self.cfg.get('fieldProfile') == name:
-            self.cfg['fieldProfile'] = ''
+            self.edit_cfg(fieldProfile='')
         else:
             if not profile.get('enabled',True) or not profile.get('agentKey'):
                 raise ValueError('请选择已启用且已关联代理人的方案')
-            self.cfg.update(fieldProfile=name, run_scanner=True)
-        self.edit_cfg(); self.refresh_teams(name)
+            self.edit_cfg(fieldProfile=name, run_scanner=True)
+        self.refresh_teams(name)
 
     def save_text(self):
+        self.check_account(self.editor_account)
         value = json.loads(self.editor.toPlainText())
         if not isinstance(value,dict):
             raise ValueError('需要 JSON 配置对象')
-        from .validation import validate
-        validate(value)
-        save_config(self.root,value,self.editor_hash); self.reload()
+        save_config_draft(self.root,self.editor_base,value)
+        self.reset_text()
+
+    def reset_text(self):
+        self.check_account(self.editor_account)
+        self.editor_drafts.pop(self.editor_account, None)
+        self.editor_account = None
+        self.reload()
 
     def set_flag(self,key,checked):
-        cfg = json.loads(self.editor.toPlainText())
-        cfg[key] = checked
-        if checked and key in ('afterEarly','applyMarkers'):
-            cfg['run_scanner'] = True
-        if key=='run_scanner' and not checked:
-            cfg.update(afterEarly=False,applyMarkers=False,fieldProfile='')
-        from .validation import validate
-        validate(cfg)
-        save_config(self.root,cfg,self.editor_hash)
-        if key == 'rotateSpareLocks' and (self.root/'inventory.json').is_file():
-            self.calculate()
-        else:
+        try:
+            self.check_account(self.root)
+            cfg = dict(self.cfg, **{key:checked})
+            if checked and key in ('afterEarly','applyMarkers'):
+                cfg['run_scanner'] = True
+            if key=='run_scanner' and not checked:
+                cfg.update(afterEarly=False,applyMarkers=False,fieldProfile='')
+            from .validation import validate
+            validate(cfg)
+            save_config(self.root,cfg,self.config_hash)
+            if key in ('rotateSpareLocks','protect15','protectNaturalCrit') and (self.root/'inventory.json').is_file():
+                self.calculate()
+                return
             self.reload()
+        except Exception as exc:
+            self.reload()
+            QMessageBox.warning(self,APP_NAME,str(exc))
 
     def load_inventory(self):
+        account = self.root
         path,_=QFileDialog.getOpenFileName(self,'选择属于当前账号的 ZOD 扫描','','JSON (*.json)')
         if path:
-            import_inventory(self.root,path); self.calculate()
+            self.check_account(account)
+            import_inventory(account,path); self.calculate()
 
     def start_probe(self):
         from .disc_probe import probe
@@ -630,6 +684,7 @@ class ManagerInterface(BaseInterface):
 
     def configure_optimizer(self):
         from .optimizer import loopback_json
+        token = self.edit_token()
         url, ok = QInputDialog.getText(self, '配装器连接', '留空使用 OhMyZZZ 托管，或填写自用配装器的本机 HTTP 地址', text=self.cfg['optimizer_url'])
         if not ok:
             return
@@ -638,8 +693,7 @@ class ManagerInterface(BaseInterface):
             state = loopback_json(url, '/api/state')
             if not isinstance(state, dict) or not isinstance(state.get('setEffects'), list):
                 raise ValueError('该地址未返回配装器的套装数据')
-        self.cfg['optimizer_url'] = url
-        self.edit_cfg()
+        self.finish_edit(token, dict(token[2], optimizer_url=url))
 
     def optimizer_session(self):
         from contextlib import nullcontext
@@ -665,6 +719,7 @@ class ManagerInterface(BaseInterface):
 
     def import_profile(self):
         from .optimizer import saved_targets
+        token = self.edit_token()
         with self.optimizer_session() as endpoint:
             choices = saved_targets(endpoint)
         if not choices:
@@ -677,7 +732,7 @@ class ManagerInterface(BaseInterface):
             raise ValueError('此方案要求避让配装器中已占用的盘。导入需核对两份库存中的占用记录。')
         name,ok=QInputDialog.getText(self,'保存配队快照','方案名称',text=source['agent']+' · 常用队')
         if not ok: return
-        if not name.strip() or any(p['name']==name.strip() for p in self.cfg['profiles']):
+        if not name.strip() or any(p['name']==name.strip() for p in token[2]['profiles']):
             raise ValueError('请输入新的方案名称')
         simultaneous,ok=QInputDialog.getText(self,'同时出场','同时上场的角色填写相同分组，互斥配队可留空')
         if not ok: return
@@ -687,23 +742,19 @@ class ManagerInterface(BaseInterface):
         profile = dict(name=name.strip(),agentKey=agent_key,request=source['request'],
                        simultaneous=simultaneous.strip(),tolerancePct=0.5,sourceId=source['sourceId'])
         from .allocation import group_conflict
-        peers = [p for p in self.cfg['profiles'] if p.get('simultaneous') == profile['simultaneous']]
+        peers = [p for p in token[2]['profiles'] if p.get('simultaneous') == profile['simultaneous']]
         conflict = group_conflict([*peers, profile])
         if conflict: raise ValueError(conflict)
-        self.cfg['profiles'].append(profile)
-        self.edit_cfg()
+        self.finish_edit(token, dict(token[2], profiles=[*token[2]['profiles'],profile]))
+        self.refresh_teams(profile['name'])
 
     def refresh_profile(self):
         from .optimizer import refreshed_profile, saved_targets
         index = self.teams.currentRow()
         if index < 0 or self.equip_busy:
             return
-        account = self.root
-        if str(self.ctx.current_instance_idx) != account.name:
-            self.on_interface_shown()
-            return
-        cfg_hash = self.config_hash
-        profile = self.cfg['profiles'][index]
+        token = self.edit_token()
+        profile = token[2]['profiles'][index]
         with self.optimizer_session() as endpoint:
             updated, changed = refreshed_profile(profile, saved_targets(endpoint))
         if not changed:
@@ -721,31 +772,46 @@ class ManagerInterface(BaseInterface):
         question.exec()
         if question.clickedButton() is not accept:
             return
-        if self.root != account or str(self.ctx.current_instance_idx) != account.name or self.config_hash != cfg_hash:
-            raise ValueError('账号或配置已变化，请重新选择方案。')
-        profiles = list(self.cfg['profiles'])
-        profiles[index] = updated
-        save_config(account, dict(self.cfg, profiles=profiles), cfg_hash)
-        self.reload()
-        if (account/'inventory.json').is_file():
-            self.calculate()
-        self.refresh_teams(updated['name'])
+        self.edit_profile_fields(token, index, updated)
 
     def calculate(self):
         preview(self.root,wiki_path(),refresh=False); self.reload()
 
-    def edit_cfg(self):
-        save_config(self.root,self.cfg,self.config_hash)
-        if (self.root/'inventory.json').is_file():
-            self.calculate()
-        else:
+    def check_account(self, account):
+        if account != self.root or account.name != str(self.ctx.current_instance_idx):
+            self.on_interface_shown()
+            raise ValueError('账号已切换，请在当前账号重新操作。')
+
+    def edit_token(self):
+        self.check_account(self.root)
+        return self.root, self.config_hash, deepcopy(self.cfg)
+
+    def edit_profile_fields(self, token, index, changes):
+        cfg = token[2]
+        profiles = list(cfg['profiles'])
+        profiles[index] = dict(profiles[index], **changes)
+        self.finish_edit(token, dict(cfg, profiles=profiles))
+        self.refresh_teams(profiles[index]['name'])
+
+    def finish_edit(self, token, value):
+        account, expected, _ = token
+        self.check_account(account)
+        try:
+            save_config(account, value, expected)
+            if (account/'inventory.json').is_file():
+                preview(account,wiki_path(),refresh=False)
+        finally:
             self.reload()
+
+    def edit_cfg(self, **changes):
+        token = self.edit_token()
+        self.finish_edit(token, dict(token[2], **changes))
 
     def pin(self):
         index=self.table.currentRow()
         if index < 0: return
         fp=self.rows[index]['fp']; pins=set(self.cfg['pins'])
-        self.cfg['pins']=sorted(pins^{fp}); self.edit_cfg()
+        self.edit_cfg(pins=sorted(pins^{fp}))
 
     def open_disc_detail(self, *, probe=None):
         from .disc_trace import probe_trace
@@ -766,7 +832,7 @@ class ManagerInterface(BaseInterface):
         self.detail.present(row, report, set_name=names.get(row['set'],row['set']), probe=probe, pinned=row['fp'] in self.cfg['pins'],
                             coverage=None if probe or row['marked'] else self.coverage.get(tuple(row[k] for k in SELECTORS)),
                             rule_keys=self.keys, team_names=[p['name'] for p in self.cfg['profiles']],
-                            stale=not probe and (report.get('rules')!=self.rules.get('version') or report.get('configuration')!=self.config_hash))
+                            stale=not probe and self.preview_stale)
         if probe:
             criteria = {key:row[key] for key in SELECTORS}
             reverse = equipment_keys(self.set_names)
@@ -785,8 +851,7 @@ class ManagerInterface(BaseInterface):
             tab = self.detail.tabs.currentIndex()
             if action == 'pin':
                 if row['marked']: return
-                self.cfg['pins'] = sorted(set(self.cfg['pins']) ^ {row['fp']})
-                self.edit_cfg()
+                self.edit_cfg(pins=sorted(set(self.cfg['pins']) ^ {row['fp']}))
                 change = ''
             else:
                 change = self.set_quota(row)
@@ -873,22 +938,16 @@ class ManagerInterface(BaseInterface):
     def edit_quota(self, selectors, purpose):
         from .quota_editor import QuotaEditor
         from .reserve_presets import scope_name
-        account, expected = self.root, self.config_hash
+        token = self.edit_token()
         title = scope_name(selectors, self.set_names)
-        dialog = QuotaEditor(self, selectors, self.cfg, equipment_keys(self.set_names), title)
+        dialog = QuotaEditor(self, selectors, token[2], equipment_keys(self.set_names), title)
         dialog.purpose.setCurrentText(purpose)
         if not dialog.exec(): return
-        if self.root != account or account.name != str(self.ctx.current_instance_idx):
-            self.on_interface_shown()
-            raise ValueError('账号已切换，请在当前账号重新选择驱动盘。')
+        self.check_account(token[0])
         rules, summary = dialog.result_rules()
         if rules == dialog.cfg['reserve_rules']:
             return
-        save_config(account, dict(dialog.cfg, reserve_rules=rules), expected)
-        if (account/'inventory.json').is_file():
-            self.calculate()
-        else:
-            self.reload()
+        self.finish_edit(token, dict(dialog.cfg, reserve_rules=rules))
         return summary
 
     def update_rules(self):
@@ -920,10 +979,6 @@ class ManagerInterface(BaseInterface):
         if error:
             self.status.setText('订阅更新失败，沿用最近成功版本 · '+error)
             return
-        # Preserve any advanced-settings draft typed while the sources were downloading.
-        draft = self.editor.toPlainText()
-        modified = draft != pretty(self.cfg)
-        draft_hash = self.editor_hash
         try:
             if (root/'inventory.json').is_file():
                 self.calculate()
@@ -934,11 +989,8 @@ class ManagerInterface(BaseInterface):
                 self.rule_search.clear()
                 self.only_conflicts.setChecked(True)
         except Exception as exc:
+            self.reload()
             self.status.setText('订阅已更新，预览待重新计算 · '+str(exc))
-        finally:
-            if modified:
-                self.editor.setPlainText(draft)
-                self.editor_hash = draft_hash
 
     def edit_rule(self):
         i=self.fields.currentRow()
@@ -1030,6 +1082,7 @@ class ManagerInterface(BaseInterface):
             button.setEnabled(can_merge(conflict) if action=='union' else bool(conflict))
 
     def resolve(self,action):
+        self.check_account(self.root)
         i=self.fields.currentRow()
         if i<0: return
         key=self.visible_keys[i]; conflict=self.conflicts.get(key)

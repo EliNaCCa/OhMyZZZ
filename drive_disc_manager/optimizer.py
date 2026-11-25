@@ -300,6 +300,13 @@ def candidate_pool(url, profile, discs, current, request=call):
         return response
 
     builds = _profile_candidates(url, profile, discs, current, measured_request)
+    if builds and 'rawOutput' in builds[0] and len(current) == 6:
+        worn = next((row for row in builds if set(row['ids']) == current), None)
+        if worn is None:
+            worn = worn_output(url, profile, discs, current, request)
+        if worn is not None:
+            for build in builds:
+                build['wornOutput'] = worn['rawOutput']
     if evaluations:
         scope = dict(submitted=len(discs), calls=len(evaluations),
                      evaluated=sum(searched for searched, _, _ in evaluations),
@@ -307,6 +314,21 @@ def candidate_pool(url, profile, discs, current, request=call):
         for build in builds:
             build['optimizerScope'] = scope
     return builds
+
+
+def worn_output(url, profile, discs, current, request):
+    from .role_panel import baseline_request
+    pieces = [disc for disc in discs if disc['id'] in current]
+    if len(pieces) != 6 or {disc['slot'] for disc in pieces} != set(range(1, 7)):
+        return None
+    # A build can be worn even though it does not meet the new target. Measure
+    # these six discs in the same combat windows, for display only.
+    measured_profile = dict(profile, request=baseline_request(profile['request'], pieces), fullCritPanelTarget=0)
+    try:
+        measured = _profile_candidates(url, measured_profile, pieces, set(), request)
+    except NoBuildCandidates:
+        return None
+    return next((row for row in measured if set(row['ids']) == current), None)
 
 
 def _profile_candidates(url, profile, discs, current, request):

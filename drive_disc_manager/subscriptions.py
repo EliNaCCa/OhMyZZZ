@@ -262,6 +262,27 @@ def save_config(root, value, expected):
         save(root/'config.json', value)
 
 
+def save_config_draft(root, base, edited):
+    """Save only top-level settings changed in the editor, including deletions."""
+    from .validation import validate
+    missing = object()
+    with exclusive(root/'_rules'):
+        current = config(root)
+        for key in base.keys() | edited.keys():
+            before, after = base.get(key, missing), edited.get(key, missing)
+            if before == after:
+                continue
+            latest = current.get(key, missing)
+            if latest != before and latest != after:
+                raise ValueError(f'「{key}」已在其他设置中修改。请核对已保存的配置后再编辑。')
+            if after is missing:
+                current.pop(key, None)
+            else:
+                current[key] = after
+        validate(current)
+        save(root/'config.json', current)
+
+
 def sync(root):
     # Fetch outside the brief write lock. An older download must not replace a newer snapshot.
     start = read(root/'rules.json', {}).get('updated')

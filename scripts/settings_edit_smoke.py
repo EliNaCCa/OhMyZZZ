@@ -1,5 +1,6 @@
 """One rule and one quota edited in a temporary OneDragon account, without a game."""
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -28,6 +29,7 @@ def smoke(home, tmp):
     context = SimpleNamespace(current_instance_idx=1, get_plugin_data_dir=lambda _:tmp)
     widget = ManagerInterface(context)
     widget.on_interface_shown()
+    assert widget.auto_sync.isChecked() and '暂无记录' in widget.rule_stamp.text()
     started, proceed = Event(), Event()
 
     def source():
@@ -53,6 +55,7 @@ def smoke(home, tmp):
         widget.editor.setPlainText('暂存的配置')
         finish()
         assert widget.rules['fields'][key] == ['def_'] and widget.editor.toPlainText() == '暂存的配置'
+        assert widget.rules['version'][:8] in widget.rule_stamp.text() and '暂无记录' not in widget.rule_stamp.text()
 
     def switch(*args):
         context.current_instance_idx = 2
@@ -67,6 +70,7 @@ def smoke(home, tmp):
         else:
             raise AssertionError('rule dialog saved after account switch')
     assert not (account/'config.json').exists() and not (tmp/'2/config.json').exists()
+    assert '暂存的配置' != widget.editor.toPlainText()
 
     context.current_instance_idx = 1
     run = context.run_context = SimpleNamespace(is_app_registered=lambda key: key == 'inventory_scan')
@@ -82,6 +86,17 @@ def smoke(home, tmp):
     cfg['reserve_rules'] = [broader, dict(set='摇摆爵士', slot=5, main='atk_', count=6)]
     save(account/'config.json', cfg)
     widget.on_interface_shown()
+    assert widget.editor.toPlainText() == '暂存的配置'
+    with patch.object(subscriptions, 'sources', side_effect=AssertionError('toggling must not fetch')):
+        widget.auto_sync.click()
+        assert config(account)['auto_sync'] is False and widget.editor.toPlainText() == '暂存的配置'
+    widget.reset_text()
+    original = json.loads(widget.editor.toPlainText())
+    widget.editor.setPlainText(json.dumps(dict(original,reserve=9)))
+    widget.auto_sync.click()
+    assert config(account)['reserve'] == original['reserve']
+    widget.save_text()
+    assert config(account)['reserve'] == 9 and config(account)['auto_sync'] is True
 
     assert '开启「驱动盘」' in widget.scanner_note.text()
     option.scan_drive_disk = True
@@ -121,6 +136,37 @@ def smoke(home, tmp):
     page.slot.setCurrentIndex(page.slot.findData('4'))
     assert '偏暴伤' not in page.current.text()
     assert page.grid.rowCount() == 3
+    cfg = config(account)
+    cfg['profiles'] = [dict(name='临时队',request=dict(roleSystem='ATTACK',characterName='艾莲'))]
+    save(account/'config.json', cfg)
+    widget.on_interface_shown()
+    def edit_other_setting(*args):
+        save(account/'config.json', dict(config(account), reserve=8))
+        widget.on_interface_shown()
+        return 0.25, True
+    with patch.object(QInputDialog, 'getDouble', side_effect=edit_other_setting):
+        try:
+            widget.edit_tolerance()
+        except ValueError as exc:
+            assert '配置已更新' in str(exc)
+        else:
+            raise AssertionError('stale team edit replaced a newer configuration')
+    assert config(account)['reserve'] == 8 and 'tolerancePct' not in config(account)['profiles'][0]
+    newer = dict(config(account),reserve=7)
+    widget.editor.setPlainText(json.dumps(dict(config(account),reserve=6)))
+    save(account/'config.json',newer)
+    try:
+        widget.save_text()
+    except ValueError as exc:
+        assert 'reserve' in str(exc)
+    else:
+        raise AssertionError('concurrent change to the same advanced option was lost')
+    assert config(account) == newer
+    widget.reset_text()
+    save(account/'preview.json',dict(configuration=widget.config_hash,rules='older',counts={},discs=[],
+                                     assignments={'临时队':dict(ids=['demo'])}))
+    widget.reload()
+    assert '请重新计算' in widget.status.text() and not widget.apply_button.isEnabled()
     widget.close()
 
 

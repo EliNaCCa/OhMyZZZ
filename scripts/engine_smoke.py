@@ -77,6 +77,7 @@ def smoke(source):
             pool = candidate_pool(endpoint,profile,pieces+[other],current)
             winner = select_candidate(pool,profile,current)
             assert winner['ids'][2]=='cd' and len({r['rawOutput'] for r in pool})==2
+            assert winner['wornOutput'] == next(r['rawOutput'] for r in pool if set(r['ids']) == current)
             assert winner['optimizerScope']==dict(submitted=7, calls=2, evaluated=4, atReturnLimit=False)
             threshold = dict(request=dict(target,baseCritRate=97.59999), tolerancePct=.5)
             chosen = select_candidate(candidate_pool(endpoint,threshold,pieces,set()),threshold,set())
@@ -90,6 +91,15 @@ def smoke(source):
             assert stronger['ids'][2]=='over' and stronger['critRate']==100
             assert stronger['uncappedCritRate']==109.6 and stronger['overflowCritRate']==9.6
             assert stronger['outputScore'] > tied['outputScore']
+            # Current slot 4 is HP. Require crit damage to exclude it from the
+            # candidate pool, then measure the worn set under the same two windows.
+            cd4 = dict(pieces[3], id='cd4', mainStat=dict(type='CRIT_DMG', value=48))
+            constrained = dict(request=dict(target, slotAllowedMainStats={'4':['CRIT_DMG']}), mainWindow='爆发',
+                               windows=[dict(name='常态',weight=1,buffs=[]), dict(name='爆发',weight=2,
+                                   buffs=[dict(source='窗口加成',stat='CRIT_RATE',value=15,mode='additional')])])
+            new, = candidate_pool(endpoint,constrained,pieces+[cd4],current)
+            reference, = candidate_pool(endpoint,dict(constrained,request=target),pieces,set())
+            assert new['ids'][3]=='cd4' and new['wornOutput']==reference['rawOutput']
             rupture = dict(request=dict(target,roleSystem='RUPTURE',baseHP=7000),tolerancePct=.5)
             chosen = select_candidate(candidate_pool(endpoint,rupture,pieces,set()),rupture,set())
             assert chosen['metric']=='贯穿力' and chosen['metricValue']>0

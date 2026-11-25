@@ -105,6 +105,8 @@ def assign_group(members, pool, url, fetch, max_nodes=160):
         original = cache.get((index, frozenset()), [])
         if original:
             baseline = select_candidate(original,profile,members[index][1])
+            if baseline.get('wornOutput') is not None:
+                choice['wornOutput'] = baseline['wornOutput']
             if baseline.get('currentPanel') and 'panel' in choice:
                 choice['currentPanel'] = baseline['currentPanel']
             if choice['ids'] != baseline['ids']:
