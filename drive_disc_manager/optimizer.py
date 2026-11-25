@@ -134,7 +134,7 @@ class NoBuildCandidates(ValueError):
     """This inventory subset cannot supply the requested six slots."""
 
 
-def candidate_pool(url, profile, discs, current, request=call):
+def _window_pool(url, profile, discs, current, request, exact=False):
     if not discs:
         raise NoBuildCandidates('缺少适用的驱动盘')
     args = dict(profile['request'])
@@ -143,7 +143,12 @@ def candidate_pool(url, profile, discs, current, request=call):
     direct = args['roleSystem'].upper() in ('ATTACK','STRONG','RUPTURE')
     args.update(discs=discs, excludeDiscarded=True, topN=24, maxCombinations=profile.get('searchLimit',200000))
     original_args = dict(args)
-    goals = [0,profile.get('fullCritPanelTarget',args.get('targetCritRate') or 100)] if direct else [args.get('targetCritRate',0)]
+    # Upstream filters on PANEL rate, while the personal preference uses combat rate.
+    estimated_panel = max(0, min(100, 100 - float((args.get('combatExtraStats') or {}).get('CRIT_RATE', 0))))
+    goals = ([0, profile.get('fullCritPanelTarget', estimated_panel), args.get('targetCritRate') or 0]
+             if direct else [args.get('targetCritRate', 0)])
+    if exact:
+        goals = [0]
     by_id = {d['id']: d for d in discs}
     results = {}
     searches = [(args, g) for g in dict.fromkeys(goals)]
@@ -161,12 +166,49 @@ def candidate_pool(url, profile, discs, current, request=call):
                     raise ValueError('配装器修正过属性，请复核实物')
             if tuple(ids) not in results:
                 if direct:
-                    results[tuple(ids)] = dict(ids=ids, outputScore=r['outputScore'],critRate=r['critRate'])
+                    results[tuple(ids)] = dict(ids=ids, outputScore=r['outputScore'],critRate=r['critRate'],
+                                               panelCritRate=r.get('panelCritRate'))
                 else:
                     results[tuple(ids)] = dict(ids=ids,reason='沿用该职业的配装器排名',score=r['score'])
     if not results:
         raise NoBuildCandidates('该组条件没有完整的六盘方案')
     return list(results.values())
+
+
+def candidate_pool(url, profile, discs, current, request=call):
+    from .combat_windows import window_requests, combine
+    windows = window_requests(profile)
+    if not windows:
+        return _window_pool(url, profile, discs, current, request)
+
+    by_id = {d['id']: d for d in discs}
+    pools = []
+    ids_to_check = {}
+    for name, weight, args in windows:
+        configured = dict(profile, request=args)
+        rows = _window_pool(url, configured, discs, current, request)
+        indexed = {tuple(row['ids']):row for row in rows}
+        ids_to_check.update(dict.fromkeys(indexed))
+        pools.append((name, weight, configured, indexed))
+
+    combined = []
+    for ids in ids_to_check:
+        rows = []
+        for name, weight, configured, indexed in pools:
+            row = indexed.get(ids)
+            if row is None:
+                # Score the identical six discs even if they fell below this window's top N.
+                try:
+                    exact = _window_pool(url, configured, [by_id[i] for i in ids], set(), request, exact=True)
+                except NoBuildCandidates:
+                    break
+                row = next(r for r in exact if tuple(r['ids']) == ids)
+            rows.append(dict(row, name=name, weight=weight))
+        if len(rows) == len(pools):
+            combined.append(combine(rows, profile['mainWindow']))
+    if not combined:
+        raise NoBuildCandidates('各窗口的配装条件没有共同的六盘方案')
+    return combined
 
 
 def select_candidate(pool, profile, current):

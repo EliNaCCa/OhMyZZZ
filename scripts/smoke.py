@@ -62,6 +62,24 @@ with TemporaryDirectory() as tmp:
     selected=prefer(cases+[overflow],0.5,set())
     assert selected['ids']==['c'] and selected['effectiveCritRate']==100
     assert prefer([dict(cases[0],critRate=98),cases[1]],0.5,set())['ids']==['a']
+    # A build missing from the other window's shortlist must still be rescored
+    # with exactly the same six ids. The imported bonus is active only in burst.
+    from drive_disc_manager.optimizer import candidate_pool
+    slots=[dict(id=str(i),slot=i,mainStat={},setName='s',subStats=[]) for i in range(1,7)]
+    alternate=dict(slots[3],id='alt'); bonus=dict(source='队友',stat='CRIT_RATE',value=15)
+    profile=dict(request=dict(characterName='主C',roleSystem='ATTACK',combatExtraStats={'CRIT_RATE':15}),
+                 windows=[dict(name='常态',weight=20,buffs=[dict(bonus,mode='inactive')]),
+                          dict(name='爆发',weight=80,buffs=[dict(bonus,mode='included')])],mainWindow='爆发')
+    def single_top(url,args):
+        extra=args['combatExtraStats']['CRIT_RATE']; assert extra in (0,15)
+        fixed=len(args['discs'])==6
+        choice=args['discs'] if fixed else [alternate if d['slot']==4 and extra else d for d in slots]
+        alt=any(d['id']=='alt' for d in choice)
+        score=(120 if extra else 80) if alt else 100
+        return {'results':[dict(discs=choice,outputScore=score,critRate=min(100,88+extra))]}
+    by_slot={c['ids'][3]:c for c in candidate_pool('',profile,slots+[alternate],set(),single_top)}
+    assert by_slot['alt']['outputScore']==112 and by_slot['4']['outputScore']==100
+    assert [w['critRate'] for w in by_slot['alt']['windows']]==[88,100]
     from drive_disc_manager.allocation import assign_group
     members = [(dict(name='主C'),set()),(dict(name='队友'),set())]
     options = {'主C':[dict(ids=['1','2','3','4','5','6'],critRate=100,outputScore=100),

@@ -58,6 +58,7 @@ class ManagerDialog(QDialog):
         bar = QHBoxLayout(); box.addLayout(bar)
         self.button(bar,'从配装器保存为配队',self.import_profile)
         self.button(bar,'设置满暴容差',self.edit_tolerance)
+        self.button(bar,'输出窗口',self.edit_windows)
         self.button(bar,'启用 / 停用',self.toggle_profile)
         self.button(bar,'设为出场 / 取消',self.set_field_profile)
         self.button(bar,'重新计算',self.calculate)
@@ -293,10 +294,23 @@ class ManagerDialog(QDialog):
         details = [profile['name']]
         if 'outputScore' in result:
             details += [f"所选输出 {result['outputScore']:g}",f"候选最高 {result['bestOutput']:g}"]
+        for window in result.get('windows', []):
+            principal = '（主）' if window['name']==result['mainWindow'] else ''
+            details.append(f"{window['name']}{principal} · 占比 {window['share']:.1%} · 实战暴击 {window['critRate']:g}% · 输出 {window['outputScore']:g}")
         scope = result.get('search',{})
         if scope: details.append(f"初选 {scope['candidateBuilds']} 套")
         if self.report.get('configuration') != digest(self.cfg): details.append('配置已修改 · 上次计算结果')
         self.team_score.setText('　｜　'.join(details))
+
+    def edit_windows(self):
+        index = self.teams.currentRow()
+        if index < 0: return
+        from .window_editor import WindowEditor
+        profile = self.cfg['profiles'][index]
+        editor = WindowEditor(profile,self)
+        if editor.exec():
+            profile.update(editor.changes)
+            self.edit_cfg(); self.refresh_teams(profile['name'])
 
     def edit_tolerance(self):
         index = self.teams.currentRow()

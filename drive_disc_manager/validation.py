@@ -29,6 +29,8 @@ def validate(value):
         if not p['name'] or p['name'] in names or not isinstance(p['request'],dict):
             raise ValueError('配队名重复或参数缺失')
         names.add(p['name'])
+        from .combat_windows import window_requests
+        window_requests(p)
         if not 0<=number(p.get('tolerancePct',0.5))<=100: raise ValueError('配队输出容差无效')
     field = cfg['fieldProfile']
     if not isinstance(field,str) or (field and not any(p['name']==field and p.get('enabled',True) for p in cfg['profiles'])):
