@@ -20,6 +20,14 @@ class ManagerApp(ZApplication):
 
     @operation_node(name='驱动盘管理', is_start_node=True, screenshot_before_round=False)
     def manage(self):
+        from .maintenance import Deferred, exclusive
+        try:
+            with exclusive(self.root.parent/'_maintenance'):
+                return self.manage_inventory()
+        except Deferred as exc:
+            return self.round_fail(str(exc))
+
+    def manage_inventory(self):
         try:
             if self.ctx.current_instance_idx != self.account:
                 return self.round_fail('当前账号已改变')

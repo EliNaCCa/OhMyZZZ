@@ -12,3 +12,4 @@ jobs:
         with:
           python-version: '3.11'
       - run: python scripts/smoke.py
+      - run: python scripts/maintenance_smoke.py

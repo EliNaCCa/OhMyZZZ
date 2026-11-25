@@ -7,6 +7,12 @@ class ManagerFactory(ApplicationFactory):
     def __init__(self, ctx):
         super().__init__(meta)
         self.ctx = ctx
+        # The host also discovers factories in headless runs. Only attach to Qt
+        # when the GUI has already loaded it; discovery can be on its init thread.
+        import sys
+        if 'PySide6.QtWidgets' in sys.modules:
+            from .update_prompt import attach
+            attach(ctx)
 
     def create_application(self, instance_idx, group_id):
         from .manager_app import ManagerApp

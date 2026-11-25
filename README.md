@@ -17,7 +17,7 @@
 ## 快速开始
 
 1. 在绝区零一条龙的插件管理页安装**仓库扫描器**。已有本账号完整 ZOD 扫描的玩家可以直接导入，游戏内数量须与导出数量一致。[仓库扫描器](https://github.com/idk500/zzzod-plugin-inventory-scan)
-2. 在 Releases 下载 `drive_disc_manager-版本号.zip` 及对应的 `.sha256`，校验后将 ZIP 导入一条龙。打开 **插件管理 → 驱动盘管理 → 设置**。[下载插件](https://github.com/EliNaCCa/OhMyZZZ/releases)
+2. 在 Releases 下载 `OhMyZZZ-版本号.zip` 及对应的 `.sha256`，校验后将 ZIP 导入一条龙。打开 **插件管理 → OhMyZZZ → 设置**。[下载插件](https://github.com/EliNaCCa/OhMyZZZ/releases)
 3. 在 **规则订阅 → 更新来源** 同步推荐表，再到 **仓库预览 → 导入本账号扫描** 看逐盘结果。预览会列出每张盘的号位、主属性、保留理由和待复核项。
 4. 需要计算配装时，在本机配装器保存角色目标，保持服务运行，再到 **我的配队 → 从配装器保存为配队**。为队伍取名后即可计算六个号位。[本地多角色配装器](https://github.com/xliuforge/ZZZ_Multi_Agent_Drive_Optimizer)
 
@@ -55,6 +55,8 @@
 默认打开的是预览。执行标记需要当前账号的完整扫描。若插件观察到你撤销了某张盘的弃置，它会记为手动保留。个人配队、规则与操作记录按账号保存在一条龙的 `plugin_data/drive_disc_manager/` 目录。
 
 ## 来源与维护
+
+一条龙启动时会提示 OhMyZZZ 的新版本。选择「退出后更新」即可在关闭一条龙后安装。可在 **OhMyZZZ → 版本维护** 关闭启动提示、手动检查更新或回退上一版。[启动提示与回退](docs/configuration.md#启动提示与回退)
 
 - 套装与主词条推荐来自清理表，角色倾向来自攻略表。同步失败时沿用最近一次成功的规则快照。[清理表](https://docs.google.com/spreadsheets/d/1ZIZa4zg0zkkPIP2TrHQaMw9XzjJLvO2iOpUAyREDFwY/edit?gid=133245023) · [角色攻略](https://docs.google.com/spreadsheets/d/e/2PACX-1vTj2PaPq6Py_1B5fsOPj_Moc-tN_7mut7fICczI6lz1njyEIAInTnfB7lAraX4pYCRGNbaHGlIbFZ90/pubhtml)
 - OhMyZZZ 基于 idk500 的清理插件开发，保留 GPL-3.0 许可。GitHub Actions 检查上游变更、提交同步 PR，并为发布版本生成 ZIP 和 SHA-256。[上游项目](https://github.com/idk500/zzzod-plugin-disc-cleanup) · [许可证](LICENSE) · [发布记录](https://github.com/EliNaCCa/OhMyZZZ/releases)

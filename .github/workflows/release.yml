@@ -14,7 +14,8 @@ jobs:
         with:
           python-version: '3.11'
       - run: python scripts/smoke.py
+      - run: python scripts/maintenance_smoke.py
       - run: python scripts/package_manager.py
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes --prerelease
+        run: gh release create "$GITHUB_REF_NAME" "dist/OhMyZZZ-${GITHUB_REF_NAME#manager-v}.zip" "dist/OhMyZZZ-${GITHUB_REF_NAME#manager-v}.zip.sha256" --title "OhMyZZZ ${GITHUB_REF_NAME#manager-v}" --verify-tag --generate-notes --prerelease

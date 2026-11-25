@@ -5,7 +5,7 @@ from .store import read,save,config,import_inventory,digest
 from .service import preview
 from .subscriptions import sync
 from .manager_app import wiki_path
-from .drive_disc_manager_const import APP_ID
+from .drive_disc_manager_const import APP_ID, APP_NAME
 from .reserve_policy import matching_rules, SELECTORS
 
 
@@ -22,7 +22,7 @@ class ManagerDialog(QDialog):
     def __init__(self,root,parent=None):
         super().__init__(parent)
         self.root = root
-        self.setWindowTitle('驱动盘管理')
+        self.setWindowTitle(APP_NAME)
         self.resize(960,630)
         layout = QVBoxLayout(self)
         self.status = QLabel()
@@ -64,6 +64,20 @@ class ManagerDialog(QDialog):
             toggle.clicked.connect(lambda checked,k=key:self.set_flag(k,checked))
         self.editor = QPlainTextEdit(); box.addWidget(self.editor)
         self.button(box,'保存配置',self.save_text)
+        page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'版本维护')
+        self.maintenance_dir = self.root.parent/'_maintenance'
+        self.updates_enabled = QCheckBox('启动一条龙时提示 OhMyZZZ 更新（所有账号）')
+        self.updates_enabled.clicked.connect(self.set_updates)
+        box.addWidget(self.updates_enabled)
+        self.maintenance_status = QLabel(); self.maintenance_status.setWordWrap(True)
+        box.addWidget(self.maintenance_status)
+        bar = QHBoxLayout(); box.addLayout(bar)
+        self.button(bar,'立即检查更新',self.check_release)
+        self.button(bar,'退出后回退上一版',lambda:self.queue_maintenance('rollback'))
+        self.button(bar,'取消待办',lambda:self.queue_maintenance(''))
+        self.button(bar,'刷新状态',self.show_maintenance)
+        box.addStretch()
+        self.show_maintenance()
         self.reload()
         if self.rules.get('conflicts'):
             tabs.setCurrentIndex(1)
@@ -75,13 +89,51 @@ class ManagerDialog(QDialog):
         table.horizontalHeader().setStretchLastSection(True)
         return table
 
+    def set_updates(self, enabled):
+        from .update_prompt import set_startup
+        set_startup(self.maintenance_dir,enabled)
+        self.show_maintenance()
+
+    def check_release(self):
+        from PySide6.QtWidgets import QApplication
+        from .update_prompt import UpdatePrompt
+        app = QApplication.instance()
+        prompt = getattr(app,'_ohmyzzz_prompt',None)
+        if prompt is None:
+            prompt = app._ohmyzzz_prompt = UpdatePrompt(app,self.root.parents[2],None)
+        prompt.check(self,manual=True)
+
+    def queue_maintenance(self, action):
+        from time import time_ns
+        pending = dict(action=action,id=str(time_ns())) if action else {}
+        if action=='rollback':
+            version=read(self.maintenance_dir/'previous.json',{}).get('version')
+            if not version: raise ValueError('首次升级后会显示可回退版本')
+            pending['version']=version
+        save(self.maintenance_dir/'request.json',pending)
+        self.show_maintenance()
+
+    def show_maintenance(self):
+        from .drive_disc_manager_const import PLUGIN_VERSION
+        directory=self.maintenance_dir
+        from .update_prompt import startup_enabled
+        self.updates_enabled.setChecked(startup_enabled(directory))
+        previous=read(directory/'previous.json',{}).get('version','尚无备份')
+        request=read(directory/'request.json',{})
+        lines=[f'当前版本 {PLUGIN_VERSION}　｜　可回退版本 {previous}']
+        if request.get('action')=='rollback': lines.append('待办：回退到 '+request['version'])
+        elif request: lines.append('退出后更新至 '+request.get('version',''))
+        last=read(directory/'last-run.json',{})
+        if last: lines.append('最近维护：'+str(last.get('message','')))
+        self.maintenance_status.setText(chr(10).join(lines))
+
     def button(self,layout,title,fn):
         button=QPushButton(title); layout.addWidget(button)
         def invoke():
             try:
                 fn()
             except Exception as exc:
-                QMessageBox.warning(self,'驱动盘管理',str(exc))
+                QMessageBox.warning(self,APP_NAME,str(exc))
         button.clicked.connect(invoke)
 
     @staticmethod
