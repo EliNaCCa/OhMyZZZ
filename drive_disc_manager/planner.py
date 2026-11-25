@@ -1,10 +1,10 @@
 """Produce a read-only plan from one pinned inventory, configuration and rule revision."""
 from collections import Counter, defaultdict
-from .optimizer import as_disc, candidate_pool
+from .optimizer import as_disc, candidate_pool, STATS
 from .allocation import assign_group
 from .store import digest, fingerprint, inventory, roll_base
 from .subscriptions import effective
-from .reserve_policy import apply_reserves
+from .reserve_policy import apply_reserves, development
 from .roster import compile_roster, explain, roster_catalog
 
 
@@ -56,6 +56,22 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
             row['review'].append('现场弃置状态待核')
         if counts[fp]>1 or d.get('setKey')=='Unknown' or d['rarity']!='S' or not 3<=len(row['rolls'])<=4:
             row['review'].append('身份、品级或副词条待核')
+        unknown = [stat for stat in row['rolls'] if stat not in STATS or STATS[stat][1] is None]
+        if unknown:
+            row['review'].append('无法识别的副词条 · '+'、'.join(unknown))
+        if row['main'] not in STATS or STATS[row['main']][2] is None:
+            row['review'].append('无法识别的主词条 · '+row['main'])
+        if row['main'] in row['rolls']:
+            row['review'].append('主副词条重复')
+        if d['rarity']=='S':
+            growth = development(row)
+            if growth is None:
+                row['review'].append('强化档数与等级不符')
+            else:
+                row['development'] = growth
+                row['explanation'].append(f"初始 {growth['initial']} 词条 · 剩余 {growth['remaining']} 次强化机会")
+                if cfg.get('protectNaturalCrit', True) and growth['initial']==4 and {'crit_', 'crit_dmg_'} <= row['rolls'].keys():
+                    row['reasons'].append('原生四词条双暴保护')
         rows.append(row)
     for row in rows:
         key = 'matrix/'+row['set']+'/'+row['slot']

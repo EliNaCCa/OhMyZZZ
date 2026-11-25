@@ -55,6 +55,16 @@ with TemporaryDirectory() as tmp:
     assert read(root/'dismantle-result.json')['observations']=={'已不在库存':1}
     assert not prepare_batch(after,plan(after,limited,rules,{}),{},'A及以下')['entries']
     assert observed_grade([dict(text='等级0/15',confidence=0.95)])=='S'
+    # Four-line double crit at birth vs a three-line piece that revealed its fourth at +3.
+    crit_pair = [dict(key=k, upgrades=0) for k in ('crit_', 'crit_dmg_', 'atk', 'hp')]
+    seeds = [dict(sample(1,0),substats=crit_pair), dict(sample(2,0),level=3,substats=crit_pair),
+             dict(sample(3,0),substats=[dict(key=k, upgrades=0) for k in ('atk', 'hp', 'futureStat')])]
+    three = dict(z,discs=seeds,audit=dict(game_total=3,exported=3,delta=0))
+    empty_quota = dict(cfg,reserve=0,trimRecommended=True)
+    assert [r['decision'] for r in plan(three,empty_quota,rules,{})['discs']] == ['保留','弃置候选','待复核']
+    uses = [dict(purpose='偏暴伤',count=5,stats=['crit_dmg_'])]
+    coverage = plan(three,dict(empty_quota,reserve_rules=uses),rules,{})['reserveCoverage'][0]
+    assert coverage['purposes'][-1]['covered']==1 and coverage['kept']==1
     cases=[dict(ids=['a'],critRate=97.59,outputScore=100),dict(ids=['b'],critRate=97.6,outputScore=99.5)]
     assert prefer(cases,0.5,set())['ids']==['b']
     assert prefer(cases,0,set())['ids']==['a']

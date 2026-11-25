@@ -6,6 +6,16 @@ DEFAULT_STATS = ('crit_', 'crit_dmg_', 'atk_')
 SELECTORS = ('set', 'slot', 'main')
 
 
+def development(row):
+    """Normalize S-rank history into original lines and remaining upgrade events."""
+    spent = row['level'] // 3
+    visible = len(row['rolls'])
+    initial = sum(row['rolls'].values()) - spent
+    if initial not in (3, 4) or visible != min(initial + spent, 4):
+        return None
+    return dict(initial=initial, remaining=5-spent, upgrades=5-spent-(4-visible))
+
+
 def quota(value):
     if value is not None and (type(value) is not int or value < 0):
         raise ValueError('备用数量应为非负整数或 null（不限）')
@@ -50,12 +60,18 @@ def apply_reserves(rows, cfg):
                 rolls = sum(row['rolls'].get(stat, 0) for stat in stats)
                 # For the inherited general quota, use the best matching role. A
                 # player's explicit stat list still ranks by their chosen stats.
-                base_rank = (rolls, (15 - row['level']) // 3, row['fp'])
+                hits = sum(stat in row['rolls'] for stat in stats)
+                # The first event on a three-line piece reveals its fourth stat.
+                # Only count future upgrades to stats already visible as a tiebreak.
+                growth = row['development']['upgrades'] * hits
+                base_rank = (rolls, growth, hits, row['fp'])
                 if purpose == '通用' and stats is DEFAULT_STATS:
-                    best_role = max(row.get('roleRolls', {}).values(), default=rolls)
+                    best_role = max(((score, row['development']['upgrades'] * row['roleHits'][agent])
+                                     for agent, score in row.get('roleRolls', {}).items()), default=(rolls, growth))
                     return (bool(row['recommendations']), best_role, *base_rank)
                 return base_rank
-            picks = sorted(eligible, key=rank, reverse=True)[:count]
+            matching = (row for row in eligible if purpose == '通用' or any(stat in row['rolls'] for stat in stats))
+            picks = sorted(matching, key=rank, reverse=True)[:count]
             for row in picks:
                 row['reasons'].append('备用 · ' + purpose)
                 selected.add(row['fp'])

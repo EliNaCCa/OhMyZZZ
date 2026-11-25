@@ -97,7 +97,7 @@ def inventory(z):
 
 
 def defaults():
-    return dict(reserve=2, reserve_rules=[], trimRecommended=False, pins=[], protect15=True, profiles=[], overrides={},
+    return dict(reserve=2, reserve_rules=[], trimRecommended=False, pins=[], protect15=True, protectNaturalCrit=True, profiles=[], overrides={},
                 auto_sync=True, run_scanner=False, afterEarly=False, applyMarkers=False, fieldProfile='',
                 optimizer_url='', roster=[], aliases={}, includeOwned=True, futureAgents=[], excludedAgents=[])
 

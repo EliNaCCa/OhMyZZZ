@@ -76,6 +76,10 @@ class ManagerDialog(QDialog):
         for key,title in [('run_scanner','运行时重新扫描'),('afterEarly','早场刷后运行'),('applyMarkers','锁定保留盘并标记弃置')]:
             toggle = QCheckBox(title); self.flags[key] = toggle; flags.addWidget(toggle)
             toggle.clicked.connect(lambda checked,k=key:self.set_flag(k,checked))
+        protections = QHBoxLayout(); box.addLayout(protections)
+        for key, title in [('protect15','保留 +15 盘'),('protectNaturalCrit','保留原生四词条双暴盘')]:
+            toggle = QCheckBox(title); self.flags[key] = toggle; protections.addWidget(toggle)
+            toggle.clicked.connect(lambda checked,k=key:self.set_flag(k,checked))
         self.salvage_info = QLabel(); self.salvage_info.setWordWrap(True); box.addWidget(self.salvage_info)
         self.button(box,'查看拆解记录',self.show_salvage)
         self.editor = QPlainTextEdit(); box.addWidget(self.editor)

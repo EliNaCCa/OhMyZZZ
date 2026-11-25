@@ -164,6 +164,7 @@ def explain(row, by_set, unresolved):
             if preferred:
                 rolls = sum(row['rolls'].get(stat,0) for stat in preferred)
                 row.setdefault('roleRolls',{})[label] = rolls
+                row.setdefault('roleHits',{})[label] = len(preferred.intersection(row['rolls']))
                 row['explanation'].append(f'{label}适用副词条合计 {rolls} 档')
         elif any(unknown for _, _, unknown in slots.get(row['slot'], ())):
             row['review'].append('角色主词条待核 · '+label)
