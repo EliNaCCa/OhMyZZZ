@@ -64,7 +64,7 @@ def probe_trace(record, cfg, rules, wiki, known_owned):
             from .reserve_policy import assess_growth
             assess_growth(row, cfg)
         fields = rules.get('fields', {})
-        catalog = roster_catalog({}, fields, cfg, wiki, known_owned)
+        catalog = roster_catalog({'discs':[disc]}, fields, cfg, wiki, known_owned)
         assess_rules(row, cfg, fields, reverse, *compile_roster(catalog, fields, cfg['overrides'], reverse))
     return row, dict(rules=rules.get('version'), traceRules=rule_book([row], rules, cfg['overrides'],
                                                                      current_conflicts(rules,cfg['overrides'])))

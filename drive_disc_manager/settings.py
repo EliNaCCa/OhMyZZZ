@@ -795,6 +795,12 @@ class ManagerInterface(BaseInterface):
         label,ok=QInputDialog.getItem(self,'选择角色','已保存的配装器配置',labels,0,False)
         if not ok: return
         source=choices[labels.index(label)]
+        from .roster import same_agent, scanner_agent_key
+        wiki = read(wiki_path(), {})
+        agent_key = scanner_agent_key(wiki, source['agent'])
+        request_name = source['request']['characterName']
+        if not same_agent(wiki, source['agent'], request_name):
+            raise ValueError('目标名称与请求中的代理人不一致，请在配装器核对后再导入')
         if source['requiresClaimMapping']:
             raise ValueError('此方案要求避让配装器中已占用的盘。导入需核对两份库存中的占用记录。')
         name,ok=QInputDialog.getText(self,'保存配队快照','方案名称',text=source['agent']+' · 常用队')
@@ -803,9 +809,6 @@ class ManagerInterface(BaseInterface):
             raise ValueError('请输入新的方案名称')
         simultaneous,ok=QInputDialog.getText(self,'同时出场','同时上场的角色填写相同分组，互斥配队可留空')
         if not ok: return
-        wiki=read(wiki_path(),{})
-        agent_key=next((a.get('code') or a['EN'].replace(' ','') for a in wiki.get('character',{}).values()
-                        if a.get('CHS')==source['agent'] and a.get('EN')),'')
         profile = dict(name=name.strip(),agentKey=agent_key,request=source['request'],
                        simultaneous=simultaneous.strip(),tolerancePct=0.5,sourceId=source['sourceId'])
         from .allocation import group_conflict
@@ -823,7 +826,7 @@ class ManagerInterface(BaseInterface):
         token = self.edit_token()
         profile = token[2]['profiles'][index]
         with self.optimizer_session() as endpoint:
-            updated, changed = refreshed_profile(profile, saved_targets(endpoint))
+            updated, changed = refreshed_profile(profile, saved_targets(endpoint), wiki=read(wiki_path(), {}))
         if not changed:
             QMessageBox.information(self, profile['name'], '所选配队已与配装器目标一致。')
             return

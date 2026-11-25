@@ -215,6 +215,24 @@ def smoke(home, tmp):
     with patch.object(QInputDialog, 'getText', return_value=('常态队',True)):
         widget.profile_menu.menu().actions()[1].trigger()
     assert config(account)['fieldProfile'] == '常态队' and config(account)['profiles'][1] == variant
+    from contextlib import nullcontext
+    source = dict(sourceId='ellen', agent='Ellen Joe', requiresClaimMapping=False,
+                  request=dict(characterName='艾莲', roleSystem='ATTACK'))
+    with patch.object(widget,'optimizer_session',return_value=nullcontext('fixture')), \
+         patch('drive_disc_manager.optimizer.saved_targets',return_value=[source]), \
+         patch.object(QInputDialog,'getItem',return_value=('1. Ellen Joe',True)), \
+         patch.object(QInputDialog,'getText',side_effect=[('冰队', True), ('', True)]):
+        widget.import_profile()
+    assert config(account)['profiles'][-1]['agentKey'] == 'Ellen'
+    with patch.object(widget,'optimizer_session',return_value=nullcontext('fixture')), \
+         patch('drive_disc_manager.optimizer.saved_targets',return_value=[dict(source,agent='零号·安比')]), \
+         patch.object(QInputDialog,'getItem',return_value=('1. 零号·安比',True)):
+        try:
+            widget.import_profile()
+        except ValueError as exc:
+            assert '代理人不一致' in str(exc)
+        else:
+            raise AssertionError('saved target would map this gear to another agent')
     def disc(key, slot, decision, reasons, marked=False):
         return dict(id=key,fp=key,set='SwingJazz',slot=slot, main='atk_',level=0,decision=decision,
                     marked=marked,reasons=reasons,review=[])

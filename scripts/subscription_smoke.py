@@ -182,6 +182,19 @@ def smoke(root):
     unrelated = dict(data, discs=[dict(sample, setKey='Other')])
     assert all('New Stat' not in s for s in plan(unrelated, dict(cfg, overrides={}), rules, {})['discs'][0]['review'])
 
+    # A disc-only scan can identify a character by the verified worn portrait.
+    from drive_disc_manager.store import observed_agents, import_inventory
+    only_gear = dict(data, discs=[dict(sample, ownerState='worn', location='Example')])
+    assert observed_agents(only_gear) == {'Example'}
+    assert not observed_agents(dict(data, discs=[dict(sample, ownerState='unknown', location='Example')]))
+    cfg = dict(cfg, futureAgents=[], overrides={})
+    assert plan(only_gear,cfg,rules,{})['roster'][0]['owned']
+    assert not plan(only_gear,dict(cfg, excludedAgents=['example']),rules,{})['roster']
+    tmp_scan = root/'disc-only.json'
+    save(tmp_scan, only_gear); import_inventory(root, tmp_scan)
+    save(tmp_scan, data); import_inventory(root, tmp_scan)
+    assert read(root/'owned-agents.json') == ['Example']
+
 
 if __name__ == '__main__':
     with TemporaryDirectory() as temp:

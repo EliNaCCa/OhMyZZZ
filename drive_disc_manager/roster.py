@@ -36,6 +36,27 @@ def agent_id(name):
     return ALIASES.get(key, key)
 
 
+def scanner_agent_key(wiki, name):
+    """Match a whole upstream name to the scanner's physical owner key."""
+    requested = agent_id(name)
+    if not requested:
+        return ''
+    matches = []
+    for uid, agent in wiki.get('character', {}).items():
+        aliases = (uid, agent.get('code'), agent.get('EN'), agent.get('CHS'))
+        if any(isinstance(alias, str) and agent_id(alias) == requested for alias in aliases):
+            key = agent.get('code') or (agent.get('EN') or '').replace(' ', '')
+            matches.append(key)
+    return matches[0] if len(matches) == 1 else ''
+
+
+def same_agent(wiki, first, second):
+    if first == second:
+        return True
+    key = scanner_agent_key(wiki, first)
+    return bool(key and key == scanner_agent_key(wiki, second))
+
+
 def roster_catalog(z, fields, cfg, wiki, known_owned=()):
     """A stable list for both settings and planning. Unknown identities remain visible."""
     entries = {}
@@ -66,8 +87,8 @@ def roster_catalog(z, fields, cfg, wiki, known_owned=()):
             if isinstance(alias,str) and alias:
                 scan_keys[identifier(alias)] = item['key']
 
-    scanned = [c.get('key') for c in z.get('characters', []) if isinstance(c,dict)]
-    for raw in [*known_owned, *scanned]:
+    from .store import observed_agents
+    for raw in [*known_owned, *observed_agents(z)]:
         if isinstance(raw,str) and raw.strip():
             resolved = scan_keys.get(identifier(raw))
             item = entries[resolved] if resolved else entry(raw)

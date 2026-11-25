@@ -107,7 +107,7 @@ def saved_targets(url):
     return choices
 
 
-def refreshed_profile(profile, choices):
+def refreshed_profile(profile, choices, *, wiki=None):
     """Refresh one imported snapshot without rebinding other teams sharing its origin."""
     source_id = profile.get('sourceId')
     matches = [choice for choice in choices if source_id and choice.get('sourceId') == source_id]
@@ -115,7 +115,9 @@ def refreshed_profile(profile, choices):
         raise ValueError('未找到唯一的原配装器目标。可将当前配装器目标保存为新方案。')
     source = matches[0]
     original, updated = profile['request'], source['request']
-    if updated['characterName'] != original['characterName'] or source['agent'] != updated['characterName']:
+    from .roster import same_agent
+    if (not same_agent(wiki or {}, updated['characterName'], original['characterName'])
+            or not same_agent(wiki or {}, source['agent'], updated['characterName'])):
         raise ValueError('此目标对应的角色已变化，请另存为新方案。')
     if source['requiresClaimMapping']:
         raise ValueError('原目标要求避让配装器占用盘，请先核对占用记录。')

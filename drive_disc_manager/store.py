@@ -121,6 +121,13 @@ def config(root):
     return {**defaults(), **read(root / 'config.json', {})}
 
 
+def observed_agents(snapshot):
+    keys = [c.get('key') for c in snapshot.get('characters', ()) if isinstance(c, dict)]
+    keys.extend(d.get('location') for d in snapshot.get('discs', ())
+                if isinstance(d, dict) and d.get('ownerState') == 'worn')
+    return {key.strip() for key in keys if isinstance(key, str) and key.strip()}
+
+
 def import_inventory(root, path, *, readings=None):
     path = Path(path)
     if 'partial' in path.name.lower():
@@ -135,8 +142,7 @@ def import_inventory(root, path, *, readings=None):
     keys = set(read(root/'owned-agents.json', []))
     previous = read(root/'inventory.json', {})
     for snapshot in (previous, z):
-        keys.update(c['key'] for c in snapshot.get('characters', [])
-                    if isinstance(c,dict) and isinstance(c.get('key'),str) and c['key'].strip())
+        keys.update(observed_agents(snapshot))
     if keys:
         save(root/'owned-agents.json', sorted(keys))
     save(root / 'inventory.json', z)
