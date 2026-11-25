@@ -1,4 +1,5 @@
 import json
+from one_dragon_qt.widgets.base_interface import BaseInterface
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QTabWidget,QWidget,QLabel,QPushButton,
     QPlainTextEdit,QTableWidget,QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView,QCheckBox)
 from .store import read,save,config,import_inventory,digest
@@ -14,18 +15,10 @@ def pretty(value):
     return json.dumps(value,ensure_ascii=False,indent=2)
 
 
-class ManagerDialog(QDialog):
-    @classmethod
-    def show_flyout(cls,ctx,group_id,target,parent):
-        dialog = cls(ctx.get_plugin_data_dir(APP_ID)/str(ctx.current_instance_idx), parent)
-        dialog.ctx = ctx
-        dialog.exec()
-
-    def __init__(self,root,parent=None):
-        super().__init__(parent)
-        self.root = root
-        self.setWindowTitle(APP_NAME)
-        self.resize(960,630)
+class ManagerInterface(BaseInterface):
+    def __init__(self, ctx, parent=None):
+        super().__init__('ohmyzzz_settings', APP_NAME, '', parent)
+        self.ctx = ctx
         layout = QVBoxLayout(self)
         self.status = QLabel()
         self.status.setWordWrap(True)
@@ -94,7 +87,6 @@ class ManagerDialog(QDialog):
         self.editor = QPlainTextEdit(); box.addWidget(self.editor)
         self.button(box,'保存配置',self.save_text)
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'版本维护')
-        self.maintenance_dir = self.root.parent/'_maintenance'
         self.updates_enabled = QCheckBox('启动一条龙时提示 OhMyZZZ 更新（所有账号）')
         self.updates_enabled.clicked.connect(self.set_updates)
         box.addWidget(self.updates_enabled)
@@ -106,10 +98,18 @@ class ManagerDialog(QDialog):
         self.button(bar,'取消待办',lambda:self.queue_maintenance(''))
         self.button(bar,'刷新状态',self.show_maintenance)
         box.addStretch()
+
+    def on_interface_shown(self):
+        # OneDragon caches embedded pages by navigation stack, not by account.
+        root = self.ctx.get_plugin_data_dir(APP_ID) / str(self.ctx.current_instance_idx)
+        if root != getattr(self, 'root', None):
+            self.tabs.setCurrentIndex(0)
+        self.root = root
+        self.maintenance_dir = root.parent / '_maintenance'
         self.show_maintenance()
         self.reload()
         if self.conflicts:
-            tabs.setCurrentIndex(1)
+            self.tabs.setCurrentIndex(1)
 
     def grid(self,headers):
         table=QTableWidget(0,len(headers)); table.setHorizontalHeaderLabels(headers)
@@ -160,7 +160,8 @@ class ManagerDialog(QDialog):
             prompt = app._ohmyzzz_prompt = UpdatePrompt(app,self.root.parents[2],getattr(self,'ctx',None))
         elif prompt.ctx is None:
             prompt.ctx = getattr(self,'ctx',None)
-        prompt.check(self,manual=True)
+        # The host removes the secondary page while hot-reloading the plugin.
+        prompt.check(self.window(), manual=True)
 
     def queue_maintenance(self, action):
         from time import time_ns

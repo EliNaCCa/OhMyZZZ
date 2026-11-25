@@ -17,7 +17,7 @@
 ## 快速开始
 
 1. 在绝区零一条龙的插件管理页安装**仓库扫描器**。已有本账号完整 ZOD 扫描的玩家可以直接导入，游戏内数量须与导出数量一致。[仓库扫描器](https://github.com/idk500/zzzod-plugin-inventory-scan)
-2. 在 Releases 下载 `OhMyZZZ-版本号.zip` 及对应的 `.sha256`，校验后将 ZIP 导入一条龙。打开 **插件管理 → OhMyZZZ → 设置**。[下载插件](https://github.com/EliNaCCa/OhMyZZZ/releases)
+2. 从 Releases 下载 `OhMyZZZ-版本号.zip` 和对应的 `.sha256`，校验后将 ZIP 导入一条龙。点击 **插件管理 → OhMyZZZ → 设置**，在一条龙主窗口里配置当前账号。左上角的返回按钮会回到插件列表。[下载插件](https://github.com/EliNaCCa/OhMyZZZ/releases)
 3. 在 **规则订阅 → 更新来源** 同步推荐表，再到 **仓库预览 → 导入本账号扫描** 看逐盘结果。预览会列出每张盘的号位、主属性、保留理由和待复核项。
 4. 在 **我的配队 → 打开配装器** 保存角色目标，再点 **从配装器保存为配队**。算配装时 OhMyZZZ 自动启动本机配装器，算完即关闭。[本地多角色配装器](https://github.com/xliuforge/ZZZ_Multi_Agent_Drive_Optimizer)
 
