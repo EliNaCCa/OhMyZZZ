@@ -10,6 +10,37 @@ from drive_disc_manager.engine import NAME, VERSION, managed
 from drive_disc_manager.optimizer import loopback_json, saved_targets, candidate_pool, select_candidate
 from drive_disc_manager.service import preview
 from drive_disc_manager.store import defaults, save
+from drive_disc_manager.allocation import assign_group
+
+
+def smoke_role_targets(endpoint, pieces):
+    current = {disc['id'] for disc in pieces}
+    impact = dict(pieces[5], id='impact', mainStat=dict(type='IMPACT', value=18))
+    request = dict(characterName='莱卡恩', roleSystem='STUN', mode='UTILITY_BALANCE',
+                   baseImpact=100, baseEnergyRegen=1.2, baseATK=1000, targetImpact=110)
+
+    def choose(**overrides):
+        profile = dict(name='职业面板冒烟', request=dict(request, **overrides))
+        return assign_group([(profile, current)], pieces+[impact], endpoint, candidate_pool)[0][1]
+
+    chosen = choose()
+    assert chosen['panelRows'][0] == ('冲击力', '面板下限', 110, 100, 118, 18, 8)
+    assert chosen['ids'][-1] == 'impact'
+    try:
+        choose(targetImpact=140)
+    except ValueError as exc:
+        assert '当前装备 · 冲击力 100 / 目标 140' in str(exc), exc
+    else:
+        raise AssertionError('A diagnostic baseline became a selectable build')
+    strict = choose(targetImpact=140, mode='STRICT_TARGETS', targetTypes={'IMPACT':'CAP'}, targetPriorities={'IMPACT':1})
+    assert strict['panelRows'][0] == ('冲击力', '优先级 1 · 最低目标', 140, 100, 118, 18, -22)
+
+    anomaly = dict(roleSystem='ANOMALY', mode='ANOMALY_AP', targetImpact=0,
+                   extraStats={'ANOMALY_PROFICIENCY':90}, combatExtraStats={'ANOMALY_PROFICIENCY':30})
+    raw = loopback_json(endpoint, '/api/optimize', dict(request, **dict(anomaly, discs=pieces)))['results'][0]
+    assert choose(**anomaly)['panel']['ANOMALY_PROFICIENCY'] == raw['stats']['ANOMALY_PROFICIENCY'] == 120
+    assert raw['combatStats']['ANOMALY_PROFICIENCY'] == 200
+    print('PASS role targets: worn vs selected, hard vs strict, panel vs combat proficiency')
 
 
 def smoke(source):
@@ -53,6 +84,7 @@ def smoke(source):
             chosen = select_candidate(candidate_pool(endpoint,rupture,pieces,set()),rupture,set())
             assert chosen['metric']=='贯穿力' and chosen['metricValue']>0
             print('PASS equal API scores distinguished, raw crit threshold respected, rupture index verified')
+            smoke_role_targets(endpoint, pieces)
         assert not second.is_running()
         cfg = defaults()
         cfg['profiles'] = [dict(name='演示队', agentKey='Ellen', request=saved['request'])]

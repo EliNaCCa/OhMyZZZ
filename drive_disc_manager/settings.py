@@ -84,8 +84,13 @@ class ManagerInterface(BaseInterface):
         self.teams.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         box.addWidget(self.teams)
         self.team_score = QLabel(); self.team_score.setWordWrap(True); box.addWidget(self.team_score)
+        self.build_tabs = QTabWidget(); box.addWidget(self.build_tabs)
         self.slots = self.grid(['号位','套装','主属性','等级','当前装备者','该盘用途'])
-        box.addWidget(self.slots)
+        self.build_tabs.addTab(self.slots,'方案用盘')
+        self.panel_stats = self.grid(['面板属性','目标口径','目标值','当前装备','所选方案','相比当前','距目标（所选−目标）'])
+        panel = QWidget(); panel_box = QVBoxLayout(panel)
+        self.panel_note = QLabel(); self.panel_note.setWordWrap(True); panel_box.addWidget(self.panel_note)
+        panel_box.addWidget(self.panel_stats); self.build_tabs.addTab(panel,'面板对比')
         self.equip_status = QLabel(); self.equip_status.setWordWrap(True); box.addWidget(self.equip_status)
         self.teams.itemSelectionChanged.connect(self.show_build)
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'运行设置')
@@ -327,7 +332,9 @@ class ManagerInterface(BaseInterface):
             title = ('出场 · ' if p['name']==self.cfg.get('fieldProfile') else '')+p['name']
             group = p.get('simultaneous')
             label = f"{group} · 第 {group_indices(profiles, index).index(index)+1} 位" if group else '可借盘'
-            return (title,label,pct(p.get('tolerancePct',0.5)),
+            role = (p.get('request') or {}).get('roleSystem','').upper()
+            tolerance = pct(p.get('tolerancePct',0.5)) if role in ('ATTACK','STRONG','RUPTURE') else '—'
+            return (title,label,tolerance,
                     pct(result.get('effectiveCritRate',result.get('critRate'))),pct(result.get('relativeLossPct')),reason)
         self.fill(self.teams,[row(i,p) for i,p in enumerate(profiles)])
         self.teams.resizeColumnsToContents()
@@ -344,6 +351,8 @@ class ManagerInterface(BaseInterface):
         self.apply_button.setEnabled(bool(ready) and not self.equip_busy)
         self.apply_button.setToolTip('查看本次要穿戴的盘' if ready else '导入完整库存并计算所选配队后可用')
         self.fill(self.slots,[])
+        self.fill(self.panel_stats,[])
+        self.panel_note.setText('选择已计算的支援、击破、异常或防护等职业方案，可查看目标与装备差值。')
         self.team_score.setText('在配装器保存角色目标后，可导入为独立配队。')
         if index < 0 or index >= len(self.cfg['profiles']): return
         profile = self.cfg['profiles'][index]
@@ -356,6 +365,17 @@ class ManagerInterface(BaseInterface):
                                '、'.join(r['reasons'])) for r in rows])
         self.slots.resizeColumnsToContents()
         details = [profile['name']]
+        if result.get('panelRows'):
+            def value(v, signed=False):
+                if v is None: return '—'
+                return f'{v:+g}' if signed else f'{v:g}'
+            self.fill(self.panel_stats, [(label, kind, value(goal), value(previous), value(chosen), value(delta,True), value(gap,True))
+                                        for label,kind,goal,previous,chosen,delta,gap in result['panelRows']])
+            self.panel_stats.resizeColumnsToContents()
+            self.panel_note.setText('按角色面板比较。正数表示所选值更高，是否符合目标请看「目标口径」。')
+            details.append(result.get('panelMode','职业面板'))
+            if not result.get('currentPanel'):
+                details.append('当前穿戴六盘未核实')
         if 'outputScore' in result:
             details += [f"所选输出 {result.get('rawOutput', result['outputScore'])}", f"候选最高 {result.get('rawBestOutput', result['bestOutput'])}"]
             if result.get('metric'):

@@ -105,6 +105,8 @@ def assign_group(members, pool, url, fetch, max_nodes=160):
         original = cache.get((index, frozenset()), [])
         if original:
             baseline = select_candidate(original,profile,members[index][1])
+            if baseline.get('currentPanel') and 'panel' in choice:
+                choice['currentPanel'] = baseline['currentPanel']
             if choice['ids'] != baseline['ids']:
                 claimed_by = [(p['name'], slot) for p, previous in result[:index]
                               for slot, fp in enumerate(baseline['ids'], 1) if fp in previous['ids']]
@@ -121,4 +123,10 @@ def assign_group(members, pool, url, fetch, max_nodes=160):
                 choice['relativeLossPct'] = float(100*(best-score)/best)
         choice['search'] = dict(candidateBuilds=len(original), availableBuilds=choice.pop('availableBuilds'),
                                 calls=queries, visited=nodes, limited=limited)
+        if 'panel' in choice:
+            from .role_panel import goal_rows, MODE_NAMES
+            request = profile['request']
+            mode = (request.get('mode') or '').strip().upper()
+            choice['panelMode'] = MODE_NAMES.get(mode, mode or '配装器默认排序')
+            choice['panelRows'] = goal_rows(request,choice['panel'],choice['currentPanel'])
     return result

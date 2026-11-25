@@ -149,6 +149,71 @@ class NoBuildCandidates(ValueError):
     """This inventory subset cannot supply the requested six slots."""
 
 
+def result_ids(result, sources):
+    pieces = sorted(result['discs'], key=lambda disc:disc['slot'])
+    ids = [disc['id'] for disc in pieces]
+    if len(ids) != 6 or [sources[i]['slot'] if i in sources else 0 for i in ids] != list(range(1,7)):
+        raise ValueError('配装器结果与本轮库存不一致')
+    for disc in pieces:
+        if any(disc.get(key) != sources[disc['id']][key] for key in ('slot','mainStat','setName','subStats')):
+            raise ValueError('配装器修正过属性，请复核实物')
+    return tuple(ids)
+
+
+def current_panel(url, args, current, sources, request):
+    from .role_panel import observed_panel, baseline_request
+    if len(current) != 6 or not current <= sources.keys():
+        return {}
+    worn = {i: sources[i] for i in sorted(current)}
+    if {d['slot'] for d in worn.values()} != set(range(1, 7)):
+        return {}
+    measured = request(url, baseline_request(args, list(worn.values())))
+    if not measured['results']:
+        return {}
+    reading = measured['results'][0]
+    result_ids(reading, worn)
+    return observed_panel(args, reading)
+
+
+def role_candidates(url, args, discs, current, request):
+    from .role_panel import ROLE_FIELDS, observed_panel, goal_rows
+    role = args['roleSystem'].strip().upper()
+    sources = {d['id']:d for d in discs}
+    response = request(url, args)
+    builds = []
+    worn_panel = {}
+    for result in response['results']:
+        ids = result_ids(result, sources)
+        panel = observed_panel(args,result)
+        if set(ids) == current:
+            worn_panel = panel
+        builds.append(dict(ids=list(ids), panel=panel, reason=result.get('reason') or '沿用配装器排名', score=result['score']))
+    if not worn_panel:
+        worn_panel = current_panel(url, args, current, sources, request)
+    if not builds or role not in ROLE_FIELDS:
+        reason = f'职业 {role} 的模型待核' if role not in ROLE_FIELDS else '没有符合配队条件的六盘组合'
+        diagnostic = worn_panel
+        subject = '当前装备'
+        if not diagnostic and response.get('nearMisses'):
+            reference = response['nearMisses'][0]
+            result_ids(reference,sources)
+            diagnostic = observed_panel(args,reference)
+            subject = '接近目标的候选'
+        if not diagnostic and builds:
+            diagnostic = builds[0]['panel']
+            subject = '候选面板'
+        metrics = goal_rows(args,diagnostic,{})
+        gaps = [f'{label} {value:g} / 目标 {goal:g}' for label, _, goal, _, value, _, _ in metrics if goal]
+        if not gaps and role not in ROLE_FIELDS:
+            gaps = [f'{label} {value:g}' for label, _, _, _, value, _, _ in metrics]
+        if gaps:
+            reason += ' · '+subject+' · '+'、'.join(gaps)
+        raise NoBuildCandidates(reason)
+    for build in builds:
+        build['currentPanel'] = worn_panel
+    return builds
+
+
 def _window_pool(url, profile, discs, current, request, exact=False):
     if not discs:
         raise NoBuildCandidates('缺少适用的驱动盘')
@@ -162,34 +227,41 @@ def _window_pool(url, profile, discs, current, request, exact=False):
     # for small pools, even when the optimizer's own ranking differs from ours.
     limit = max(24, combinations) if direct and combinations <= 200 else 24
     args.update(discs=discs, excludeDiscarded=True, topN=limit, maxCombinations=profile.get('searchLimit',200000))
+    if not direct:
+        return role_candidates(url, args, discs, current, request)
     original_args = dict(args)
     # Upstream filters on PANEL rate, while the personal preference uses combat rate.
     estimated_panel = max(0, min(100, 100 - float((args.get('combatExtraStats') or {}).get('CRIT_RATE', 0))))
-    goals = ([0, profile.get('fullCritPanelTarget', estimated_panel), args.get('targetCritRate') or 0]
-             if direct else [args.get('targetCritRate', 0)])
+    goals = [0, profile.get('fullCritPanelTarget', estimated_panel), args.get('targetCritRate') or 0]
     if exact:
         goals = [0]
     by_id = {d['id']: d for d in discs}
     results = {}
     searches = [(args, g) for g in dict.fromkeys(goals)]
-    if direct and len(current)==6 and current <= by_id.keys():
-        searches.append((dict(original_args, discs=[by_id[i] for i in sorted(current)]), 0 if direct else goals[0]))
+    if len(current)==6 and current <= by_id.keys():
+        searches.append((dict(original_args, discs=[by_id[i] for i in sorted(current)]), 0))
     for inputs, goal in searches:
         response = request(url, dict(inputs,targetCritRate=goal))
         for r in response['results']:
-            ids = [d['id'] for d in sorted(r['discs'], key=lambda d:d['slot'])]
-            if len(ids)!=6 or [by_id[i]['slot'] if i in by_id else 0 for i in ids] != list(range(1,7)):
-                raise ValueError('配装器结果与本轮库存不一致')
-            for item in r['discs']:
-                source = by_id[item['id']]
-                if any(item.get(k) != source[k] for k in ('slot','mainStat','setName','subStats')):
-                    raise ValueError('配装器修正过属性，请复核实物')
-            if tuple(ids) not in results:
-                if direct:
-                    from .direct_score import direct_score
-                    results[tuple(ids)] = dict(ids=ids, panelCritRate=r.get('panelCritRate'), **direct_score(inputs, r))
-                else:
-                    results[tuple(ids)] = dict(ids=ids,reason='沿用该职业的配装器排名',score=r['score'])
+            ids = result_ids(r, {d['id']: d for d in inputs['discs']} if inputs is not args else by_id)
+            if ids not in results:
+                from .direct_score import direct_score
+                try:
+                    score = direct_score(inputs, r)
+                except (ValueError, KeyError) as exc:
+                    from .role_panel import observed_panel
+                    try:
+                        panel = observed_panel(original_args, r)
+                        before = panel if set(ids) == current else current_panel(url, original_args, current, by_id, request)
+                    except (ValueError, KeyError) as panel_error:
+                        raise ValueError(f'{exc} · 无法核实面板 · {panel_error}') from exc
+                    from .role_panel import goal_rows
+                    rows = goal_rows(original_args, panel, before)
+                    changes = [f'{label} {old:g} → {new:g}' if old is not None else f'{label} {new:g}'
+                               for label, _, _, old, new, _, _ in rows]
+                    subject = '当前 → 候选' if before else '候选面板'
+                    raise ValueError(f'{exc} · {subject} · '+ '、'.join(changes)) from exc
+                results[ids] = dict(ids=list(ids), panelCritRate=r.get('panelCritRate'), **score)
     if not results:
         raise NoBuildCandidates('该组条件没有完整的六盘方案')
     return list(results.values())
