@@ -5,8 +5,8 @@ from .stat_reading import checked_values
 from .store import digest, fingerprint, roll_base
 
 
-def selected_column(image, target):
-    """Return the physical column only when the yellow selection border surrounds the target."""
+def selected_position(image, target):
+    """Locate the center of the game's selection border in the requested column."""
     import cv2
     import numpy as np
 
@@ -29,8 +29,90 @@ def selected_column(image, target):
         if (border[:9, 18:-18].any(axis=0).mean() > .80 and
                 border[18:-18, :9].any(axis=1).mean() > .80 and
                 border[18:-18, -9:].any(axis=1).mean() > .80):
-            return col
+            return col, top + dy + h // 2
     return None
+
+
+def viewport_stamp(image, selected_col):
+    """Match scroll position and neighboring cards when comparing rows in one column."""
+    import cv2
+    import numpy as np
+    from hashlib import sha256
+
+    # Exclude the fixed arrows at the ends of the warehouse scrollbar.
+    band = cv2.cvtColor(image[233:866,1355:1375], cv2.COLOR_RGB2GRAY)
+    mask = cv2.inRange(band, 70, 240)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    thumbs = [cv2.boundingRect(c) for c in contours]
+    thumbs = [(x,y,w,h) for x,y,w,h in thumbs if 3 <= w <= 7 and 6 <= h and 0 < y < y+h < band.shape[0]]
+    if len(thumbs) != 1:
+        return None
+    evidence = sha256(str(thumbs[0]).encode('ascii'))
+    for col in ((selected_col+3)%9, (selected_col+6)%9):
+        x = 167+135*col
+        strip = cv2.cvtColor(image[240:860,x-22:x+22], cv2.COLOR_RGB2GRAY)
+        grid = cv2.resize(strip, (12,64), interpolation=cv2.INTER_AREA)
+        if grid.std() < 24:
+            return None
+        # Relative brightness keeps the card pattern stable across minor variations in lighting.
+        evidence.update(np.packbits(grid > np.median(grid)).tobytes())
+    return evidence.hexdigest()
+
+
+def page_copies(readings):
+    """Independent columns are disjoint. Within a column count well-separated verified rows."""
+    by_col = defaultdict(list)
+    for d in readings:
+        by_col[d['scanCell'][1]].append(d)
+    result = []
+    for observations in by_col.values():
+        best = [observations[0]]
+        groups = defaultdict(list)
+        for disc in observations:
+            cell = disc['scanCell']
+            if (len(cell) == 4 and type(cell[2]) is int and 180 <= cell[2] <= 955 and
+                    isinstance(cell[3], str) and len(cell[3]) == 64):
+                groups[cell[3]].append((cell[2], disc))
+        for positions in groups.values():
+            picks, last_y = [], -1000
+            for y, disc in sorted(positions, key=lambda item:item[0]):
+                if y-last_y >= 150:
+                    picks.append(disc)
+                    last_y = y
+            if len(picks) > len(best):
+                best = picks
+        result.extend(best)
+    return result
+
+
+def scanner_key(disc):
+    """inventory_scan 1.4.7's export key omits grade and numeric stat values."""
+    return (disc['setKey'], disc['slotKey'], disc['level'], disc['mainStatKey'],
+            tuple(sorted((s['key'], s['upgrades']) for s in disc['substats'])))
+
+
+def observed_siblings(exported, cells):
+    """Allow a second grade only when its independent readings corroborate the cap."""
+    def identity(disc):
+        return fingerprint(disc), digest(disc.get('observedValues'))
+
+    original = identity(exported)
+    if original not in {identity(d) for d in cells}:
+        return False
+    if all(identity(d) == original for d in cells):
+        return True
+
+    grade_readings = {}
+    for disc in cells:
+        grade = disc.get('observedGrade')
+        if grade not in ('S','A','B') or grade != disc['rarity']:
+            return False
+        current = identity(disc)
+        if grade_readings.setdefault(grade, current) != current:
+            return False
+    # At the same level and slot, different grades must also have distinct main values.
+    main_values = {d['observedValues']['main'][d['mainStatKey']] for d in cells}
+    return len(main_values) == len(grade_readings)
 
 
 def with_copies(export, readings):
@@ -42,28 +124,26 @@ def with_copies(export, readings):
             or total <= 0 or audit.get('partial') or audit.get('exported') != len(discs)
             or audit.get('delta') != len(discs)-total):
         return export  # The normal completeness check will reject an invalid export.
-    groups = defaultdict(lambda: defaultdict(dict))
+    groups = defaultdict(lambda: defaultdict(list))
     base = roll_base(export)
     for disc in readings:
         cell = disc.get('scanCell')
-        if (not isinstance(cell, (list, tuple)) or len(cell) != 2 or any(type(i) is not int for i in cell)
+        if (not isinstance(cell, (list, tuple)) or len(cell) not in (2,4) or any(type(i) is not int for i in cell[:2])
                 or cell[0] < 0 or cell[1] not in range(9) or not checked_values(disc, base)):
             continue
         if disc.get('markState') not in ('marked', 'unmarked') or disc.get('lockState') not in ('locked', 'unlocked'):
             continue
-        page, col = cell
-        key = fingerprint(disc), digest(disc['observedValues'])
-        groups[key][page].setdefault(col, disc)
+        groups[scanner_key(disc)][cell[0]].append(disc)
 
     # Export IDs are temporary. A fingerprint may identify a group, never an individual copy.
-    counts = Counter(fingerprint(d) for d in discs)
+    counts = Counter(scanner_key(d) for d in discs)
     rebuilt, added = [], 0
     for disc in discs:
-        fp = fingerprint(disc)
-        by_page = groups.get((fp, digest(disc.get('observedValues'))), {})
-        cells = max(by_page.values(), key=len, default={})
-        if len(cells) > 1 and counts[fp] == 1:
-            rebuilt.extend(cells.values())
+        key = scanner_key(disc)
+        pages = (page_copies(rows) for rows in groups.get(key, {}).values())
+        cells = max((page for page in pages if len(page) > 1 and observed_siblings(disc, page)), key=len, default=[])
+        if cells and counts[key] == 1:
+            rebuilt.extend(cells)
             added += len(cells)-1
         else:
             rebuilt.append(disc)

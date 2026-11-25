@@ -81,6 +81,15 @@ def smoke(source):
             threshold = dict(request=dict(target,baseCritRate=97.59999), tolerancePct=.5)
             chosen = select_candidate(candidate_pool(endpoint,threshold,pieces,set()),threshold,set())
             assert chosen['bestNearFullOutput'] is None and chosen['critRate']==97.59999
+            capped = dict(request=dict(target,baseCritRate=100), tolerancePct=.5)
+            over = dict(pieces[2], id='over', subStats=[dict(type='CRIT_RATE',value=9.6)])
+            tied = select_candidate(candidate_pool(endpoint,capped,pieces+[over],current),capped,current)
+            assert tied['ids'][2]=='3' and tied['overflowCritRate']==0
+            over['subStats'].append(dict(type='ATK_FLAT',value=19))
+            stronger = select_candidate(candidate_pool(endpoint,capped,pieces+[over],current),capped,current)
+            assert stronger['ids'][2]=='over' and stronger['critRate']==100
+            assert stronger['uncappedCritRate']==109.6 and stronger['overflowCritRate']==9.6
+            assert stronger['outputScore'] > tied['outputScore']
             rupture = dict(request=dict(target,roleSystem='RUPTURE',baseHP=7000),tolerancePct=.5)
             chosen = select_candidate(candidate_pool(endpoint,rupture,pieces,set()),rupture,set())
             assert chosen['metric']=='贯穿力' and chosen['metricValue']>0

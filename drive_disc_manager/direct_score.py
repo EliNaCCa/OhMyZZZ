@@ -68,7 +68,8 @@ def direct_score(request, result):
     def crit(base, extra, key, default):
         return (number(request.get(base, 0)) or default) + number(request.get(extra, 0)) + totals[key]
 
-    rate = min(100, crit('baseCritRate', 'extraCritRate', 'CRIT_RATE', 5))
+    uncapped_rate = crit('baseCritRate', 'extraCritRate', 'CRIT_RATE', 5)
+    rate = min(100, uncapped_rate)
     damage = crit('baseCritDmg', 'extraCritDmg', 'CRIT_DMG', 50)
     multiplier = 1 + max(0, rate) * max(0, damage) / 10000
     bonus = totals['ELEMENT_DMG'] + totals['VELINA_CORE_DMG_BONUS']
@@ -90,5 +91,6 @@ def direct_score(request, result):
         if abs(number(result[field]) - value) > Decimal('0.5').scaleb(-places) + Decimal('1e-9'):
             raise ValueError('本地输出复算与配装器的 '+field+' 不符，请复核当前角色模型')
     return dict(outputScore=float(score), rawOutput=str(score), critRate=float(rate), rawCritRate=str(rate),
+                uncappedCritRate=float(uncapped_rate), overflowCritRate=float(uncapped_rate-rate),
                 metric='贯穿力' if rupture else '攻击力', metricValue=float(metric), damageBonus=float(bonus),
                 critDamage=float(damage), sheerBonus=float(totals['SHEER_DMG_BONUS']) if rupture else 0)

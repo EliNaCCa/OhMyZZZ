@@ -392,12 +392,13 @@ class ManagerInterface(BaseInterface):
         if 'outputScore' in result:
             details += [f"所选输出 {result.get('rawOutput', result['outputScore'])}", f"候选最高 {result.get('rawBestOutput', result['bestOutput'])}"]
             if result.get('metric'):
+                details.append(self.crit_summary(result))
                 details.append(f"实战{result['metric']} {result['metricValue']:g} · 暴伤 {result['critDamage']:g}% · 增伤 {result['damageBonus']:g}%")
                 if result['metric'] == '贯穿力':
                     details.append(f"贯穿伤害加成 {result['sheerBonus']:g}%")
         for window in result.get('windows', []):
             principal = '（主）' if window['name']==result['mainWindow'] else ''
-            details.append(f"{window['name']}{principal} · 占比 {window['share']:.1%} · 实战暴击 {window['critRate']}% · 输出 {window.get('rawOutput', window['outputScore'])}")
+            details.append(f"{window['name']}{principal} · 占比 {window['share']:.1%} · {self.crit_summary(window)} · 输出 {window.get('rawOutput', window['outputScore'])}")
             if window.get('metric'):
                 details.append(f"{window['metric']} {window['metricValue']:g} · 暴伤 {window['critDamage']:g}% · 增伤 {window['damageBonus']:g}%")
         scope = result.get('search',{})
@@ -414,6 +415,13 @@ class ManagerInterface(BaseInterface):
                 details.append('已达到联合搜索上限')
         if self.report.get('configuration') != digest(self.cfg): details.append('配置已修改 · 上次计算结果')
         self.team_score.setText('　｜　'.join(details))
+
+    @staticmethod
+    def crit_summary(result):
+        effective = f"有效暴击 {result['critRate']:g}%"
+        if result.get('overflowCritRate', 0) > 0:
+            return f"加成后暴击 {result['uncappedCritRate']:g}% · {effective}（溢出 {result['overflowCritRate']:g} 个百分点）"
+        return effective
 
     def edit_allocation(self):
         from .allocation import arrange_profile

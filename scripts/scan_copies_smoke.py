@@ -27,7 +27,19 @@ def smoke():
         result = plan(saved, defaults(), {}, {'SwingJazz':'摇摆爵士'})
         assert all(r['ambiguous'] and r['review'] and r['decision'] != '弃置候选' for r in result['discs'])
         assert [d['lock'] for d in saved['discs']] == [False, True]
-        for evidence in ([disc, overlap], [disc, dict(copy, scanCell=(0, 1))], [disc, dict(copy, observedValues=None)]):
+        # Same column, different rows on a verified stationary viewport. A small
+        # jitter of the border must never add another disc to the export.
+        stamp = 'a'*64
+        upper = dict(disc, scanCell=(0, 1, 319, stamp))
+        lower = dict(copy, scanCell=(0, 1, 493, stamp))
+        jitter = dict(upper, scanCell=(0, 1, 320, stamp))
+        assert import_inventory(root, source, readings=[lower, jitter, upper]) == 2
+        saved = read(root/'inventory.json')
+        assert [d['lock'] for d in saved['discs']] == [False, True]
+        assert all(d['ambiguous'] and d['review'] for d in plan(saved, defaults(), {}, {'SwingJazz':'摇摆爵士'})['discs'])
+        for evidence in ([disc, overlap], [disc, dict(copy, scanCell=(0, 1))], [disc, dict(copy, observedValues=None)],
+                         [upper, jitter], [upper, dict(lower, scanCell=(0,1,493,'b'*64))],
+                         [upper, dict(lower, scanCell=(1,1,493,stamp))], [upper, dict(lower, scanCell=(0,1))]):
             try:
                 import_inventory(root, source, readings=evidence)
             except ValueError as exc:
@@ -35,7 +47,24 @@ def smoke():
             else:
                 raise AssertionError('Unproved duplicate was counted')
         assert read(root/'inventory.json') == saved and read(source)['audit']['delta'] == -1
-    print('PASS two co-visible copies preserved with separate states, overlap rejected, previous inventory retained')
+        # The host dedup key also collapses A/S pieces with matching roll counts.
+        gold = dict(upper, observedGrade='S')
+        silver = dict(lower, observedGrade='A', rarity='A',
+                      observedValues=dict(main={'hp':367}, subs={'crit_':1.6, 'pen':6, 'anomProf':6}))
+        save(source, dict(export, discs=[gold]))
+        assert import_inventory(root, source, readings=[gold,silver]) == 2
+        saved = read(root/'inventory.json')
+        assert {d['rarity'] for d in saved['discs']} == {'A','S'}
+        for invalid in (dict(silver, observedGrade=None), dict(silver, observedValues=gold['observedValues']),
+                        dict(silver, scanCell=gold['scanCell'])):
+            try:
+                import_inventory(root, source, readings=[gold,invalid])
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('Unverified grade collision was accepted')
+        assert read(root/'inventory.json') == saved
+    print('PASS copies in distinct columns or verified rows retained for review; scroll overlap and repeated selections rejected')
 
 
 if __name__ == '__main__':

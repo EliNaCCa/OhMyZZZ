@@ -23,6 +23,7 @@ def smoke(home):
     from drive_disc_manager.planner import plan
     from drive_disc_manager.optimizer import as_disc
     from drive_disc_manager.scan_marks import MarkReader
+    from drive_disc_manager.scan_copies import selected_position, viewport_stamp
     from drive_disc_manager.stat_reading import measure
     from drive_disc_manager.disc_probe import read_selected
     from drive_disc_manager.warehouse import enter_warehouse
@@ -58,6 +59,23 @@ def smoke(home):
             app.screenshot = lambda: frame
             assert marker.detail() == (fp, 'unlocked', state, False), name
             if name == 'mark_before':
+                # Replay a selection one row up on the same published frame, then
+                # compare it with a genuine second viewport from the same warehouse.
+                bottom, upper = 798, 624
+                moved = frame.copy()
+                for dst, src in ((bottom, upper), (upper, bottom)):
+                    moved[dst-69:dst+70,503:641] = frame[src-69:src+70,503:641]
+                positions = [selected_position(img, SimpleNamespace(x=572, y=y))
+                             for img,y in ((frame,bottom), (moved,upper))]
+                assert all(pos is not None and pos[0]==3 for pos in positions)
+                assert positions[0][1]-positions[1][1] == bottom-upper
+                assert selected_position(moved, SimpleNamespace(x=572, y=bottom)) is None
+                stamp = viewport_stamp(frame,3)
+                assert stamp and viewport_stamp(moved,3) == stamp
+                other_bytes = (path.parent/'mark_grid_319.jpg').read_bytes()
+                other = cv2.imdecode(np.frombuffer(other_bytes,np.uint8), cv2.IMREAD_COLOR_RGB)
+                other = cv2.resize(other[-900:],(1920,1080),interpolation=cv2.INTER_CUBIC)
+                assert viewport_stamp(other,3) != stamp
                 scanner.ctx, scanner.screenshot = ctx, app.screenshot
                 total = enter_warehouse(scanner, lambda:None)
                 assert total == 319

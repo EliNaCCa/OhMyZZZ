@@ -58,7 +58,9 @@ def combine(window_rows, main):
     score = sum(row['weight'] * number(row.get('rawOutput', row['outputScore'])) for row in window_rows) / weight
     primary = next(row for row in window_rows if row['name'] == main)
     return dict(ids=primary['ids'], critRate=primary['critRate'], rawCritRate=primary['rawCritRate'], outputScore=float(score), rawOutput=str(score),
+                uncappedCritRate=primary['uncappedCritRate'], overflowCritRate=primary['overflowCritRate'],
                 mainWindow=main, windows=[dict(name=row['name'], share=float(row['weight']/weight),
                     outputScore=row['outputScore'], rawOutput=row['rawOutput'], critRate=row['critRate'], panelCritRate=row.get('panelCritRate'),
+                    uncappedCritRate=row['uncappedCritRate'], overflowCritRate=row['overflowCritRate'],
                     metric=row['metric'], metricValue=row['metricValue'], critDamage=row['critDamage'], damageBonus=row['damageBonus'], sheerBonus=row['sheerBonus'])
                     for row in window_rows])

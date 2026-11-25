@@ -112,6 +112,9 @@ with TemporaryDirectory() as tmp:
     by_slot={c['ids'][3]:c for c in candidate_pool('',profile,slots+[alternate],set(),single_top)}
     assert by_slot['alt']['outputScore']==167.04 and by_slot['4']['outputScore']==148.8
     assert [w['critRate'] for w in by_slot['alt']['windows']]==[88,100]
+    assert [w['uncappedCritRate'] for w in by_slot['alt']['windows']]==[88,103]
+    assert [w['overflowCritRate'] for w in by_slot['alt']['windows']]==[0,3]
+    assert by_slot['alt']['uncappedCritRate']==103
     from drive_disc_manager.allocation import assign_group
     members = [(dict(name='主C'),set()),(dict(name='队友'),set())]
     options = {'主C':[dict(ids=['1','2','3','4','5','6'],critRate=100,outputScore=100),

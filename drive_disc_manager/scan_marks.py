@@ -67,9 +67,15 @@ def capture_marks(scanner):
     pending = local()
 
     def capture(row, col, image):
-        from .scan_copies import selected_column
-        column = selected_column(image, grid.grid_rows[row][col])
-        pending.cell = (grid.scroll_rounds, column) if column is not None else None
+        from .scan_copies import selected_position, viewport_stamp
+        selected = selected_position(image, grid.grid_rows[row][col])
+        pending.cell = None
+        if selected:
+            column, y = selected
+            pending.cell = (grid.scroll_rounds, column)
+            stamp = viewport_stamp(image, column)
+            if stamp:
+                pending.cell += (y, stamp)
         pending.footer = image[985:1070,1050:1920].copy()
         try:
             return save_image(row, col, image)
@@ -83,7 +89,7 @@ def capture_marks(scanner):
         if kind == 'drive_disk' and cell is not None:
             key = (idx, cell)
             if duplicate and key not in witnessed:
-                # Same detail pixels, independently selected physical column. Read its own footer.
+                # Same detail pixels from a selected grid cell. Read its own footer.
                 enqueue('disc', image, grid.parser)
             witnessed.add(key)
         return idx, duplicate
