@@ -6,5 +6,5 @@ NEED_NOTIFY = False
 
 PLUGIN_AUTHOR = "EliNaCCa / upstream idk500"
 PLUGIN_HOMEPAGE = "https://github.com/EliNaCCa/OhMyZZZ"
-PLUGIN_VERSION = "0.1.5"
+PLUGIN_VERSION = "0.1.6"
 PLUGIN_DESCRIPTION = "订阅留盘规则、分配配队用盘、保留备用盘，可按游戏当前弃置标记衔接内置拆解。"

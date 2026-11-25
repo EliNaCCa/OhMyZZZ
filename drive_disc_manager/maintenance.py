@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import ssl
 import subprocess
 import sys
 import time
@@ -133,7 +134,15 @@ def backup(home, directory):
 
 def fetch(url, maximum):
     req = Request(url, headers={'User-Agent':'OhMyZZZ-idle-maintenance'})
-    with urlopen(req, timeout=12) as response:
+    context = ssl.create_default_context()
+    # The embedded Windows Python may only see part of the root certificate store.
+    try:
+        import certifi
+    except ImportError:
+        pass
+    else:
+        context.load_verify_locations(cafile=certifi.where())
+    with urlopen(req, timeout=12, context=context) as response:
         data = response.read(maximum+1)
     if len(data)>maximum:
         raise ValueError('发布响应超过大小上限')
