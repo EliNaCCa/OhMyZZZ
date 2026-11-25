@@ -123,6 +123,8 @@ def assign_group(members, pool, url, fetch, max_nodes=160):
                 choice['relativeLossPct'] = float(100*(best-score)/best)
         choice['search'] = dict(candidateBuilds=len(original), availableBuilds=choice.pop('availableBuilds'),
                                 calls=queries, visited=nodes, limited=limited)
+        if original and original[0].get('optimizerScope'):
+            choice['search']['initialScope'] = original[0]['optimizerScope']
         if 'panel' in choice:
             from .role_panel import goal_rows, MODE_NAMES
             request = profile['request']

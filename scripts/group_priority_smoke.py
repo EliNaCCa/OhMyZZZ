@@ -27,6 +27,20 @@ def smoke():
         return dict(name=name, agentKey=agent, simultaneous=group, request={'characterName':agent})
     a = profile('A 常态','Alpha','同场')
     burst = profile('A 爆发','Alpha','')
+    from drive_disc_manager.optimizer import refreshed_profile
+    source = dict(sourceId='alpha', agent='Alpha', requiresClaimMapping=False,
+                  request=dict(characterName='Alpha', roleSystem='ATTACK', required4Set='常用套'))
+    a.update(sourceId='alpha', tolerancePct=.25)
+    burst.update(sourceId='alpha')
+    updated, changed = refreshed_profile(a, [source])
+    assert 'required4Set' in changed and updated['simultaneous']=='同场' and updated['tolerancePct']==.25
+    assert 'required4Set' not in burst['request'] and refreshed_profile(updated, [source])[1]==[]
+    try:
+        refreshed_profile(a, [source,source])
+    except ValueError as exc:
+        assert '唯一' in str(exc)
+    else:
+        raise AssertionError('ambiguous source updated a profile')
     b = profile('B','Beta','同场')
     cfg = dict(defaults(), profiles=[a,burst,b], trimRecommended=True, reserve=0)
     rule = 'matrix/SwingJazz/4'

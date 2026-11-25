@@ -76,6 +76,7 @@ class ManagerInterface(BaseInterface):
         self.equip_finished.connect(self.finish_equip, Qt.ConnectionType.QueuedConnection)
         bar = QHBoxLayout(); box.addLayout(bar)
         self.button(bar,'从配装器保存为配队',self.import_profile)
+        self.refresh_target_button = self.button(bar,'更新所选配队',self.refresh_profile)
         self.button(bar,'设置满暴容差',self.edit_tolerance)
         self.button(bar,'输出窗口',self.edit_windows)
         self.button(bar,'启用 / 停用',self.toggle_profile)
@@ -268,7 +269,12 @@ class ManagerInterface(BaseInterface):
         self.refresh_roster()
         from .salvage_audit import needs_review
         salvage = read(self.root/'dismantle-result.json', {})
-        note = 'OhMyZZZ 按规则标记。拆解由一条龙独立任务按品级和「全选已弃置」设置执行。'
+        from .task_order import account_order
+        try:
+            note = account_order(self.ctx, int(self.root.name), self.cfg)
+        except Exception as exc:
+            # Host registration/configuration can be incomplete during a plugin refresh.
+            note = '本账号日常任务顺序暂未读到 · ' + str(exc)
         if needs_review(salvage): note += '　上批确认结果待核。'
         self.salvage_info.setText(note)
         early = read(self.root/'early-result.json', {})
@@ -353,6 +359,7 @@ class ManagerInterface(BaseInterface):
         index = self.teams.currentRow()
         profiles = self.cfg['profiles']
         selected = profiles[index] if 0 <= index < len(profiles) else {}
+        self.refresh_target_button.setEnabled(bool(selected.get('sourceId')) and not self.equip_busy)
         ready = selected.get('enabled',True) and self.report.get('assignments',{}).get(selected.get('name'),{}).get('ids')
         self.apply_button.setEnabled(bool(ready) and not self.equip_busy)
         self.apply_button.setToolTip('查看本次要穿戴的盘' if ready else '导入完整库存并计算所选配队后可用')
@@ -396,6 +403,11 @@ class ManagerInterface(BaseInterface):
         scope = result.get('search',{})
         if scope:
             details.append(f"初选 {scope['candidateBuilds']} 套")
+            initial = scope.get('initialScope')
+            if initial:
+                details.append(f"初选送入 {initial['submitted']} 张盘，配装器 {initial['calls']} 次请求共评估 {initial['evaluated']:,} 套次")
+                if initial['atReturnLimit']:
+                    details.append('已触及单次候选返回上限')
             if profile.get('simultaneous') and 'availableBuilds' in scope:
                 details.append(f"扣除前序占用后可选 {scope['availableBuilds']} 套")
             if scope.get('limited'):
@@ -645,6 +657,44 @@ class ManagerInterface(BaseInterface):
         if conflict: raise ValueError(conflict)
         self.cfg['profiles'].append(profile)
         self.edit_cfg()
+
+    def refresh_profile(self):
+        from .optimizer import refreshed_profile, saved_targets
+        index = self.teams.currentRow()
+        if index < 0 or self.equip_busy:
+            return
+        account = self.root
+        if str(self.ctx.current_instance_idx) != account.name:
+            self.on_interface_shown()
+            return
+        cfg_hash = self.config_hash
+        profile = self.cfg['profiles'][index]
+        with self.optimizer_session() as endpoint:
+            updated, changed = refreshed_profile(profile, saved_targets(endpoint))
+        if not changed:
+            QMessageBox.information(self, profile['name'], '所选配队已与配装器目标一致。')
+            return
+        question = QMessageBox(self)
+        question.setWindowTitle('更新所选配队')
+        question.setText(f"将「{profile['name']}」更新为配装器里「{updated['request']['characterName']}」的当前目标？")
+        question.setInformativeText('保留分组、出场选择、输出窗口和满暴容差。变更字段：' + '、'.join(changed))
+        different = {key: {'原值': profile['request'].get(key), '新值': updated['request'].get(key)} for key in changed}
+        question.setDetailedText(pretty(different))
+        accept = question.addButton('更新配队', QMessageBox.ButtonRole.AcceptRole)
+        cancel = question.addButton('取消', QMessageBox.ButtonRole.RejectRole)
+        question.setDefaultButton(cancel)
+        question.exec()
+        if question.clickedButton() is not accept:
+            return
+        if self.root != account or str(self.ctx.current_instance_idx) != account.name or self.config_hash != cfg_hash:
+            raise ValueError('账号或配置已变化，请重新选择方案。')
+        profiles = list(self.cfg['profiles'])
+        profiles[index] = updated
+        save_config(account, dict(self.cfg, profiles=profiles), cfg_hash)
+        self.reload()
+        if (account/'inventory.json').is_file():
+            self.calculate()
+        self.refresh_teams(updated['name'])
 
     def calculate(self):
         preview(self.root,wiki_path(),refresh=False); self.reload()

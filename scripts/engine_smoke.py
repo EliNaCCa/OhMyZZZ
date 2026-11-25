@@ -77,6 +77,7 @@ def smoke(source):
             pool = candidate_pool(endpoint,profile,pieces+[other],current)
             winner = select_candidate(pool,profile,current)
             assert winner['ids'][2]=='cd' and len({r['rawOutput'] for r in pool})==2
+            assert winner['optimizerScope']==dict(submitted=7, calls=2, evaluated=4, atReturnLimit=False)
             threshold = dict(request=dict(target,baseCritRate=97.59999), tolerancePct=.5)
             chosen = select_candidate(candidate_pool(endpoint,threshold,pieces,set()),threshold,set())
             assert chosen['bestNearFullOutput'] is None and chosen['critRate']==97.59999

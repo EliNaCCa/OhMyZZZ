@@ -102,6 +102,26 @@ def saved_targets(url):
     return choices
 
 
+def refreshed_profile(profile, choices):
+    """Refresh one imported snapshot without rebinding other teams sharing its origin."""
+    source_id = profile.get('sourceId')
+    matches = [choice for choice in choices if source_id and choice.get('sourceId') == source_id]
+    if len(matches) != 1:
+        raise ValueError('未找到唯一的原配装器目标。可将当前配装器目标保存为新方案。')
+    source = matches[0]
+    original, updated = profile['request'], source['request']
+    if updated['characterName'] != original['characterName'] or source['agent'] != updated['characterName']:
+        raise ValueError('此目标对应的角色已变化，请另存为新方案。')
+    if source['requiresClaimMapping']:
+        raise ValueError('原目标要求避让配装器占用盘，请先核对占用记录。')
+    refreshed = dict(profile, request=updated)
+    from .combat_windows import window_requests
+    window_requests(refreshed)
+    changed = [key for key in sorted(original.keys() | updated.keys())
+               if key not in original or key not in updated or original[key] != updated[key]]
+    return refreshed, changed
+
+
 def number(v):
     try:
         n = Decimal(str(v))
@@ -268,6 +288,28 @@ def _window_pool(url, profile, discs, current, request, exact=False):
 
 
 def candidate_pool(url, profile, discs, current, request=call):
+    # Keep the upstream counts of unrestricted inventory queries. An evaluation
+    # of the current six discs (or a single multi-window candidate) is separate.
+    evaluations = []
+    def measured_request(endpoint, params):
+        response = request(endpoint, params)
+        if params.get('discs') is discs:
+            searched = response.get('searchedCombinations')
+            if type(searched) is int and searched >= 0:
+                evaluations.append((searched, len(response['results']), params['topN']))
+        return response
+
+    builds = _profile_candidates(url, profile, discs, current, measured_request)
+    if evaluations:
+        scope = dict(submitted=len(discs), calls=len(evaluations),
+                     evaluated=sum(searched for searched, _, _ in evaluations),
+                     atReturnLimit=any(returned >= limit for _, returned, limit in evaluations))
+        for build in builds:
+            build['optimizerScope'] = scope
+    return builds
+
+
+def _profile_candidates(url, profile, discs, current, request):
     from .combat_windows import window_requests, combine
     windows = window_requests(profile)
     if not windows:

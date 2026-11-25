@@ -8,6 +8,7 @@ from uuid import uuid4
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from drive_disc_manager.early_entry import run
 from drive_disc_manager.store import read, save
+from drive_disc_manager.task_order import account_order
 
 
 def smoke():
@@ -37,6 +38,16 @@ def smoke():
         def closed(_):
             raise ValueError('game closed')
         assert run(ctx, args, closed) == 2 and read(receipt)['reason'] == 'game closed' and len(calls) == 1
+        native = NS(app_id='drive_disc_dismantle', enabled=True)
+        group = NS(app_list=[native, item])
+        ctx.app_group_manager.get_one_dragon_group_config = lambda _: group
+        ctx.run_context.get_config = lambda app_id, idx, group_id: NS(dismantle_level='A及以下', dismantle_abandon=True)
+        flags = dict(afterEarly=True, applyMarkers=True)
+        assert '排在标记前' in account_order(ctx, 1, flags)
+        group.app_list.reverse()
+        assert '两项本轮均执行' in account_order(ctx, 1, flags)
+        item.enabled = False
+        assert '等内置拆解下次实际运行' in account_order(ctx, 1, flags)
     print('PASS early account receipt, replay, daily entry, and game exit')
 
 
