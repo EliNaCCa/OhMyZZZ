@@ -8,6 +8,7 @@ from .store import digest, read, save
 
 GUIDE = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTj2PaPq6Py_1B5fsOPj_Moc-tN_7mut7fICczI6lz1njyEIAInTnfB7lAraX4pYCRGNbaHGlIbFZ90/pub'
 MATRIX = 'https://docs.google.com/spreadsheets/d/1ZIZa4zg0zkkPIP2TrHQaMw9XzjJLvO2iOpUAyREDFwY/export?format=csv&gid=133245023'
+BUILDS_GID = '1031525415'
 ELEMENTS = {'physical','electric','fire','ice','ether','wind','lumiflux'}
 STATS = {'ATK':'atk_', 'HP':'hp_', 'DEF':'def_', 'CRIT Rate':'crit_', 'CRIT DMG':'crit_dmg_',
          'Anomaly Proficiency':'anomProf', 'PEN Ratio':'pen_', 'Anomaly Mastery':'anomMas_',
@@ -95,18 +96,48 @@ def guide_fields(raw):
     return result
 
 
+def build_fields(raw):
+    records = csv.DictReader(io.StringIO(raw))
+    columns = records.fieldnames or []
+    required = {'Name', 'Disc 4', 'Disc 5', 'Disc 6', 'Substats', '4pc_0', 'All 2pc_0'}
+    if not required.issubset(columns) or len(columns) != len(set(columns)):
+        raise ValueError('Prydwen Builds 的角色、套装或词条表头发生变化')
+    groups = {key: [col for col in columns if re.fullmatch(pattern, col)]
+              for key, pattern in [('sets4', r'4pc_[0-9]+'), ('sets2', r'All 2pc_[0-9]+')]}
+    result = {}
+    for record in records:
+        if not any(record.values()):
+            continue
+        name = (record['Name'] or '').strip()
+        prefix = 'build/' + name + '/'
+        if not name or '/' in name or prefix + 'sets4' in result:
+            raise ValueError('Prydwen Builds 角色名缺失或重复 · '+name)
+        for group, fields in groups.items():
+            result[prefix + group] = sorted({s.strip().replace(' ', '') for col in fields
+                for s in (record[col] or '').split(',') if s.strip()})
+        for slot in '456':
+            raw_stats = (record['Disc '+slot] or '').strip()
+            result[prefix+'slot'+slot] = [raw_stats] if raw_stats else []
+        subs = (record['Substats'] or '').strip()
+        result[prefix+'subs'] = [subs] if subs else []
+    if not result:
+        raise ValueError('Prydwen Builds 缺少角色记录')
+    return result
+
+
 def sources():
     index = fetch(GUIDE+'html')
     tabs = [(name,gid) for name,gid in re.findall(r'items[.]push[(][{]name:\s*"([^"]+)"[^}]*?gid:\s*"([0-9]+)"', index) if name.lower() in ELEMENTS]
     if not {'Physical','Fire','Ice','Electric','Ether'}.issubset({name for name,_ in tabs}):
         raise ValueError('攻略表页签变化')
     fields = matrix_fields(fetch(MATRIX))
+    fields.update(build_fields(fetch(MATRIX.rsplit('=',1)[0]+'='+BUILDS_GID)))
     with ThreadPoolExecutor(max_workers=3) as pool:
         urls = [GUIDE+'?single=true&output=csv&gid='+gid for _, gid in tabs]
         for data in pool.map(fetch, urls):
             for key, value in guide_fields(data).items():
                 fields[key] = sorted(set(fields.get(key, [])+value))
-    return fields, dict(tabs)
+    return fields, dict(tabs, **{'Prydwen Builds':BUILDS_GID, 'Set+Main':'133245023'})
 
 
 def effective(remote, override=None):

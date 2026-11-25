@@ -48,7 +48,13 @@ def apply_reserves(rows, cfg):
         for purpose, (_, count, stats) in limits.items():
             def rank(row):
                 rolls = sum(row['rolls'].get(stat, 0) for stat in stats)
-                return rolls, (15 - row['level']) // 3, row['fp']
+                # For the inherited general quota, use the best matching role. A
+                # player's explicit stat list still ranks by their chosen stats.
+                base_rank = (rolls, (15 - row['level']) // 3, row['fp'])
+                if purpose == '通用' and stats is DEFAULT_STATS:
+                    best_role = max(row.get('roleRolls', {}).values(), default=rolls)
+                    return (bool(row['recommendations']), best_role, *base_rank)
+                return base_rank
             picks = sorted(eligible, key=rank, reverse=True)[:count]
             for row in picks:
                 row['reasons'].append('备用 · ' + purpose)

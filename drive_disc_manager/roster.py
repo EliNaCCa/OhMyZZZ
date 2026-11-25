@@ -1,0 +1,171 @@
+"""Join explicitly identified scanner characters, build sets and guide recommendations."""
+import re
+from collections import defaultdict
+
+from .subscriptions import ELEMENTS, STATS, effective
+
+
+def identifier(value):
+    return ''.join(c for c in value.casefold() if c.isalnum())
+
+
+# Sheet labels describe distinct agents, including alternate forms of Billy and Anby.
+# Join only a whole known name or alias, never a first-name substring.
+_NAMES = {
+    'Alice': ['Alice Thymefield'], 'Anby': ['Anby Demara'], 'Anby: Soldier 0': ['Soldier 0 - Anby'],
+    'Anton': ['Anton Ivanov'], 'Ben': ['Ben Bigger'], 'Billy': ['Billy Kid'],
+    'Billy - Starlight': ['Starlight - Billy Kid'], 'Burnice': ['Burnice White'],
+    'Caesar': ['Caesar King'], 'Claret': ['Claret Flint'], 'Corin': ['Corin Wickes'],
+    'Ellen': ['Ellen Joe'], 'Evelyn': ['Evelyn Chevalier'], 'Grace': ['Grace Howard'],
+    'Harumasa': ['Asaba Harumasa'], 'Hugo': ['Hugo Vlad'], 'Jane Doe': ['Jane'],
+    'Koleda': ['Koleda Belobog'], 'Lucia': ['Lucia Elowen'],
+    'Lucy': ['Luciana Auxesis Theodoro de Montefio (Lucy)'], 'Lycaon': ['Von Lycaon'],
+    'Manato': ['Komano Manato'], 'Miyabi': ['Hoshimi Miyabi'], 'Nekomata': ['Nekomiya Mana'],
+    'Nicole': ['Nicole Demara'], 'Norma': ['Norma Hollowell'], 'Orphie & Magus': ['Orphie Magnusson & Magus'],
+    'Phoenix': ['Phoenix Reffaella'], 'Piper': ['Piper Wheel'], 'Pulchra': ['Pulchra Fellini'],
+    'Remielle': ['Remielle Dan'], 'Rina': ['Alexandrina Sebastiane (Rina)'], 'Roxy': ['Roxy Ifrita Pryce'],
+    'Seed': ['Flora (Seed)'], 'Seth': ['Seth Lowell'], 'Sigrid': ["Sigrid de L'Azur"],
+    'Soldier 11': ['Soldier 11 (Harin)'], 'Velina': ['Velina Airgid'], 'Vivian': ['Vivian Banshee'],
+    'Yanagi': ['Tsukishiro Yanagi'], 'Yidhari': ['Yidhari Murphy'], 'Yuzuha': ['Ukinami Yuzuha'],
+}
+ALIASES = {identifier(alias): identifier(name) for name, aliases in _NAMES.items() for alias in aliases}
+
+
+def agent_id(name):
+    key = identifier(name)
+    return ALIASES.get(key, key)
+
+
+def roster_catalog(z, fields, cfg, wiki, known_owned=()):
+    """A stable list for both settings and planning. Unknown identities remain visible."""
+    entries = {}
+    def entry(name):
+        key = agent_id(name)
+        return entries.setdefault(key, dict(key=key, name=name, label=name, guides=[], builds=[], owned=False))
+
+    for field in sorted(fields.keys() | cfg.get('overrides', {}).keys()):
+        parts = field.split('/')
+        if len(parts) != 3 or parts[0] not in ('build', 'guide'):
+            continue
+        name = parts[1]
+        item = entry(name)
+        bucket = item['builds' if parts[0] == 'build' else 'guides']
+        if name not in bucket:
+            bucket.append(name)
+        if parts[0] == 'build':
+            item.update(name=name, label=name)
+
+    scan_keys = {}
+    for uid, agent in wiki.get('character', {}).items():
+        name = agent.get('EN')
+        if not isinstance(name,str) or not name:
+            continue
+        item = entry(name)
+        item['label'] = agent.get('CHS') or item['name']
+        for alias in (uid, name, agent.get('code'), agent.get('CHS')):
+            if isinstance(alias,str) and alias:
+                scan_keys[identifier(alias)] = item['key']
+
+    scanned = [c.get('key') for c in z.get('characters', []) if isinstance(c,dict)]
+    for raw in [*known_owned, *scanned]:
+        if isinstance(raw,str) and raw.strip():
+            resolved = scan_keys.get(identifier(raw))
+            item = entries[resolved] if resolved else entry(raw)
+            item['owned'] = True
+
+    future = set(cfg.get('futureAgents', []))
+    excluded = set(cfg.get('excludedAgents', []))
+    for key in future | excluded:
+        if key not in entries:
+            entry(key)
+    for key, item in entries.items():
+        item['future'] = key in future
+        item['selected'] = item['future'] or (cfg.get('includeOwned', True) and item['owned'] and key not in excluded)
+    return sorted(entries.values(), key=lambda i:(not i['selected'], not i['owned'], i['name'].casefold()))
+
+
+_MAIN = {identifier(key):value for key,value in STATS.items()}
+_MAIN.update(cr='crit_', cd='crit_dmg_', ap='anomProf', am='anomMas_', er='energyRegen_', pen='pen_')
+_MAIN.update({e:e+'_dmg_' for e in ELEMENTS})
+
+
+def parse_main(values):
+    stats, unknown = set(), not values
+    for value in values:
+        for part in re.split(r'[,><=/|\n]+', value):
+            if not part.strip():
+                continue
+            if part.strip() in STATS.values():
+                stats.add(part.strip())
+                continue
+            token = identifier(part.translate(str.maketrans('', '', '¹²³⁴⁵')))
+            stat = _MAIN.get(token)
+            if stat:
+                stats.add(stat)
+            else:
+                unknown = True
+    return stats, unknown or not stats
+
+
+def parse_substats(values):
+    aliases = {
+        'cr':'crit_', 'critrate':'crit_', 'cd':'crit_dmg_', 'critdmg':'crit_dmg_',
+        'ap':'anomProf', 'anomalyproficiency':'anomProf', 'pen':'pen', 'flatpen':'pen',
+        'atk':'atk', 'atk%':'atk_', 'flatatk':'atk', 'hp':'hp', 'hp%':'hp_',
+        'def':'def', 'def%':'def_',
+    }
+    stats = set()
+    for value in values:
+        for part in re.split(r'[,><=/|\n]+',value):
+            atom = re.sub(r'\([^()]*\)', '', part).strip().casefold().replace(' ', '')
+            stat = aliases.get(atom, aliases.get(atom.rstrip('%')))
+            if stat:
+                stats.add(stat)
+    return stats
+
+
+def compile_roster(catalog, fields, overrides):
+    by_set, unresolved = defaultdict(list), []
+    for item in catalog:
+        if not item['selected']:
+            continue
+        sets = defaultdict(list)
+        slot_rules = defaultdict(list)
+        preferred = set()
+        for source, names in [('build',item['builds']), ('guide',item['guides'])]:
+            for name in names:
+                prefix = f'{source}/{name}/'
+                sub_field = prefix+'subs'
+                preferred.update(parse_substats(effective(fields.get(sub_field),overrides.get(sub_field)) or []))
+                if source == 'build':
+                    for group in ('sets4','sets2'):
+                        field = prefix+group
+                        for value in effective(fields.get(field), overrides.get(field)) or []:
+                            sets[identifier(value)].append(field)
+                for slot in '456':
+                    field = prefix+'slot'+slot
+                    values = effective(fields.get(field),overrides.get(field)) or []
+                    stats, uncertain = parse_main(values)
+                    slot_rules[slot].append((field,stats,uncertain))
+        if not sets:
+            unresolved.append(item['label'])
+        for key, set_fields in sets.items():
+            by_set[key].append((item['label'],set_fields,slot_rules,preferred))
+    return by_set, unresolved
+
+
+def explain(row, by_set, unresolved):
+    fixed = {'1':'hp','2':'atk','3':'def'}.get(row['slot']) == row['main']
+    for label, set_fields, slots, preferred in by_set.get(identifier(row['set']), ()):
+        matched = [field for field, stats, _ in slots.get(row['slot'], ()) if row['main'] in stats]
+        if fixed or matched:
+            evidence = '、'.join([*set_fields,*matched])
+            row['recommendations'].append(f'角色留盘 · {label} · {row["main"]} · {evidence}')
+            if preferred:
+                rolls = sum(row['rolls'].get(stat,0) for stat in preferred)
+                row.setdefault('roleRolls',{})[label] = rolls
+                row['explanation'].append(f'{label}适用副词条合计 {rolls} 档')
+        elif any(unknown for _, _, unknown in slots.get(row['slot'], ())):
+            row['review'].append('角色主词条待核 · '+label)
+    if unresolved:
+        row['review'].append('角色套装待核 · '+'、'.join(unresolved))

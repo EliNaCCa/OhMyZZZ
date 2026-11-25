@@ -5,12 +5,15 @@ from .allocation import assign_group
 from .store import digest, fingerprint, inventory, roll_base
 from .subscriptions import effective
 from .reserve_policy import apply_reserves
+from .roster import compile_roster, explain, roster_catalog
 
 
-def plan(z,cfg,rules,names,fetch_candidates=candidate_pool):
+def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_owned=()):
     ds, counts = inventory(z)
     base = roll_base(z)
     fields = rules.get('fields',{})
+    catalog = roster_catalog(z, fields, cfg, wiki or {}, known_owned)
+    by_set, unresolved = compile_roster(catalog, fields, cfg['overrides'])
     by_fp = {fingerprint(d):d for d in ds}
     inputs = {fp:as_disc(d,names,base) for fp,d in by_fp.items() if counts[fp]==1 and not d.get('trash') and d.get('markState')!='unknown'}
     enabled = [p for p in cfg['profiles'] if p.get('enabled',True)]
@@ -69,6 +72,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool):
         row['field'] = key
         if main in (allowed or []):
             row['recommendations'].append('套装主词条规则 · '+key)
+        explain(row, by_set, unresolved)
         for agent in cfg['roster']:
             if row['set'] not in agent.get('sets',[]):
                 continue
@@ -94,4 +98,5 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool):
             continue
         row['decision'] = '保留' if row['reasons'] else ('待复核' if row['review'] else '弃置候选')
     return dict(inventory=digest(z), rules=rules.get('version'), configuration=digest(cfg), assignments=assignments,
-                issues=issues, reserveCoverage=coverage, counts=dict(Counter(r['decision'] for r in rows)), discs=rows)
+                issues=issues, roster=[a for a in catalog if a['selected']], reserveCoverage=coverage,
+                counts=dict(Counter(r['decision'] for r in rows)), discs=rows)

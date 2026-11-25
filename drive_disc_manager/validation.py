@@ -9,7 +9,12 @@ def validate(value):
     quota(cfg['reserve'])
     for key in ('reserve_rules','profiles','pins','roster'):
         if not isinstance(cfg[key],list): raise ValueError(key+' 应为数组')
-    for key in ('protect15','trimRecommended','auto_sync','run_scanner','afterEarly','applyMarkers'):
+    from .roster import agent_id
+    for key in ('futureAgents','excludedAgents'):
+        values = cfg[key]
+        if not isinstance(values,list) or any(not isinstance(v,str) or not v or agent_id(v)!=v for v in values):
+            raise ValueError(key+' 应保存角色名单页的角色标识')
+    for key in ('protect15','trimRecommended','auto_sync','run_scanner','afterEarly','applyMarkers','includeOwned'):
         if type(cfg[key]) is not bool: raise ValueError(key+' 应为布尔值')
     for r in cfg['reserve_rules']:
         quota(r['count'])

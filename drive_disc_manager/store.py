@@ -99,7 +99,7 @@ def inventory(z):
 def defaults():
     return dict(reserve=2, reserve_rules=[], trimRecommended=False, pins=[], protect15=True, profiles=[], overrides={},
                 auto_sync=True, run_scanner=False, afterEarly=False, applyMarkers=False, fieldProfile='',
-                optimizer_url='', roster=[], aliases={})
+                optimizer_url='', roster=[], aliases={}, includeOwned=True, futureAgents=[], excludedAgents=[])
 
 
 def config(root):
@@ -112,5 +112,14 @@ def import_inventory(root, path):
         raise ValueError('部分扫描文件')
     z = read(path)
     inventory(z)
+    # An account keeps unlocked agents. A later disc-only export has an empty
+    # characters array and should not retire agents seen in earlier full scans.
+    keys = set(read(root/'owned-agents.json', []))
+    previous = read(root/'inventory.json', {})
+    for snapshot in (previous, z):
+        keys.update(c['key'] for c in snapshot.get('characters', [])
+                    if isinstance(c,dict) and isinstance(c.get('key'),str) and c['key'].strip())
+    if keys:
+        save(root/'owned-agents.json', sorted(keys))
     save(root / 'inventory.json', z)
     return len(z['discs'])

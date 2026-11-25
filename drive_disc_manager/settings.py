@@ -6,7 +6,8 @@ from .service import preview
 from .subscriptions import sync
 from .manager_app import wiki_path
 from .drive_disc_manager_const import APP_ID, APP_NAME
-from .reserve_policy import matching_rules, SELECTORS
+from .reserve_policy import DEFAULT_STATS, matching_rules, SELECTORS
+from .roster import roster_catalog
 
 
 def pretty(value):
@@ -42,6 +43,17 @@ class ManagerDialog(QDialog):
         for title,callback in [('更新来源',self.update_rules),('保留本地',lambda:self.resolve('local')),('采用上游',lambda:self.resolve('remote')),('合并',lambda:self.resolve('union')),('编辑字段',self.edit_rule)]:
             self.button(bar,title,callback)
         self.fields = self.grid(['规则字段','远端值','本地覆盖','冲突 · 旧值 → 新值']); box.addWidget(self.fields)
+        page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'角色留盘')
+        self.owned_toggle = QCheckBox('自动纳入本账号扫描到的角色')
+        self.owned_toggle.clicked.connect(self.set_include_owned)
+        box.addWidget(self.owned_toggle)
+        bar = QHBoxLayout(); box.addLayout(bar)
+        self.button(bar,'纳入所选角色',lambda:self.select_roster(True))
+        self.button(bar,'移出所选角色',lambda:self.select_roster(False))
+        self.agent_summary = QLabel(); box.addWidget(self.agent_summary)
+        self.agent_table = self.grid(['角色','账号扫描','留盘','订阅角色名','套装来源'])
+        self.agent_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        box.addWidget(self.agent_table)
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'我的配队')
         bar = QHBoxLayout(); box.addLayout(bar)
         self.button(bar,'从配装器保存为配队',self.import_profile)
@@ -161,6 +173,7 @@ class ManagerDialog(QDialog):
         self.fill(self.fields,[(k,fields.get(k,''),self.cfg['overrides'].get(k,''),conflicts.get(k,'')) for k in self.keys])
         self.status.setText(f"上次预览 {self.report.get('counts',{})}　待处理规则冲突 {len(conflicts)}　"+' / '.join(self.report.get('issues',[])+self.report.get('warnings',[])))
         self.refresh_teams()
+        self.refresh_roster()
         field = self.cfg.get('fieldProfile')
         receipt = read(self.root/'equip-result.json', {})
         parts = [f'下次运行出场方案 · {field}' if field else '只计算配装']
@@ -169,6 +182,45 @@ class ManagerDialog(QDialog):
         elif receipt.get('status') in ('checking','interrupted'):
             parts.append('上次换装待核对 · '+receipt.get('error','下次从实际穿戴情况继续'))
         self.equip_status.setText('　｜　'.join(parts))
+
+    def refresh_roster(self):
+        self.owned_toggle.setChecked(self.cfg['includeOwned'])
+        inventory = read(self.root/'inventory.json', {})
+        fields = self.rules.get('fields', {})
+        self.agents = roster_catalog(inventory, fields, self.cfg, read(wiki_path(), {}),
+                                     read(self.root/'owned-agents.json', []))
+        def display(agent):
+            selected = '手动纳入' if agent['future'] else ('自动纳入' if agent['selected'] else '未纳入')
+            return (agent['label'], '已拥有' if agent['owned'] else '未扫描到', selected,
+                    ' / '.join(dict.fromkeys(agent['builds']+agent['guides'])),
+                    'Prydwen Builds' if agent['builds'] else '套装待核')
+        self.fill(self.agent_table,[display(agent) for agent in self.agents])
+        count = sum(a['selected'] for a in self.agents)
+        owned = sum(a['owned'] for a in self.agents)
+        self.agent_summary.setText(f'已纳入 {count} 名，扫描识别 {owned} 名。可多选准备培养的角色。')
+
+    def set_include_owned(self, enabled):
+        self.cfg['includeOwned'] = enabled
+        self.edit_cfg()
+
+    def select_roster(self, include):
+        selected = self.agent_table.selectionModel().selectedRows()
+        if not selected:
+            return
+        future = set(self.cfg['futureAgents'])
+        excluded = set(self.cfg['excludedAgents'])
+        for index in selected:
+            agent = self.agents[index.row()]
+            key = agent['key']
+            if include:
+                excluded.discard(key)
+                if not (agent['owned'] and self.cfg['includeOwned']):
+                    future.add(key)
+            else:
+                future.discard(key)
+                excluded.add(key)
+        self.cfg.update(futureAgents=sorted(future), excludedAgents=sorted(excluded))
+        self.edit_cfg()
 
     def refresh_teams(self, selected=None):
         profiles = self.cfg['profiles']
@@ -338,7 +390,9 @@ class ManagerDialog(QDialog):
         mode,ok=QInputDialog.getItem(self,'同类备用数量','此类别的订阅推荐盘',modes,int(trim),False)
         if not ok: return
         stats = limits[purpose][2] if purpose in limits else {'偏暴击':['crit_'],'偏暴伤':['crit_dmg_']}[purpose]
-        rule = dict(**selectors, purpose=purpose, count=None if count<0 else count, stats=list(stats),trimRecommended=mode==modes[1])
+        rule = dict(**selectors, purpose=purpose, count=None if count<0 else count,trimRecommended=mode==modes[1])
+        if stats is not DEFAULT_STATS:
+            rule['stats'] = list(stats)
         def replaced(old):
             return all(str(old.get(k,''))==v for k,v in selectors.items()) and (old.get('purpose') or '通用')==purpose
         self.cfg['reserve_rules'] = [old for old in self.cfg['reserve_rules'] if not replaced(old)] + [rule]
@@ -351,7 +405,11 @@ class ManagerDialog(QDialog):
             self.reserve_info.setText(f"调整前 {before['kept']} 张 → 调整后 {after['kept']} 张　｜　"+self.reserve_info.text())
 
     def update_rules(self):
-        sync(self.root,self.cfg); self.reload()
+        sync(self.root, self.cfg)
+        if (self.root/'inventory.json').is_file():
+            self.calculate()
+        else:
+            self.reload()
 
     def edit_rule(self):
         i=self.fields.currentRow()

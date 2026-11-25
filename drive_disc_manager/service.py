@@ -15,12 +15,12 @@ def preview(root, wiki=None, refresh=True):
             rules = sync(root,cfg)
         except (ValueError, OSError) as exc:
             warnings.append('订阅失败，使用最近成功版本 · '+str(exc))
-    names = {}
-    if wiki and Path(wiki).is_file():
-        names = equipment_names(read(wiki))
+    dictionary = read(wiki) if wiki and Path(wiki).is_file() else {}
+    names = equipment_names(dictionary)
     names.update(cfg.get('aliases',{}))
     manual = [fp for fp, entry in read(root/'markers.json', {}).items() if entry.get('state')=='manual-keep']
-    report = plan(z,dict(cfg,pins=sorted(set(cfg['pins'])|set(manual))),rules,names)
+    report = plan(z,dict(cfg,pins=sorted(set(cfg['pins'])|set(manual))),rules,names,wiki=dictionary,
+                  known_owned=read(root/'owned-agents.json', []))
     report['configuration'] = digest(cfg)
     report.update(warnings=warnings,generated=time.time(), mode='preview')
     save(root/'preview.json',report)
