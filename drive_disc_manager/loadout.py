@@ -43,8 +43,10 @@ def target_loadout(cfg, report, snapshot, name, *, preview_only=False, names=Non
         if len(ids) != 6 or assignment.get('error'):
             raise ValueError(profile['name']+' 缺少完整六盘方案')
         for slot, fp in enumerate(ids, 1):
-            if counts.get(fp) != 1 or fp in claimed:
-                raise ValueError('目标盘不唯一或同时出场的方案重盘')
+            if counts.get(fp, 0) > 1:
+                raise ValueError(f"「{profile['name']}」的 {slot} 号位有 {counts[fp]} 张盘属性相同，无法确定要换哪张")
+            if fp not in by_fp or fp in claimed:
+                raise ValueError(f"请核对「{profile['name']}」的 {slot} 号位，目标盘已缺失或与同场方案重盘")
             disc = by_fp[fp]
             if disc.get('ownerState') == 'unknown':
                 raise ValueError(f'{agent} 的 {slot} 号盘穿戴者待复核，请重新扫描')
@@ -57,7 +59,7 @@ def target_loadout(cfg, report, snapshot, name, *, preview_only=False, names=Non
             targets.append(dict(profile=profile['name'],agent=agent,slot=slot,fp=fp,
                                 selectionFp=fingerprint(dict(disc, setKey=keys[disc['setKey']])),
                                 location=disc.get('location',''),ownerState=disc.get('ownerState','legacy'),
-                                set=disc['setKey'],main=disc['mainStatKey'],
+                                set=disc['setKey'],main=disc['mainStatKey'],level=disc['level'],rarity=disc['rarity'],
                                 observedValues=observed))
     return targets
 

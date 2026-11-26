@@ -26,7 +26,7 @@ def pretty(value):
 
 class ManagerInterface(BaseInterface):
     probe_finished = Signal(object, str)
-    equip_finished = Signal(str, str, str)
+    equip_finished = Signal(str, str, str, object)
     rules_finished = Signal(object, str)
     preview_finished = Signal(object, str)
 
@@ -143,6 +143,7 @@ class ManagerInterface(BaseInterface):
         self.calculate_buttons.append(self.button(engine_bar,'计算配装',self.start_preview,primary=True))
         self.apply_button = self.button(engine_bar,'一键换装',self.apply_current)
         self.equip_busy = False
+        self.equip_review = None
         self.equip_finished.connect(self.finish_equip, Qt.ConnectionType.QueuedConnection)
         self.teams = self.grid(['方案','同时出场组','输出容差','实战暴击率','输出差距','选择原因'])
         self.teams.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -236,6 +237,7 @@ class ManagerInterface(BaseInterface):
         # OneDragon caches embedded pages by navigation stack, not by account.
         root = self.ctx.get_plugin_data_dir(APP_ID) / str(self.ctx.current_instance_idx)
         if root != getattr(self, 'root', None):
+            self.equip_review = None
             self.tabs.setCurrentIndex(0)
         self.root = root
         self.sync_button.setEnabled(root not in self.rule_updates)
@@ -381,6 +383,11 @@ class ManagerInterface(BaseInterface):
         for key, spin in self.limits.items():
             with QSignalBlocker(spin): spin.setValue(self.cfg[key])
         self.config_hash = digest(self.cfg)
+        if self.equip_review:
+            request = self.equip_review['request']
+            if (request['configuration'] != self.config_hash or request['rules'] != self.rules.get('version')
+                    or str(request['account']) != self.root.name):
+                self.equip_review = None
         inventory = read(snapshot_path(self.root,self.cfg), {})
         wiki = read(wiki_path(), {})
         from .roster import preview_bindings
@@ -530,12 +537,15 @@ class ManagerInterface(BaseInterface):
         self.profile_menu.setEnabled(bool(selected) and not self.equip_busy)
         self.refresh_target_button.setEnabled(bool(selected.get('sourceId')) and not self.equip_busy)
         ready = not self.preview_stale and selected.get('enabled',True) and self.report.get('assignments',{}).get(selected.get('name'),{}).get('ids')
+        reviewing = self.equip_review and self.equip_review['request']['name'] == selected.get('name')
+        self.apply_button.setText('查看换装变化' if reviewing else '一键换装')
         from .loadout import fielded_profiles
         lineup = fielded_profiles(self.cfg, selected['name']) if selected and selected.get('enabled', True) else []
         unbound = [p['name'] for p in lineup if not p.get('agentKey') or p['agentKey'] != self.preview_bindings.get(p['name'])]
-        self.apply_button.setEnabled(bool(ready) and not unbound and not self.equip_busy and self.preview_job is None)
+        self.apply_button.setEnabled(bool(ready or reviewing) and not unbound and not self.equip_busy and self.preview_job is None)
         binding_note = '请同步角色目标 · ' + '、'.join(unbound) if unbound else ''
-        self.apply_button.setToolTip(binding_note or ('查看要换的盘' if ready else '先计算配装'))
+        hint = '查看要换的盘' if ready else '先计算配装'
+        self.apply_button.setToolTip(binding_note or ('对照上次确认和游戏重扫的配装' if reviewing else hint))
         self.fill(self.slots,[])
         self.fill(self.panel_stats,[])
         self.panel_note.setText('暂无面板对比'); self.panel_note.show()
@@ -712,56 +722,82 @@ class ManagerInterface(BaseInterface):
         self.refresh_teams(profile['name'])
 
     def apply_current(self):
-        from .manual_equip import confirmation, run_confirmed
+        from .manual_equip import SelectionChanged, confirmation, run_confirmed
         account, root = self.ctx.current_instance_idx, self.root
         index = self.teams.currentRow()
         if self.equip_busy or self.preview_job is not None or not self.ctx.run_context.is_context_stop or str(account) != root.name:
             raise ValueError('请在当前账号的一条龙空闲时应用配队')
         if not 0 <= index < len(self.cfg['profiles']):
             return
-        if self.report.get('rules') != read(root/'rules.json',{}).get('version'):
+        name = self.cfg['profiles'][index]['name']
+        review = self.equip_review if self.equip_review and self.equip_review['request']['name'] == name else None
+        rules_version = read(root/'rules.json',{}).get('version')
+        if (review['request']['rules'] if review else self.report.get('rules')) != rules_version:
             self.reload()
             raise ValueError('规则已更新，请重新计算后应用配队')
-        name = self.cfg['profiles'][index]['name']
         from .loadout import verify_bindings
         current_cfg, wiki = config(root), read(wiki_path(), {})
         verify_bindings(current_cfg, name, wiki)
         sets = equipment_names(wiki) | current_cfg.get('aliases',{})
-        request, targets = confirmation(account, name, current_cfg, self.report, read(snapshot_path(root,current_cfg)), preview_only=True, names=sets)
-        dialog = QDialog(self); dialog.setWindowTitle('应用当前配队'); dialog.resize(720,420)
+        if review:
+            request, targets = review['request'], review['after']
+            if request['configuration'] != digest(current_cfg) or request['account'] != account:
+                self.reload()
+                raise ValueError('配队配置已变化，请重新计算')
+        else:
+            request, targets = confirmation(account, name, current_cfg, self.report, read(snapshot_path(root,current_cfg)), preview_only=True, names=sets)
+        dialog = QDialog(self); dialog.setWindowTitle('查看换装变化' if review else '应用当前配队'); dialog.resize(760,440)
         panel = QVBoxLayout(dialog)
-        panel.addWidget(BodyLabel(f'{name} · {len(targets)} 个号位'))
         from .stat_reading import display_values
-        agents = {p['name']:p.get('request',{}).get('characterName') for p in self.cfg['profiles']}
-        stat_header = '主副词条（换算值）' if current_cfg['inventorySource'] == 'network' else '主副词条'
+        agents = {p['name']:p.get('request',{}).get('characterName') for p in current_cfg['profiles']}
+        owner_names = {a.get('code') or str(a.get('EN', '')).replace(' ', ''):a['CHS']
+                       for a in wiki.get('character', {}).values() if isinstance(a.get('CHS'), str)}
+        if review:
+            from .equip_review import changed_slots
+            changes = changed_slots(review['before'], targets, sets, owner_names)
+            panel.addWidget(BodyLabel(f'{name} · {len(set(row[0] for row in changes))} 个号位有变化'))
+            table = self.grid(['号位','变动项','上次确认','游戏重扫']); self.fill(table, changes)
+            table.resizeColumnsToContents(); panel.addWidget(table)
+        panel.addWidget(BodyLabel(f'{name} · {len(targets)} 个号位' if not review else '最新配装'))
+        stat_header = '主副词条（换算值）' if not review and current_cfg['inventorySource'] == 'network' else '主副词条'
         table = self.grid(['方案','目标角色','号位','套装',stat_header,'当前装备者'])
         self.fill(table,[(t['profile'], agents.get(t['profile']) or t['agent'], t['slot'], sets.get(t['set'],t['set']),
-                          display_values(t['observedValues']), owner_label(t)) for t in targets])
+                          display_values(t['observedValues']), owner_names.get(owner_label(t), owner_label(t))) for t in targets])
         table.resizeColumnsToContents(); panel.addWidget(table)
-        note = BodyLabel('进入大世界后，点「重扫并换装」。')
-        note.setWordWrap(True); panel.addWidget(note)
         actions = QHBoxLayout(); panel.addLayout(actions); actions.addStretch()
-        back = self.button(actions,'返回',dialog.reject); back.setDefault(True)
+        back = self.button(actions,'返回原预览' if review else '返回',dialog.reject); back.setDefault(True)
         self.button(actions,'重扫并换装',dialog.accept).setAutoDefault(False)
         if not dialog.exec():
+            if review:
+                self.equip_review = None
+                self.reload(); self.refresh_teams(name)
             return
+        self.check_account(root)
+        self.equip_review = None
         self.equip_busy = True; self.apply_button.setEnabled(False)
         self.equip_status.setText(f'正在为「{name}」换装')
+        self.equip_status.show()
         def worker():
             error = ''
+            review_data = None
             try:
                 run_confirmed(self.ctx, request)
+            except SelectionChanged as change:
+                review_data = dict(request=change.current, before=targets, after=change.targets)
             except Exception as exc:
                 error = str(exc)
-            self.equip_finished.emit(str(root),name,error)
+            self.equip_finished.emit(str(root),name,error,review_data)
         Thread(target=worker, name='OhMyZZZ equip', daemon=True).start()
 
-    def finish_equip(self, root, name, error):
+    def finish_equip(self, root, name, error, review=None):
         self.equip_busy = False
         if str(self.root) == root and str(self.ctx.current_instance_idx) == self.root.name:
+            self.equip_review = review
             self.reload(); self.refresh_teams(name)
-            if error:
-                self.equip_status.setText(f'{name} · {error}')
+            if review or error:
+                message = error or ('重扫后配装有变化' if self.equip_review else '配队配置或规则已更新，请重新计算')
+                self.equip_status.setText(f'{name} · {message}')
+                self.equip_status.show()
         else:
             self.on_interface_shown()
 

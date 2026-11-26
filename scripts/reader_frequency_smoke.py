@@ -85,7 +85,8 @@ def smoke(home, tmp):
 
 
 def check_reader_identity(cfg, disc, exported):
-    from drive_disc_manager.manual_equip import confirmation, verify_selection
+    from drive_disc_manager.equip_review import changed_slots
+    from drive_disc_manager.manual_equip import SelectionChanged, confirmation, verify_selection
     from drive_disc_manager.network_reader import normalize
     from drive_disc_manager.planner import plan
     from drive_disc_manager.store import digest, equipment_names, fingerprint, toggle_pin
@@ -121,19 +122,27 @@ def check_reader_identity(cfg, disc, exported):
         ids = [fingerprint(d) for d in snapshot['discs'][:6]]
         return dict(configuration=digest(cfg), inventory=digest(snapshot), assignments={profile:dict(ids=ids)})
 
-    request, _ = confirmation(1, profile, cfg, selection(network), network, preview_only=True)
+    request, original = confirmation(1, profile, cfg, selection(network), network, preview_only=True)
     verify_selection(request, cfg, selection(ocr), ocr)
-    for changed in (dict(samples[0], location='Other', ownerState='worn'),
-                    dict(samples[0], observedValues=dict(samples[0]['observedValues'], main={'hp':549.0})),
-                    dict(samples[0], setKey='OtherSet')):
+    for changed, difference in [(dict(samples[0], location='Other', ownerState='worn'), ('装备者', '背包', '朱鸢')),
+                    (dict(samples[0], observedValues=dict(samples[0]['observedValues'], main={'hp':549.0})), ('主属性', '生命值 550', '生命值 549')),
+                    (dict(samples[0], setKey='OtherSet'), ('套装', zh, 'OtherSet'))]:
         revised = dict(ocr, discs=[changed, *samples[1:]])
         try: verify_selection(request, cfg, selection(revised), revised)
-        except ValueError: pass
+        except SelectionChanged as change:
+            rows = changed_slots(original, change.targets, names, {'Other':'朱鸢'})
+            assert rows == [(profile+' · 1 号位', *difference)], rows
+            verify_selection(change.current, cfg, selection(revised), revised)
+            try: verify_selection(change.current, cfg, dict(selection(revised), rules='new'), revised)
+            except SelectionChanged: raise AssertionError('old rule revision incorrectly offered for reconfirmation')
+            except ValueError: pass
+            else: raise AssertionError('old rule revision passed verification')
         else: raise AssertionError('changed equipment passed confirmation')
     duplicate = dict(ocr, discs=[*samples, dict(samples[0], setKey=en, id='other-copy')],
                      audit=dict(game_total=7, exported=7, delta=0))
     try: verify_selection(request, cfg, selection(duplicate), duplicate)
-    except ValueError: pass
+    except SelectionChanged: raise AssertionError('ambiguous target was offered for reconfirmation')
+    except ValueError as exc: assert '1 号位有 2 张盘属性相同' in str(exc)
     else: raise AssertionError('ambiguous equipment passed confirmation')
 
 

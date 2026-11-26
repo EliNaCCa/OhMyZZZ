@@ -8,22 +8,24 @@ def compact(text):
     return ''.join(unicodedata.normalize('NFKC', str(text)).split()).casefold()
 
 
-def display_values(values):
-    if not values:
-        return '词条数值待核 · 可用 OhMyZZZ 重新扫描'
+def format_stats(items):
     labels = {'hp':'生命值','atk':'攻击力','def':'防御力','crit':'暴击率','crit_dmg':'暴击伤害',
               'anomProf':'异常精通','anomMas':'异常掌控','impact':'冲击力','energyRegen':'能量自动回复',
               'pen':'穿透值','pen_':'穿透率','physical_dmg':'物理伤害','ice_dmg':'冰属性伤害',
               'fire_dmg':'火属性伤害','electric_dmg':'电属性伤害','ether_dmg':'以太伤害',
               'wind_dmg':'风属性伤害','lumiflux_dmg':'流光伤害'}
-    def field(items):
-        parts = []
-        for key, value in items.items():
-            label = labels.get(key) or labels.get(key.rstrip('_'), key)
-            unit = '%' if key.endswith('_') or key == 'impact' else ''
-            parts.append(f'{label} {value:g}{unit}')
-        return '、'.join(parts)
-    return '主属性　' + field(values['main']) + '　｜　副属性　' + field(values['subs'])
+    parts = []
+    for key, value in items.items():
+        label = labels.get(key) or labels.get(key.rstrip('_'), key)
+        unit = '%' if key.endswith('_') or key == 'impact' else ''
+        parts.append(f'{label} {value:g}{unit}')
+    return '、'.join(parts)
+
+
+def display_values(values):
+    if not values:
+        return '词条数值待核 · 可用 OhMyZZZ 重新扫描'
+    return '主属性　' + format_stats(values['main']) + '　｜　副属性　' + format_stats(values['subs'])
 
 
 def read_row(row, labels):

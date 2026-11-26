@@ -125,7 +125,53 @@ def smoke(home, tmp):
     ctx.current_instance_idx = 2
     widget.on_interface_shown(); nav.open('库存记录')
     assert panel.grid.rowCount() == 0 and panel.title.text() == '还没有库存记录'
+    check_equip_review(widget, tmp, ctx)
     widget.close()
+
+
+def check_equip_review(widget, tmp, ctx):
+    from PySide6.QtWidgets import QDialog, QTableWidget
+    from unittest.mock import patch
+    from drive_disc_manager.store import config, digest, read, save
+
+    root = widget.root
+    name = '艾莲测试队'
+    profile = dict(name=name, agentKey='Ellen', request=dict(characterName='艾莲'))
+    cfg = dict(config(root), inventorySource='network', profiles=[profile])
+    save(root/'config.json', cfg)
+    save(tmp/'plugin_data/wiki_data/zzz_translation.json', dict(character={
+        '1':dict(EN='Ellen', CHS='艾莲', code='Ellen'), '2':dict(EN='Nicole', CHS='妮可', code='Nicole')}))
+    request = dict(name=name, account=2, configuration=digest(cfg), rules=None, selection='fresh')
+    before = [dict(profile=name, agent='Ellen', slot=n, selectionFp=str(n), location='', ownerState='bag', set='TheSkyAblaze',
+                   level=0, rarity='S', observedValues=dict(main={'atk_':7.5}, subs={'crit_':2.4})) for n in range(1,7)]
+    after = [dict(t, location='Nicole', ownerState='worn') if t['slot']==4 else t for t in before]
+    review = dict(request=request, before=before, after=after)
+    ctx.run_context = SimpleNamespace(is_context_stop=True)
+    widget.navigation.open('我的配队')
+    widget.finish_equip(str(root), name, '', review)
+    assert widget.apply_button.text() == '查看换装变化' and widget.apply_button.isEnabled()
+    def inspect(dialog):
+        diff, lineup = dialog.findChildren(QTableWidget)
+        assert [diff.item(0,c).text() for c in range(4)] == [name+' · 4 号位','装备者','背包','妮可']
+        assert diff.rowCount() == 1 and lineup.rowCount() == 6 and lineup.item(3,5).text() == '妮可'
+        return 0
+    with patch.object(QDialog, 'exec', inspect), patch('drive_disc_manager.manual_equip.run_confirmed') as run:
+        widget.apply_current()
+        run.assert_not_called()
+    assert widget.equip_review is None and read(root/'config.json') == cfg
+    widget.finish_equip(str(root), name, '', review)
+    from PySide6.QtWidgets import QApplication
+    from threading import Event
+    done = Event()
+    with patch.object(QDialog, 'exec', return_value=1), patch('drive_disc_manager.manual_equip.run_confirmed', side_effect=lambda *_:done.set()) as run:
+        widget.apply_current()
+        assert done.wait(3)
+        run.assert_called_once_with(ctx, request)
+    QApplication.processEvents()
+    widget.finish_equip(str(root), name, '', review)
+    ctx.current_instance_idx = 1
+    widget.on_interface_shown()
+    assert widget.equip_review is None and widget.apply_button.text() == '一键换装'
 
 
 if __name__ == '__main__':

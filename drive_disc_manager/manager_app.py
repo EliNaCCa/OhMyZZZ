@@ -5,7 +5,7 @@ from zzz_od.application.zzz_application import ZApplication
 from .drive_disc_manager_const import APP_ID, APP_NAME
 from .service import preview, rule_snapshot
 from .store import import_inventory, read
-from .manual_equip import MANUAL_GROUP, SCAN_GROUP, checked_scan, manual_request, verify_selection
+from .manual_equip import MANUAL_GROUP, SCAN_GROUP, SelectionChanged, checked_scan, manual_request, verify_selection
 
 
 def wiki_path():
@@ -63,8 +63,8 @@ class ManagerApp(ZApplication):
             cfg = pinned[0]
             if self.group == MANUAL_GROUP:
                 from .store import digest
-                if digest(cfg) != request['configuration']:
-                    return self.round_fail('配队配置已变化，请重新预览')
+                if digest(cfg) != request['configuration'] or request['rules'] != pinned[1].get('version'):
+                    return self.round_fail('配队配置或规则已更新，请重新计算')
             field = None if scan_only else (request['name'] if request else cfg.get('fieldProfile'))
             if field:
                 from .loadout import verify_bindings
@@ -126,7 +126,10 @@ class ManagerApp(ZApplication):
                     return self.round_fail('请先到「设置 → 库存记录」核对上次的盘')
             if self.group == MANUAL_GROUP:
                 self.guard_game()
-                verify_selection(request, cfg, report, snapshot, names=names)
+                try:
+                    verify_selection(request, cfg, report, snapshot, names=names)
+                except SelectionChanged as change:
+                    return self.round_fail(str(change), data=dict(confirmed=request, revised=change.current, targets=change.targets))
             elif report['issues']:
                 return self.round_fail('配装待复核 · '+' / '.join(report['issues']))
             if field and scanner is None:

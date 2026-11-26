@@ -10,6 +10,14 @@ SCAN_GROUP = 'ohmyzzz_manual_scan'
 _request = ContextVar('ohmyzzz_manual_equip', default=None)
 
 
+class SelectionChanged(ValueError):
+    def __init__(self, original, current, targets):
+        super().__init__('配队用盘有变化，请查看后重新应用')
+        self.original = original
+        self.current = current
+        self.targets = targets
+
+
 def confirmation(account, name, cfg, report, snapshot, *, preview_only=False, names=None):
     targets = target_loadout(cfg, report, snapshot, name, preview_only=preview_only, names=names)
     identity = []
@@ -19,7 +27,8 @@ def confirmation(account, name, cfg, report, snapshot, *, preview_only=False, na
         entry['values'] = {group:{k:float(v) for k, v in stats.items()}
                            for group, stats in target['observedValues'].items()}
         identity.append(entry)
-    return dict(account=account, name=name, configuration=digest(cfg), selection=digest(identity)), targets
+    return dict(account=account, name=name, configuration=digest(cfg), rules=report.get('rules'),
+                selection=digest(identity)), targets
 
 
 def run_confirmed(ctx, request):
@@ -47,7 +56,12 @@ def _run_interactive(ctx, request, group, action):
             if (result.app_id, result.instance_idx, result.group_id) != (APP_ID, account, group):
                 raise ValueError(f'一条龙未启动本次{action}')
             if result.finish_reason.value != 'COMPLETED':
-                detail = getattr(run.last_application_result, 'status', '')
+                outcome = run.last_application_result
+                change = getattr(outcome, 'data', None)
+                if (result.finish_reason.value == 'FAILED' and group == MANUAL_GROUP
+                        and isinstance(change, dict) and change.get('confirmed') is request):
+                    raise SelectionChanged(request, change['revised'], change['targets'])
+                detail = getattr(outcome, 'status', '')
                 raise ValueError(detail or f'{action}已停止，请重新预览')
         finally:
             _request.reset(token)
@@ -61,11 +75,11 @@ def manual_request(account, group):
 
 
 def verify_selection(request, cfg, report, snapshot, *, names=None):
-    current, _ = confirmation(request['account'], request['name'], cfg, report, snapshot, names=names)
-    if current != request:
-        if cfg.get('inventorySource') == 'network':
-            raise ValueError('游戏重扫与网络预览的配队用盘不同。请在设置中选择「游戏画面（OCR）」，重新计算后应用配队。')
-        raise ValueError('重扫后的目标盘或配置有变化，已刷新预览，请查看后重新应用')
+    if request['configuration'] != digest(cfg) or request['rules'] != report.get('rules'):
+        raise ValueError('配队配置或规则已更新，请重新计算')
+    current, targets = confirmation(request['account'], request['name'], cfg, report, snapshot, names=names)
+    if current['selection'] != request['selection']:
+        raise SelectionChanged(request, current, targets)
 
 
 def checked_scan(scanner, guard):
