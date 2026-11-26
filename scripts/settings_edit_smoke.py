@@ -190,7 +190,7 @@ def smoke(home, tmp):
             assert '配置已更新' in str(exc)
         else:
             raise AssertionError('stale team edit replaced a newer configuration')
-    assert config(account)['reserve'] == 8 and 'tolerancePct' not in config(account)['profiles'][0]
+    assert config(account)['reserve'] == 8 and 'critGapPoints' not in config(account)['profiles'][0]
     newer = dict(config(account),reserve=7)
     widget.editor.setPlainText(json.dumps(dict(config(account),reserve=6)))
     save(account/'config.json',newer)

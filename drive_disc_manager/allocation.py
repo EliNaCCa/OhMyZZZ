@@ -1,5 +1,5 @@
 """Assign complete builds to simultaneous profiles in player priority order."""
-from .optimizer import NoBuildCandidates, effective_crit_rate, number, select_candidate
+from .optimizer import NEAR_CRIT_GAP, NoBuildCandidates, effective_crit_rate, number, select_candidate
 
 
 def reusable_assignments(report, allocation_key, groups, pool):
@@ -62,12 +62,13 @@ def arrange_profile(profiles, index, group, rank):
     return updated
 
 
-def same_priority(left, right, current):
+def same_priority(left, right, current, profile):
     if len(current.intersection(left['ids'])) != len(current.intersection(right['ids'])):
         return False
     if 'outputScore' in left:
+        floor = 100 - number(profile.get('critGapPoints', NEAR_CRIT_GAP))
         def priority(row):
-            return number(row.get('rawOutput', row['outputScore'])), effective_crit_rate(row) == 100
+            return number(row.get('rawOutput', row['outputScore'])), effective_crit_rate(row) >= floor
         return priority(left) == priority(right)
     if 'roleOrder' in left:
         from .role_panel import compare_order
@@ -98,7 +99,7 @@ def preferred_lineup(lineups, members):
         if len(lineups) == 1:
             break
         best = select_candidate([lineup[index][1] for lineup in lineups], profile, current)
-        lineups = [lineup for lineup in lineups if same_priority(lineup[index][1], best, current)]
+        lineups = [lineup for lineup in lineups if same_priority(lineup[index][1], best, current, profile)]
     return lineups[0]
 
 
@@ -165,7 +166,7 @@ def assign_group(members, pool, url, fetch, max_nodes=160):
         while options:
             preferred = select_candidate(list(options.values()), profile, current)
             first = tuple(preferred['ids'])
-            ties = [first, *(ids for ids, row in options.items() if ids != first and same_priority(row, preferred, current))]
+            ties = [first, *(ids for ids, row in options.items() if ids != first and same_priority(row, preferred, current, profile))]
             following = {}
             truncated = False
             for ids in ties:

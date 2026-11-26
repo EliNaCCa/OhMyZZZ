@@ -6,7 +6,7 @@ from qfluentwidgets import Pivot, SegmentedWidget
 class ManagerPages(QWidget):
     """OneDragon-style navigation; secondary pages share their section's pivot."""
 
-    sections = {'仓库': ('仓库预览',), '配队': ('我的配队', '配装器'),
+    sections = {'仓库': ('仓库预览',), '配队': ('我的配队', '关卡分队', '配装器'),
                 '规则': ('规则订阅', '角色留盘', '备用规则'), '设置': ('运行设置', '库存记录', '版本更新')}
 
     def __init__(self):

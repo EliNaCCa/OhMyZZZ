@@ -22,11 +22,12 @@ def smoke(host, temp):
     app = QApplication([])
     os_utils.set_work_dir(str(temp))
     account = temp/'accounts'/'1'
-    actors = [('Lead','配装角色'), ('Support','队友甲'), ('Stun','队友乙')]
+    actors = [('Lead','配装角色'), ('Support','队友甲'), ('Stun','队友乙'), ('Other','未拥有')]
     save(temp/'plugin_data/wiki_data/zzz_translation.json', dict(character={
         str(i):dict(code=code,EN=code,CHS=name) for i,(code,name) in enumerate(actors)}))
     team = dict(name='常态队', agentKey='Lead', request=dict(characterName='配装角色', roleSystem='ATTACK'))
     save(account/'config.json', dict(config(account), profiles=[team]))
+    save(account/'owned-agents.json', ['Lead', 'Support', 'Stun'])
     widget = ManagerInterface(SimpleNamespace(current_instance_idx=1,get_plugin_data_dir=lambda _:account.parent))
     widget.on_interface_shown()
     widget.navigation.open('我的配队')
@@ -36,6 +37,7 @@ def smoke(host, temp):
     actions['队伍成员'].trigger()
     editor = widget.squad_editor
     assert widget.team_views.currentWidget() is editor and editor.actors[1].findText('配装角色') == -1
+    assert editor.actors[1].findText('未拥有') == -1
     editor.actors[1].setCurrentText('队友甲')
     editor.ranks[1].setValue(6)
     editor.findChild(PrimaryPushButton).click()

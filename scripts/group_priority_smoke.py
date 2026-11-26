@@ -85,10 +85,10 @@ def smoke():
     a_options[1]['outputScore'] = 100
     scarce = max((0,1), key=lambda i:a_options[i]['ids'])
     b_options[scarce]['outputScore'] = 120
-    # An equal-output 98% alternative cannot give away the priority role's full crit.
-    a_options[1-scarce]['critRate'] = 98
+    # Below the floor, the alternative cannot win an otherwise exact tie.
+    a_options[1-scarce]['critRate'] = 97.59999
     check(a_options[scarce],b_options[1-scarce])
-    a_options[1-scarce]['critRate'] = 100
+    a_options[1-scarce]['critRate'] = 97.6
     shared = check(a_options[1-scarce],b_options[scarce])
     assert '同分' in shared[a['name']]['reason']
     # An already worn piece wins an exact tie. A genuine priority-C gain wins too.

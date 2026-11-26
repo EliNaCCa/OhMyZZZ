@@ -160,7 +160,7 @@ class ManagerInterface(BaseInterface):
         self.equip_busy = False
         self.equip_review = None
         self.equip_finished.connect(self.finish_equip, Qt.ConnectionType.QueuedConnection)
-        self.teams = self.grid(['方案','同时出场组','输出容差','实战暴击率','输出差距','选择原因'])
+        self.teams = self.grid(['方案','同时出场组','暴击率下限','实战暴击率','输出差距','选择原因'])
         self.teams.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         box.addWidget(self.teams)
         self.team_score = BodyLabel(); self.team_score.setWordWrap(True); box.addWidget(self.team_score)
@@ -254,7 +254,15 @@ class ManagerInterface(BaseInterface):
         self.optimizer_page.import_requested.connect(lambda:self.invoke(self.import_profile))
         self.optimizer_page.retry.connect(lambda:self.invoke(self.open_optimizer))
         self.optimizer_page.back.connect(lambda:tabs.open('我的配队'))
+        from .challenge_page import ChallengePage
+        self.challenge = ChallengePage()
+        tabs.addTab(self.challenge, '关卡分队')
         self.tabs.currentChanged.connect(self.optimizer_tab_changed)
+        self.tabs.currentChanged.connect(self.show_challenge)
+
+    def show_challenge(self, *_):
+        if self.tabs.currentWidget() is self.challenge and hasattr(self, 'root'):
+            self.challenge.present(self.root, read(snapshot_path(self.root, self.cfg), {}), read(wiki_path(), {}))
 
     def on_interface_shown(self):
         # OneDragon caches embedded pages by navigation stack, not by account.
@@ -551,7 +559,7 @@ class ManagerInterface(BaseInterface):
             group = p.get('simultaneous')
             label = f"{group} · 第 {group_indices(profiles, index).index(index)+1} 位" if group else '可借盘'
             role = (p.get('request') or {}).get('roleSystem','').upper()
-            tolerance = pct(p.get('tolerancePct',0.5)) if role in ('ATTACK','STRONG','RUPTURE') else '—'
+            tolerance = pct(100 - float(p.get('critGapPoints',2.4))) if role in ('ATTACK','STRONG','RUPTURE') else '—'
             return (title,label,tolerance,
                     crit_rate_text(result),pct(result.get('relativeLossPct')),reason)
         self.fill(self.teams,[row(i,p) for i,p in enumerate(profiles)])
@@ -679,7 +687,9 @@ class ManagerInterface(BaseInterface):
         profile = token[2]['profiles'][index]
         lead = self.agent_labels.get(profile.get('agentKey')) or profile['request']['characterName']
         self.squad_edit = token, index
-        labels = self.agent_labels.values() if self.agent_labels else [a['label'] for a in self.agents]
+        labels = [agent['label'] for agent in self.agents if agent['owned']]
+        if not labels:
+            labels = self.agent_labels.values() if self.agent_labels else [a['label'] for a in self.agents]
         self.squad_editor.present(profile, labels, lead)
         self.team_views.setCurrentWidget(self.squad_editor)
 
@@ -767,10 +777,10 @@ class ManagerInterface(BaseInterface):
         if index < 0: return
         token = self.edit_token()
         profile = self.cfg['profiles'][index]
-        value, ok = QInputDialog.getDouble(self,profile['name'],'为满暴最多接受的输出差距（%）',
-                                            profile.get('tolerancePct',0.5),0,100,4)
+        value, ok = QInputDialog.getDouble(self,profile['name'],'距离满暴最多可少几个百分点？（一条暴击率 = 2.4）',
+                                            float(profile.get('critGapPoints',2.4)),0,100,4)
         if ok:
-            self.edit_profile_fields(token, index, {'tolerancePct':value})
+            self.edit_profile_fields(token, index, {'critGapPoints':value})
 
     def toggle_profile(self):
         index = self.teams.currentRow()
@@ -1017,7 +1027,7 @@ class ManagerInterface(BaseInterface):
         simultaneous,ok=QInputDialog.getText(self,'同时出场','同时上场的角色填写相同分组，互斥配队可留空')
         if not ok: return
         profile = dict(name=name.strip(),agentKey=agent_key,request=source['request'],
-                       simultaneous=simultaneous.strip(),tolerancePct=0.5,sourceId=source['sourceId'])
+                       simultaneous=simultaneous.strip(),critGapPoints=2.4,sourceId=source['sourceId'])
         from .allocation import group_conflict
         peers = [p for p in token[2]['profiles'] if p.get('simultaneous') == profile['simultaneous']]
         conflict = group_conflict([*peers, profile])

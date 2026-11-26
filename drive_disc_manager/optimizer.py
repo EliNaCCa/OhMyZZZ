@@ -151,26 +151,20 @@ def effective_crit_rate(candidate):
     return min(Decimal(100), number(candidate.get('rawCritRate', candidate['critRate'])))
 
 
-def prefer(candidates, tolerance_pct, current):
+def prefer(candidates, crit_gap, current):
     candidates = tuple(candidates)
-    tol = number(tolerance_pct)/100
-    if not 0 <= tol <= 1:
-        raise ValueError('输出容差应在 0–100% 之间')
+    minimum = 100 - number(crit_gap)
+    if not 0 <= minimum <= 100:
+        raise ValueError('允许少的暴击率应为 0 到 100 个百分点')
     def key(c):
         return number(c.get('rawOutput', c['outputScore'])), sum(i in current for i in c['ids']), tuple(c['ids'])
     best = max(candidates, key=key)
     if key(best)[0] <= 0:
         raise ValueError('缺少正的预期输出')
-    # Only actual full crit may spend the team's damage tolerance.
-    minimum = key(best)[0] * (1 - tol)
     full = max((c for c in candidates if effective_crit_rate(c) == 100), key=key, default=None)
-    near = max((c for c in candidates if effective_crit_rate(c) >= 100 - NEAR_CRIT_GAP), key=key, default=None)
-    if full is not None and key(full)[0] >= minimum:
-        chosen = full
-        reason = '满暴且输出最高' if key(full)[0] == key(best)[0] else '输出接近，优先满暴'
-    else:
-        chosen = best
-        reason = '输出最高'
+    near = max((c for c in candidates if effective_crit_rate(c) >= minimum), key=key, default=None)
+    chosen = near or best
+    reason = '暴击达标，预期输出最高' if near else '暴击未达标，选预期输出最高的一套'
     return dict(chosen, bestOutput=best['outputScore'], rawBestOutput=str(key(best)[0]), relativeLossPct=float(100*(key(best)[0]-key(chosen)[0])/key(best)[0]),
                 reason=reason, effectiveCritRate=float(effective_crit_rate(chosen)),
                 bestNearFullOutput=near['outputScore'] if near else None,
@@ -247,7 +241,7 @@ def role_candidates(url, args, discs, current, request):
     return builds
 
 
-def _window_pool(url, profile, discs, current, request, exact=False):
+def _window_pool(url, profile, discs, current, request, exact=False, *, check_full_crit=True):
     if not discs:
         raise NoBuildCandidates('缺少适用的驱动盘')
     args = dict(profile['request'])
@@ -265,7 +259,8 @@ def _window_pool(url, profile, discs, current, request, exact=False):
     original_args = dict(args)
     # Upstream filters on PANEL rate, while the personal preference uses combat rate.
     estimated_panel = max(0, min(100, 100 - float((args.get('combatExtraStats') or {}).get('CRIT_RATE', 0))))
-    goals = [0, profile.get('fullCritPanelTarget', estimated_panel), args.get('targetCritRate') or 0]
+    full_target = profile.get('fullCritPanelTarget', estimated_panel)
+    goals = [0, full_target, args.get('targetCritRate') or 0]
     if exact:
         goals = [0]
     by_id = {d['id']: d for d in discs}
@@ -273,8 +268,13 @@ def _window_pool(url, profile, discs, current, request, exact=False):
     searches = [(args, g) for g in dict.fromkeys(goals)]
     if len(current)==6 and current <= by_id.keys():
         searches.append((dict(original_args, discs=[by_id[i] for i in sorted(current)]), 0))
-    for inputs, goal in searches:
+    clipped = False
+
+    def collect(inputs, goal):
+        nonlocal clipped
         response = request(url, dict(inputs,targetCritRate=goal))
+        if inputs is args and len(response['results']) >= limit:
+            clipped = True
         for r in response['results']:
             ids = result_ids(r, {d['id']: d for d in inputs['discs']} if inputs is not args else by_id)
             if ids not in results:
@@ -295,6 +295,17 @@ def _window_pool(url, profile, discs, current, request, exact=False):
                     subject = '当前 → 候选' if before else '候选面板'
                     raise ValueError(f'{exc} · {subject} · '+ '、'.join(changes)) from exc
                 results[ids] = dict(ids=list(ids), panelCritRate=r.get('panelCritRate'), **score)
+    for inputs, goal in searches:
+        collect(inputs, goal)
+    crit_gap = number(profile.get('critGapPoints', NEAR_CRIT_GAP))
+    if (check_full_crit and not exact and combinations > limit and clipped and number(full_target) > crit_gap
+            and not any(effective_crit_rate(row) >= 100 - crit_gap for row in results.values())):
+        # In v2.3.31.1 the panel target accepts ±2.4 points. Shift its lower
+        # edge to the desired rate so near misses cannot fill the shortlist.
+        # Keep open-search results and judge every build by actual combat crit.
+        shifted_goal = float(number(full_target) - crit_gap + NEAR_CRIT_GAP)
+        if shifted_goal not in goals:
+            collect(args, shifted_goal)
     if not results:
         raise NoBuildCandidates('该组条件没有完整的六盘方案')
     return list(results.values())
@@ -355,7 +366,7 @@ def _profile_candidates(url, profile, discs, current, request):
     ids_to_check = {}
     for name, weight, args in windows:
         configured = dict(profile, request=args)
-        rows = _window_pool(url, configured, discs, current, request)
+        rows = _window_pool(url, configured, discs, current, request, check_full_crit=name == profile['mainWindow'])
         indexed = {tuple(row['ids']):row for row in rows}
         ids_to_check.update(dict.fromkeys(indexed))
         pools.append((name, weight, configured, indexed))
@@ -383,7 +394,7 @@ def _profile_candidates(url, profile, discs, current, request):
 
 def select_candidate(pool, profile, current):
     if 'outputScore' in pool[0]:
-        return prefer(pool, profile.get('tolerancePct', 0.5), current)
+        return prefer(pool, profile.get('critGapPoints', NEAR_CRIT_GAP), current)
     if 'roleOrder' in pool[0]:
         from .role_panel import compare_order
         best = pool[0]

@@ -171,7 +171,7 @@ def smoke(source):
         assert all(row['decision'] == '保留' and not any(r.startswith('备用 · ') for r in row['reasons'])
                    for row in adjusted['discs'])
         # The same six IDs under a different team tolerance still need a new allocation.
-        cfg['profiles'][0]['tolerancePct'] = 0
+        cfg['profiles'][0]['critGapPoints'] = 0
         save(root/'config.json', cfg)
         updated = preview(root, wiki, refresh=False, reuse_allocations=True)
         assert not updated['reusedAssignments'] and updated['allocationKey'] != adjusted['allocationKey'] and not updated['issues']
