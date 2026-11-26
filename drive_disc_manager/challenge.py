@@ -5,6 +5,7 @@ from .optimizer import number
 
 
 MODES = {'式舆防卫战': (3, 'S'), '危局强袭战': (2, '三星')}
+DAMAGE_ROLES = {'强攻', '异常', '命破', '锋御'}
 
 
 def team_candidates(owned):
@@ -77,12 +78,11 @@ def encounter_shortlist(pool, stages, needed, familiar=(), budget=25000):
         raise ValueError('请核对本期关卡数量')
     # A party may use more than one damage dealer. A main matching the enemy's
     # weakness and a character able to use the selected buff are separate facts.
-    damage = {'强攻', '异常', '命破', '锋御'}
     familiar = [frozenset(team) for team in familiar]
     parties = []
     bits = {name:1 << i for i, name in enumerate(sorted(pool))}
     for team in team_candidates(pool):
-        elements = {pool[a]['element'] for a in team if pool[a]['role'] in damage}
+        elements = {pool[a]['element'] for a in team if pool[a]['role'] in DAMAGE_ROLES}
         if elements:
             roles = {pool[a]['role'] for a in team}
             investment = sum(pool[a].get('mindscape') == 6 and pool[a].get('engineRank') == 5 for a in team)
@@ -100,7 +100,7 @@ def encounter_shortlist(pool, stages, needed, familiar=(), budget=25000):
             quality = int(weak) + int(buff) - int(resisted)
             # Among equal fits prefer covering more lanes with distinct carries.
             # Triple carries are still available if the player's roster requires it.
-            surplus = sum(pool[a]['role'] in damage for a in team) - 1
+            surplus = sum(pool[a]['role'] in DAMAGE_ROLES for a in team) - 1
             balance = int('击破' in roles) + int('支援' in roles)
             rows.append((quality, -surplus, team, mask, weak, buff, resisted, balance, investment, links))
         options.append(sorted(rows, key=lambda row:(-row[0],-row[1],-row[7],-row[8],-row[9],row[2])))

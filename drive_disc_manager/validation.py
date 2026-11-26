@@ -36,6 +36,9 @@ def validate(value):
         if not p['name'] or p['name'] in names or not isinstance(p['request'],dict):
             raise ValueError('配队名重复或参数缺失')
         names.add(p['name'])
+        if p.get('needsTarget') and (p.get('enabled') is not False or set(p['request']) != {'characterName'}
+                                     or not p['request']['characterName']):
+            raise ValueError('请先为这位代理人选择配装目标')
         from .combat_windows import window_requests
         window_requests(p)
     field = cfg['fieldProfile']

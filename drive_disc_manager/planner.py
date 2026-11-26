@@ -117,14 +117,34 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         raise ValueError('配队方案名称重复')
     bindings = preview_bindings(enabled, wiki or {})
     binding_errors = {}
+    labels = None
+    planned_actors = set()
     baselines = {}
     for p in enabled:
         name = p['name']
         owner = bindings[name]
         if p.get('agentKey') and p['agentKey'] != owner:
             binding_errors[name] = f'「{name}」的角色绑定与当前扫描器字典不一致，请更新所选配队'
-        elif p.get('simultaneous') and not owner:
-            binding_errors[name] = f'「{name}」的同场角色身份待核对，请更新扫描器字典与配队目标'
+        if p.get('simultaneous'):
+            # The game roster may already know a character while the icon scanner lags.
+            # Identify the build for planning only. Physical ownership still needs the scanner key.
+            from .challenge import agent_labels
+            from .roster import agent_id
+            if not owner and labels is None:
+                try:
+                    labels = agent_labels(wiki or {})
+                except ModuleNotFoundError as exc:
+                    if exc.name != 'zzz_od':
+                        raise
+                    labels = {}
+            actor = owner or labels.get(agent_id(p['request'].get('characterName', '')))
+            if actor and not owner:
+                actor = scanner_agent_key(wiki or {}, actor) or actor
+            if not actor:
+                binding_errors[name] = f'「{name}」的角色名无法识别，请核对配装目标'
+            elif (p['simultaneous'], actor) in planned_actors:
+                binding_errors[name] = f'同一出场组里有两套{actor}的配装'
+            planned_actors.add((p['simultaneous'], actor))
         # Unnamed (mutually exclusive) profiles cannot collide with a named group.
         group = ('group',p['simultaneous']) if p.get('simultaneous') else ('solo',name)
         current = {piece for piece, d in by_piece.items() if owner and d.get('location') == owner}

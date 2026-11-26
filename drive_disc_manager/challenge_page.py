@@ -45,7 +45,14 @@ class ChallengePage(QWidget):
                 combo.currentIndexChanged.connect(self.clear_result)
             self.controls.append(controls)
         self.compare = PushButton('比较分队')
-        box.addWidget(self.compare)
+        self.save_lineup = PushButton('保存到我的配队')
+        actions = QHBoxLayout()
+        box.addLayout(actions)
+        actions.addWidget(self.compare)
+        actions.addWidget(self.save_lineup)
+        actions.addStretch()
+        self.lineup = []
+        self.save_lineup.setEnabled(False)
         self.status = BodyLabel()
         self.status.setWordWrap(True)
         box.addWidget(self.status)
@@ -55,6 +62,8 @@ class ChallengePage(QWidget):
         self.mode.currentTextChanged.connect(self.switch_mode)
 
     def clear_result(self, *_):
+        self.lineup = []
+        self.save_lineup.setEnabled(False)
         self.status.clear()
         self.result.setRowCount(0)
 
@@ -105,6 +114,7 @@ class ChallengePage(QWidget):
         self.switch_mode()
 
     def calculate(self):
+        self.clear_result()
         mode = self.mode.currentText()
         needed = self.rotation.get('needed', MODES[mode][0])
         originals = self.rotation.get('stages', [])
@@ -122,6 +132,9 @@ class ChallengePage(QWidget):
         if unchanged and any(stage.get('results') for stage in originals):
             ranked = reward_lineup(dict(self.rotation, mode=mode), self.pool)
             if ranked['lineup']:
+                by_stage = {stage['name']: conditions for stage, conditions in zip(originals, stages)}
+                self.lineup = [dict(stage=r['stage'], team=list(r['team']), conditions=by_stage[r['stage']]) for r in ranked['lineup']]
+                self.save_lineup.setEnabled(True)
                 self.status.setText(f"本期已有成绩的队伍中，{ranked['cleared']} 路达标")
                 fill(self.result, [(r['stage'], ' / '.join(r['team']), f"{r['value']}{r['unit']}（目标 {r['target']}{r['unit']}）")
                                    for r in ranked['lineup']])
@@ -130,6 +143,9 @@ class ChallengePage(QWidget):
             self.status.setText('选择本期敌人的弱点、抗性或环境增益，再比较分队。')
             return
         rows, clipped = encounter_shortlist(self.pool, stages, needed, self.familiar)
+        self.lineup = [dict(stage=originals[r['stage']]['name'] if originals else f"第 {r['stage']+1} 路",
+                            team=list(r['team']), conditions=stages[r['stage']]) for r in rows]
+        self.save_lineup.setEnabled(bool(rows))
         fill(self.result, [(originals[r['stage']]['name'] if originals else f"第 {r['stage']+1} 路", ' / '.join(r['team']),
                             '、'.join(note for yes,note in [(r['weak'],'命中弱点'),(r['buff'],'能用环境增益'),(r['resisted'],'敌人有抗性')] if yes) or '补齐分队') for r in rows])
         self.status.setText(('按关卡条件初选 · 达标成绩待核' + (' · 已达搜索上限' if clipped else '')) if rows

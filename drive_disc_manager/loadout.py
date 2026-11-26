@@ -14,9 +14,25 @@ def fielded_profiles(cfg, name):
     return [p for p in profiles if p.get('simultaneous') == group] if group else [selected]
 
 
+def missing_target_note(cfg, profile):
+    group = profile.get('simultaneous')
+    if not group:
+        return ''
+    count = sum(1 for p in cfg['profiles'] if p.get('simultaneous') == group and p.get('needsTarget'))
+    return f'还有 {count} 位代理人待选配装目标' if count else ''
+
+
+def equip_lineup(cfg, name):
+    profiles = fielded_profiles(cfg, name)
+    note = missing_target_note(cfg, profiles[0])
+    if note:
+        raise ValueError(note)
+    return profiles
+
+
 def verify_bindings(cfg, name, wiki):
     from .roster import scanner_agent_key
-    for profile in fielded_profiles(cfg, name):
+    for profile in equip_lineup(cfg, name):
         actor = (profile.get('request') or {}).get('characterName')
         key = scanner_agent_key(wiki, actor) if isinstance(actor, str) else ''
         if not key or key != profile.get('agentKey'):
@@ -24,7 +40,7 @@ def verify_bindings(cfg, name, wiki):
 
 
 def target_loadout(cfg, report, snapshot, name, *, preview_only=False, names=None):
-    lineup = fielded_profiles(cfg, name)
+    lineup = equip_lineup(cfg, name)
     discs, _ = inventory(snapshot, preview_only=preview_only)
     if report['configuration'] != digest(cfg) or report['inventory'] != digest(snapshot):
         raise ValueError('当前配队或库存已变化，请重新计算')

@@ -156,7 +156,7 @@ class ManagerInterface(BaseInterface):
         self.menu_action(menu,'队伍成员',self.edit_squad)
         self.refresh_target_button = self.menu_action(menu,'同步角色目标',self.refresh_profile)
         self.menu_action(menu,'分组与优先级',self.edit_allocation)
-        self.menu_action(menu,'输出窗口',self.edit_windows)
+        self.window_action = self.menu_action(menu,'输出窗口',self.edit_windows)
         self.menu_action(menu,'启用 / 停用',self.toggle_profile)
         self.menu_action(menu,'设为出场 / 取消',self.set_field_profile)
         engine_bar.addStretch()
@@ -258,12 +258,14 @@ class ManagerInterface(BaseInterface):
         self.tabs.currentChanged.connect(self.refresh_salvage)
         from .optimizer_page import OptimizerPage
         self.optimizer_page = OptimizerPage()
+        self.target_edit = None
         tabs.addTab(self.optimizer_page, '配装器')
         self.optimizer_page.import_requested.connect(lambda:self.invoke(self.import_profile))
         self.optimizer_page.retry.connect(lambda:self.invoke(self.open_optimizer))
         self.optimizer_page.back.connect(lambda:tabs.open('我的配队'))
         from .challenge_page import ChallengePage
         self.challenge = ChallengePage()
+        self.challenge.save_lineup.clicked.connect(lambda:self.invoke(self.save_challenge_lineup))
         tabs.addTab(self.challenge, '关卡分队')
         self.showcase_jobs = set()
         self.challenge.read_agents.clicked.connect(lambda:self.invoke(self.read_showcase_agents))
@@ -287,6 +289,27 @@ class ManagerInterface(BaseInterface):
         if self.tabs.currentWidget() is self.challenge and hasattr(self, 'root'):
             self.challenge.present(self.root, read(snapshot_path(self.root, self.cfg), {}), read(wiki_path(), {}))
             self.challenge.read_agents.setEnabled(self.root not in self.showcase_jobs)
+
+    def save_challenge_lineup(self):
+        from time import time
+        from .challenge_profiles import lineup_profiles
+        token = self.edit_token()
+        page = self.challenge
+        if page.root != token[0] or not page.lineup:
+            return
+        latest = read(self.root/'challenge-current.json', {}).get(page.mode.currentText(), {})
+        if latest and not latest.get('startsAt', float('inf')) <= time() < latest.get('endsAt', 0):
+            latest = {}
+        if latest != page.rotation:
+            self.show_challenge()
+            raise ValueError('本期关卡已更新，请重新比较分队')
+        cfg = token[2]
+        profiles, first = lineup_profiles(cfg['profiles'], page.mode.currentText(), page.rotation.get('period', ''),
+                                         page.lineup, page.pool, read(wiki_path(), {}))
+        if profiles is not cfg['profiles']:
+            self.finish_edit(token, dict(cfg, profiles=profiles))
+        self.navigation.open('我的配队')
+        self.refresh_teams(first)
 
     def read_showcase_agents(self):
         root = self.root
@@ -680,12 +703,18 @@ class ManagerInterface(BaseInterface):
             result = self.report.get('assignments',{}).get(p['name'],{})
             reason = result.get('error') or result.get('reason') or '等待计算'
             if not p.get('enabled',True):
-                reason = '已停用'; result = {}
+                reason = '待选配装目标' if p.get('needsTarget') else '已停用'
+                result = {}
             title = ('出场 · ' if p['name']==self.cfg.get('fieldProfile') else '')+p['name']
             group = p.get('simultaneous')
             label = f"{group} · 第 {group_indices(profiles, index).index(index)+1} 位" if group else '可借盘'
             return (title,label,crit_rate_text(result),pct(result.get('relativeLossPct')),reason)
         self.fill(self.teams,[row(i,p) for i,p in enumerate(profiles)])
+        for i, profile in enumerate(profiles):
+            encounter = profile.get('encounter') or {}
+            if encounter:
+                terms = [title+encounter[key] for key, title in (('weak', '弱点 · '), ('resist', '抗性 · '), ('buffRole', '环境增益 · ')) if encounter.get(key)]
+                self.teams.item(i,0).setToolTip('\n'.join([profile['name'], *terms]))
         self.teams.resizeColumnsToContents()
         visible_rows = min(4, max(1, len(profiles)))
         self.teams.setFixedHeight(self.teams.horizontalHeader().height() + self.teams.verticalHeader().defaultSectionSize() * visible_rows + 4)
@@ -699,12 +728,15 @@ class ManagerInterface(BaseInterface):
         profiles = self.cfg['profiles']
         selected = profiles[index] if 0 <= index < len(profiles) else {}
         self.profile_menu.setEnabled(bool(selected) and not self.equip_busy)
-        self.refresh_target_button.setEnabled(bool(selected.get('sourceId')) and not self.equip_busy)
+        self.window_action.setEnabled(bool(selected) and not selected.get('needsTarget'))
+        self.refresh_target_button.setText('选择配装目标' if selected.get('needsTarget') else '同步角色目标')
+        self.refresh_target_button.setEnabled(bool(selected.get('sourceId') or selected.get('needsTarget')) and not self.equip_busy)
         ready = not self.preview_stale and selected.get('enabled',True) and self.report.get('assignments',{}).get(selected.get('name'),{}).get('ids')
         reviewing = self.equip_review and self.equip_review['request']['name'] == selected.get('name')
         self.apply_button.setText('查看换装变化' if reviewing else '一键换装')
-        from .loadout import fielded_profiles
+        from .loadout import fielded_profiles, missing_target_note
         lineup = fielded_profiles(self.cfg, selected['name']) if selected and selected.get('enabled', True) else []
+        pending = missing_target_note(self.cfg, selected)
         unbound = [p['name'] for p in lineup if not p.get('agentKey') or p['agentKey'] != self.preview_bindings.get(p['name'])]
         stats_only = self.cfg['inventorySource'] == 'cn_export'
         source = self.report.get('assignments', {}).get(selected.get('name'), {}).get('baselineSource')
@@ -712,8 +744,8 @@ class ManagerInterface(BaseInterface):
         self.panel_stats.horizontalHeaderItem(3).setText(baseline)
         self.panel_stats.horizontalHeaderItem(5).setText('变化')
         self.slots.horizontalHeaderItem(4).setText('穿戴者')
-        self.apply_button.setEnabled(bool(ready or reviewing) and not unbound and not self.equip_busy and self.preview_job is None)
-        binding_note = '请同步角色目标 · ' + '、'.join(unbound) if unbound else ''
+        self.apply_button.setEnabled(bool(ready or reviewing) and not pending and not unbound and not self.equip_busy and self.preview_job is None)
+        binding_note = pending or ('请核对扫描器角色名 · ' + '、'.join(unbound) if unbound else '')
         hint = '查看要换的盘' if ready else '先计算配装'
         self.apply_button.setToolTip(binding_note or ('对照上次确认和游戏重扫的配装' if reviewing else hint))
         self.fill(self.slots,[])
@@ -732,6 +764,8 @@ class ManagerInterface(BaseInterface):
         if not profile.get('enabled',True) or not result.get('ids'):
             self.build_tabs.hide()
             status = '方案已停用' if not profile.get('enabled',True) else result.get('error') or '点击「计算配装」查看结果。'
+            if profile.get('needsTarget'):
+                status = '在「管理方案 → 选择配装目标」为这位代理人选一套配装。'
             self.team_score.setText('　·　'.join(filter(None, (party, status))))
             return
         pieces = {r.get('buildId', r['fp']): r for r in self.rows}
@@ -810,8 +844,8 @@ class ManagerInterface(BaseInterface):
         if 'mindscape' not in profile and not profile.get('squad'):
             return ''
         lead = self.agent_labels.get(profile.get('agentKey')) or profile['request']['characterName']
-        members = [dict(agent=lead, mindscape=profile.get('mindscape', 0)), *profile.get('squad', [])]
-        return ' / '.join(f"{m['agent']} {m['mindscape']}影" for m in members)
+        members = [dict(agent=lead, mindscape=profile.get('mindscape')), *profile.get('squad', [])]
+        return ' / '.join(m['agent'] if m.get('mindscape') is None else f"{m['agent']} {m['mindscape']}影" for m in members)
 
     def edit_squad(self):
         index = self.teams.currentRow()
@@ -897,6 +931,8 @@ class ManagerInterface(BaseInterface):
                 raise ValueError('请输入尚未使用的方案名称')
             if duplicate:
                 profiles.insert(index+1, dict(deepcopy(profile), name=name, simultaneous=''))
+                profiles[index+1].pop('lineupId', None)
+                profiles[index+1].pop('encounter', None)
             else:
                 profiles[index] = dict(profile, name=name)
                 if cfg['fieldProfile'] == old:
@@ -921,6 +957,9 @@ class ManagerInterface(BaseInterface):
         if index < 0: return
         profile = self.cfg['profiles'][index]
         enabled = not profile.get('enabled',True)
+        if profile.get('needsTarget'):
+            self.refresh_profile()
+            return
         if enabled and profile.get('simultaneous'):
             from .allocation import group_conflict
             conflict = group_conflict(dict(p, enabled=True) if i == index else p
@@ -1021,6 +1060,10 @@ class ManagerInterface(BaseInterface):
         if self.cfg.get('fieldProfile') == name:
             self.edit_cfg(fieldProfile='')
         else:
+            from .loadout import missing_target_note
+            note = missing_target_note(self.cfg, profile)
+            if note:
+                raise ValueError(note)
             if not profile.get('enabled',True) or not profile.get('agentKey'):
                 raise ValueError('请选择已启用且已关联代理人的方案')
             self.edit_cfg(fieldProfile=name, run_scanner=True)
@@ -1130,6 +1173,8 @@ class ManagerInterface(BaseInterface):
             self.invoke(self.open_optimizer)
         else:
             self.optimizer_page.stop()
+            self.target_edit = None
+            self.optimizer_page.import_button.setText('导入方案')
 
     def on_interface_hidden(self):
         if self.tabs.currentWidget() is self.optimizer_page:
@@ -1143,6 +1188,13 @@ class ManagerInterface(BaseInterface):
             if self.optimizer_page.account != self.root or self.optimizer_page.endpoint is None:
                 raise ValueError('请先打开当前账号的配装器')
             choices = saved_targets(self.optimizer_page.endpoint)
+            if self.target_edit is not None:
+                old_token, index = self.target_edit
+                self.check_account(old_token[0])
+                if token[1] != old_token[1]:
+                    raise ValueError('配队已更新，请返回「我的配队」重新选择目标')
+                self.choose_lineup_target(token, index, token[2]['profiles'][index], choices=choices)
+                return
         else:
             with self.optimizer_session() as endpoint:
                 choices = saved_targets(endpoint)
@@ -1177,6 +1229,47 @@ class ManagerInterface(BaseInterface):
         self.finish_edit(token, dict(token[2], profiles=[*token[2]['profiles'],profile]))
         self.refresh_teams(profile['name'])
 
+    def choose_lineup_target(self, token, index, profile, *, choices=None):
+        from .allocation import group_conflict
+        from .challenge_profiles import bind_target
+        from .optimizer import saved_targets
+        from .role_panel import MODE_NAMES
+        from .roster import same_agent
+        wiki = read(wiki_path(), {})
+        actor = profile['request']['characterName']
+        in_optimizer = choices is not None
+        if choices is None:
+            with self.optimizer_session() as endpoint:
+                choices = saved_targets(endpoint)
+        options = [target for target in choices if same_agent(wiki, target['agent'], actor)]
+        if not options:
+            if in_optimizer:
+                raise ValueError(f'请先在配装器保存{actor}的角色目标')
+            self.target_edit = token, index
+            self.optimizer_page.import_button.setText(f'用于{actor}的配装')
+            self.navigation.open('配装器')
+            return
+        source = options[0]
+        if len(options) > 1:
+            labels = []
+            for i, target in enumerate(options, 1):
+                mode = target['request'].get('mode') or ''
+                labels.append(f"{i}. {target['agent']} · {MODE_NAMES.get(mode, mode or '默认目标')}")
+            label, ok = QInputDialog.getItem(self, actor, '选择配装目标', labels, 0, False)
+            if not ok:
+                return
+            source = options[labels.index(label)]
+        updated = bind_target(profile, source, wiki)
+        profiles = list(token[2]['profiles'])
+        profiles[index] = updated
+        conflict = group_conflict(p for p in profiles if p.get('simultaneous') == updated.get('simultaneous'))
+        if conflict:
+            raise ValueError(conflict)
+        if in_optimizer:
+            self.navigation.open('我的配队')
+        self.finish_edit(token, dict(token[2], profiles=profiles))
+        self.refresh_teams(updated['name'])
+
     def refresh_profile(self):
         from .optimizer import refreshed_profile, saved_targets
         index = self.teams.currentRow()
@@ -1184,6 +1277,9 @@ class ManagerInterface(BaseInterface):
             return
         token = self.edit_token()
         profile = token[2]['profiles'][index]
+        if profile.get('needsTarget'):
+            self.choose_lineup_target(token, index, profile)
+            return
         with self.optimizer_session() as endpoint:
             updated, changed = refreshed_profile(profile, saved_targets(endpoint), wiki=read(wiki_path(), {}))
         different = {key: {'原值': profile['request'].get(key), '新值': updated['request'].get(key)} for key in changed}
