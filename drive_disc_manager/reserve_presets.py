@@ -1,6 +1,8 @@
 """Select reserve scopes without requiring a scanned inventory."""
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QComboBox, QFormLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFormLayout, QHBoxLayout, QVBoxLayout, QWidget
+
+from qfluentwidgets import ComboBox, BodyLabel, PushButton
 
 from .disc_detail_page import fill, table
 from .main_rule_editor import NAMES
@@ -38,19 +40,19 @@ class ReservePresets(QWidget):
         form = QFormLayout()
         layout.addLayout(form)
         row = QHBoxLayout()
-        self.suit = QComboBox()
-        self.slot = QComboBox()
-        self.main = QComboBox()
-        self.slot.addItem('所有号位', '')
+        self.suit = ComboBox()
+        self.slot = ComboBox()
+        self.main = ComboBox()
+        self.slot.addItem('所有号位', userData='')
         for index in range(1, 7):
-            self.slot.addItem(f'{index} 号位', str(index))
+            self.slot.addItem(f'{index} 号位', userData=str(index))
         for widget in (self.suit, self.slot, self.main):
             row.addWidget(widget)
         form.addRow('适用范围', row)
-        self.current = QLabel()
+        self.current = BodyLabel()
         self.current.setWordWrap(True)
         layout.addWidget(self.current)
-        self.change = QPushButton('设置此范围的备用数量')
+        self.change = PushButton('设置此范围的备用数量')
         layout.addWidget(self.change)
         self.grid = table(['已设范围', '用途', '同类名额', '推荐盘策略', '排序依据'])
         layout.addWidget(self.grid)
@@ -70,9 +72,9 @@ class ReservePresets(QWidget):
         self.main.blockSignals(True)
         try:
             self.main.clear()
-            self.main.addItem('所有主属性', '')
+            self.main.addItem('所有主属性', userData='')
             for stat in stats:
-                self.main.addItem(STAT_NAMES.get(stat, stat), stat)
+                self.main.addItem(STAT_NAMES.get(stat, stat), userData=stat)
             self.main.setCurrentIndex(max(0, self.main.findData(original)))
         finally:
             self.main.blockSignals(False)
@@ -98,9 +100,9 @@ class ReservePresets(QWidget):
         self.suit.blockSignals(True)
         try:
             self.suit.clear()
-            self.suit.addItem('所有套装', '')
+            self.suit.addItem('所有套装', userData='')
             for key in sorted(sets, key=lambda item:(names.get(item,item),item)):
-                self.suit.addItem(names.get(key, key), key)
+                self.suit.addItem(names.get(key, key), userData=key)
             self.suit.setCurrentIndex(max(0, self.suit.findData(previous)))
         finally:
             self.suit.blockSignals(False)

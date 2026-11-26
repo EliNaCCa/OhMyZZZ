@@ -3,11 +3,15 @@ from copy import deepcopy
 from threading import Thread
 from PySide6.QtCore import Signal, Qt
 from one_dragon_qt.widgets.base_interface import BaseInterface
-from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QTabWidget,QWidget,QLabel,QPushButton,
-    QPlainTextEdit,QTableWidget,QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView,QCheckBox,QLineEdit,QMenu)
+from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QTabWidget,QWidget,
+    QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView)
 from .store import read,save,config,import_inventory,digest,equipment_names,equipment_keys
 from .service import preview
 from .subscriptions import sync, current_conflicts, can_merge, effective, field_tabs, resolve_conflict, save_config, save_config_draft, save_field_override
+from qfluentwidgets import (PushButton, PrimaryPushButton, DropDownPushButton, RoundMenu,
+                            TableWidget, CheckBox, LineEdit, PlainTextEdit, ScrollArea, BodyLabel, StrongBodyLabel, SubtitleLabel, FluentIcon)
+from one_dragon_qt.widgets.setting_card.switch_setting_card import SwitchSettingCard
+from .navigation import DetailPages, ManagerPages
 from .manager_app import wiki_path
 from .drive_disc_manager_const import APP_ID, APP_NAME, PLUGIN_VERSION
 from .reserve_policy import matching_rules, normalized_rule, SELECTORS
@@ -29,36 +33,57 @@ class ManagerInterface(BaseInterface):
         super().__init__('ohmyzzz_settings', APP_NAME, '', parent)
         self.ctx = ctx
         layout = QVBoxLayout(self)
-        self.status = QLabel()
+        layout.setContentsMargins(16, 8, 16, 12)
+        self.status = BodyLabel()
+        self.status.hide()
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.preview_job = None
         self.scanning_game = False
         self.preview_refresh_accounts = set()
         self.preview_finished.connect(self.finish_preview, Qt.ConnectionType.QueuedConnection)
-        self.preview_note = QLabel(); self.preview_note.setWordWrap(True); self.preview_note.hide()
+        self.preview_note = BodyLabel(); self.preview_note.setWordWrap(True); self.preview_note.hide()
         layout.addWidget(self.preview_note)
-        self.tabs = tabs = QTabWidget(); layout.addWidget(tabs)
+        self.navigation = tabs = ManagerPages()
+        self.tabs = tabs.stack
+        layout.addWidget(tabs, 1)
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'仓库预览')
         bar = QHBoxLayout(); box.addLayout(bar)
-        self.scan_button = self.button(bar,'从游戏扫描并预览',self.start_game_scan)
+        self.scan_button = self.button(bar,'扫描仓库',self.start_game_scan,primary=True)
         self.scan_button.setToolTip('读取已打开游戏的驱动盘仓库，保存完整快照并计算预览。本次仅扫描。')
-        self.import_button = self.button(bar,'导入本账号扫描',self.load_inventory)
         self.calculate_buttons = [self.button(bar,'重新计算',self.start_preview)]
-        bar = QHBoxLayout(); box.addLayout(bar)
-        self.pin_button = self.button(bar,'始终保留 / 取消',self.pin)
-        self.quota_button = self.button(bar,'同类备用数量',self.set_quota)
-        self.probe_button = self.button(bar, '读一张盘', self.start_probe)
-        self.detail_button = self.button(bar, '查看盘详情', self.open_disc_detail)
-        self.probe_button.setToolTip('进入已打开游戏的驱动仓库，复读当前盘的主副词条和标记。')
-        self.probe_note = QLabel(); self.probe_note.setWordWrap(True); box.addWidget(self.probe_note)
+        bar.addStretch()
+        self.detail_button = self.button(bar,'盘详情',self.open_disc_detail)
+        more = DropDownPushButton('更多'); bar.addWidget(more)
+        actions = RoundMenu(parent=more); more.setMenu(actions)
+        self.import_button = self.menu_action(actions, '导入扫描文件', self.load_inventory)
+        self.probe_button = self.menu_action(actions, '读一张盘', self.start_probe)
+        actions.addSeparator()
+        self.pin_button = self.menu_action(actions, '切换个人保护', self.pin)
+        self.quota_button = self.menu_action(actions, '同类备用数量', self.set_quota)
+        self.observation_button = self.menu_action(actions, '上次单盘读数', lambda:self.open_disc_detail(probe=True))
+        self.probe_note = BodyLabel(); self.probe_note.setWordWrap(True); box.addWidget(self.probe_note)
         self.probe_finished.connect(self.finish_probe, Qt.ConnectionType.QueuedConnection)
         self.table = self.grid(['套装','号位','主属性','等级','建议','原因'])
+        for col, width in enumerate((150, 70, 130, 84, 110)):
+            self.table.setColumnWidth(col, width)
+        self.table.setWordWrap(False)
+        self.warehouse_summary = StrongBodyLabel()
+        box.addWidget(self.warehouse_summary)
         from .inventory_filter import InventoryFilter
         self.inventory_filter = InventoryFilter(self.table)
-        box.addWidget(self.inventory_filter); box.addWidget(self.table)
-        self.stat_info = QLabel(); self.stat_info.setWordWrap(True); box.addWidget(self.stat_info)
-        self.reserve_info = QLabel(); self.reserve_info.setWordWrap(True); box.addWidget(self.reserve_info)
+        box.addWidget(self.inventory_filter); box.addWidget(self.table, 1)
+        self.empty = QWidget()
+        empty_layout = QVBoxLayout(self.empty)
+        empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_title = SubtitleLabel()
+        self.empty_hint = BodyLabel()
+        for label in (self.empty_title, self.empty_hint):
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty_layout.addWidget(label)
+        box.addWidget(self.empty, 1)
+        self.stat_info = BodyLabel(); self.stat_info.setWordWrap(True); box.addWidget(self.stat_info)
+        self.reserve_info = BodyLabel(); self.reserve_info.setWordWrap(True); box.addWidget(self.reserve_info)
         self.restore_unlock = self.button(box, '取消这张盘的手动解锁保护', self.clear_manual_exception)
         self.restore_unlock.hide()
         self.table.itemSelectionChanged.connect(self.show_reserve)
@@ -66,99 +91,101 @@ class ManagerInterface(BaseInterface):
         self.table.cellDoubleClicked.connect(lambda *_:self.open_disc_detail())
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'规则订阅')
         bar = QHBoxLayout(); box.addLayout(bar)
-        self.auto_sync = QCheckBox('运行时自动更新订阅（间隔 24 小时）')
+        self.auto_sync = CheckBox('运行时自动更新订阅（间隔 24 小时）')
         self.auto_sync.clicked.connect(lambda checked:self.set_flag('auto_sync',checked))
-        self.rule_stamp = QLabel(); self.rule_stamp.setWordWrap(True)
+        self.rule_stamp = BodyLabel(); self.rule_stamp.setWordWrap(True)
         bar.addWidget(self.auto_sync); bar.addWidget(self.rule_stamp,1)
         bar = QHBoxLayout(); box.addLayout(bar)
-        self.rule_search = QLineEdit(); self.rule_search.setPlaceholderText('搜索角色、套装、号位或来源'); self.rule_search.setClearButtonEnabled(True)
-        self.only_conflicts = QCheckBox('只看冲突'); self.rule_total = QLabel()
+        self.rule_search = LineEdit(); self.rule_search.setPlaceholderText('搜索角色、套装、号位或来源'); self.rule_search.setClearButtonEnabled(True)
+        self.only_conflicts = CheckBox('只看冲突'); self.rule_total = BodyLabel()
         bar.addWidget(self.rule_search,1); bar.addWidget(self.only_conflicts); bar.addWidget(self.rule_total)
         self.rule_search.textChanged.connect(self.filter_rules); self.only_conflicts.toggled.connect(self.filter_rules)
         bar = QHBoxLayout(); box.addLayout(bar)
         self.rule_updates = set()
         self.sync_button = self.button(bar,'更新来源',self.update_rules)
         self.rules_finished.connect(self.finish_rules, Qt.ConnectionType.QueuedConnection)
+        bar.addStretch()
         self.rule_actions = {action:self.button(bar, title, lambda a=action:self.resolve(a)) for action, title in
                         [('local','保留本地'), ('remote','采用上游'), ('union','合并')]}
         self.button(bar,'编辑字段',self.edit_rule)
         self.fields = self.grid(['角色 / 套装','字段','来源页签','上游旧值','上游现值','本地规则','当前生效值']); box.addWidget(self.fields)
+        self.fields.setWordWrap(False)
+        self.fields.setColumnWidth(0, 170)
         self.fields.itemSelectionChanged.connect(self.select_rule)
+        self.fields.cellDoubleClicked.connect(lambda *_:self.invoke(self.edit_rule))
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'角色留盘')
-        self.owned_toggle = QCheckBox('自动纳入本账号扫描到的角色')
+        self.owned_toggle = CheckBox('自动纳入本账号扫描到的角色')
         self.owned_toggle.clicked.connect(self.set_include_owned)
         box.addWidget(self.owned_toggle)
         bar = QHBoxLayout(); box.addLayout(bar)
         self.button(bar,'纳入所选角色',lambda:self.select_roster(True))
         self.button(bar,'移出所选角色',lambda:self.select_roster(False))
-        self.agent_summary = QLabel(); box.addWidget(self.agent_summary)
+        self.agent_summary = BodyLabel(); box.addWidget(self.agent_summary)
         self.agent_table = self.grid(['角色','账号扫描','留盘','订阅角色名','套装来源'])
         self.agent_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         box.addWidget(self.agent_table)
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'我的配队')
         engine_bar = QHBoxLayout(); box.addLayout(engine_bar)
         self.button(engine_bar,'打开配装器',self.open_optimizer)
-        self.engine_mode = QLabel(); engine_bar.addWidget(self.engine_mode); engine_bar.addStretch()
-        self.button(engine_bar,'连接设置',self.configure_optimizer)
-        self.profile_menu = QPushButton('管理方案'); engine_bar.addWidget(self.profile_menu)
-        menu = QMenu(self.profile_menu)
-        self.profile_menu.setMenu(menu)
-        for title, duplicate in [('复制为另一配队', True), ('重命名', False)]:
-            action = menu.addAction(title)
-            action.triggered.connect(lambda _, copy=duplicate:self.name_profile(copy))
-        self.button(engine_bar,'分组与优先级',self.edit_allocation)
-        self.apply_button = self.button(engine_bar,'应用当前配队',self.apply_current)
+        self.button(engine_bar,'导入方案',self.import_profile)
+        self.profile_menu = DropDownPushButton('管理方案'); engine_bar.addWidget(self.profile_menu)
+        menu = RoundMenu(parent=self.profile_menu); self.profile_menu.setMenu(menu)
+        self.menu_action(menu,'复制为另一配队',lambda:self.name_profile(True))
+        self.menu_action(menu,'重命名',lambda:self.name_profile(False))
+        self.refresh_target_button = self.menu_action(menu,'同步角色目标',self.refresh_profile)
+        self.menu_action(menu,'分组与优先级',self.edit_allocation)
+        self.menu_action(menu,'满暴偏好',self.edit_tolerance)
+        self.menu_action(menu,'输出窗口',self.edit_windows)
+        self.menu_action(menu,'启用 / 停用',self.toggle_profile)
+        self.menu_action(menu,'设为出场 / 取消',self.set_field_profile)
+        engine_bar.addStretch()
+        self.calculate_buttons.append(self.button(engine_bar,'计算配装',self.start_preview,primary=True))
+        self.apply_button = self.button(engine_bar,'应用配队',self.apply_current)
         self.equip_busy = False
         self.equip_finished.connect(self.finish_equip, Qt.ConnectionType.QueuedConnection)
-        bar = QHBoxLayout(); box.addLayout(bar)
-        self.button(bar,'从配装器保存为配队',self.import_profile)
-        self.refresh_target_button = self.button(bar,'更新所选配队',self.refresh_profile)
-        self.button(bar,'设置满暴容差',self.edit_tolerance)
-        self.button(bar,'输出窗口',self.edit_windows)
-        self.button(bar,'启用 / 停用',self.toggle_profile)
-        self.button(bar,'设为出场 / 取消',self.set_field_profile)
-        self.calculate_buttons.append(self.button(bar,'重新计算',self.start_preview))
         self.teams = self.grid(['方案','同时出场组','输出容差','有效暴击','输出差距','选择依据'])
         self.teams.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         box.addWidget(self.teams)
-        self.team_score = QLabel(); self.team_score.setWordWrap(True); box.addWidget(self.team_score)
-        self.build_tabs = QTabWidget(); box.addWidget(self.build_tabs)
+        self.team_score = BodyLabel(); self.team_score.setWordWrap(True); box.addWidget(self.team_score)
+        self.build_tabs = DetailPages(); box.addWidget(self.build_tabs)
         self.slots = self.grid(['号位','套装','主属性','等级','当前装备者','该盘用途'])
         self.build_tabs.addTab(self.slots,'方案用盘')
         self.panel_stats = self.grid(['面板属性','目标口径','目标值','当前装备','所选方案','相比当前','距目标（所选−目标）'])
         panel = QWidget(); panel_box = QVBoxLayout(panel)
-        self.panel_note = QLabel(); self.panel_note.setWordWrap(True); panel_box.addWidget(self.panel_note)
+        self.panel_note = BodyLabel(); self.panel_note.setWordWrap(True); panel_box.addWidget(self.panel_note)
         panel_box.addWidget(self.panel_stats); self.build_tabs.addTab(panel,'面板对比')
-        self.equip_status = QLabel(); self.equip_status.setWordWrap(True); box.addWidget(self.equip_status)
+        self.score_detail = PlainTextEdit(); self.score_detail.setReadOnly(True); self.build_tabs.addTab(self.score_detail, '计算明细')
+        self.equip_status = BodyLabel(); self.equip_status.setWordWrap(True); box.addWidget(self.equip_status)
         self.teams.itemSelectionChanged.connect(self.show_build)
-        page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'运行设置')
-        flags = QHBoxLayout(); box.addLayout(flags)
+        scroll = ScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(ScrollArea.Shape.NoFrame)
+        page = QWidget(); scroll.setWidget(page); box = QVBoxLayout(page); tabs.addTab(scroll,'运行设置')
+        icons = [FluentIcon.SEARCH, FluentIcon.FILTER, FluentIcon.ACCEPT, FluentIcon.TILES, FluentIcon.SYNC]
         self.flags = {}
-        for key,title in [('run_scanner','运行时重新扫描'),('afterEarly','早场刷后运行'),('applyMarkers','锁定保留盘并标记弃置')]:
-            toggle = QCheckBox(title); self.flags[key] = toggle; flags.addWidget(toggle)
-            toggle.clicked.connect(lambda checked,k=key:self.set_flag(k,checked))
-        self.early_info = QLabel(); self.early_info.setWordWrap(True); box.addWidget(self.early_info)
-        self.scanner_note = QLabel(); self.scanner_note.setWordWrap(True); box.addWidget(self.scanner_note)
-        protections = QHBoxLayout(); box.addLayout(protections)
-        for key, title in [('protect15','保留 +15 盘'),('protectNaturalCrit','保留原生四词条双暴盘')]:
-            toggle = QCheckBox(title); self.flags[key] = toggle; protections.addWidget(toggle)
-            toggle.clicked.connect(lambda checked,k=key:self.set_flag(k,checked))
-        rotate = self.flags['rotateSpareLocks'] = QCheckBox('换代时解除插件的旧备用锁')
-        rotate.setToolTip('新保留盘锁定后，才可解除本插件为备用名额加的锁。手动锁和旧版来源不明的锁继续保留。')
-        rotate.clicked.connect(lambda checked:self.set_flag('rotateSpareLocks', checked))
-        box.addWidget(rotate)
-        self.salvage_info = QLabel(); self.salvage_info.setWordWrap(True); box.addWidget(self.salvage_info)
-        self.button(box,'查看拆解记录',self.show_salvage)
-        self.editor = QPlainTextEdit(); box.addWidget(self.editor)
-        self.editor_drafts = {}; self.editor_account = None
+        for key, title in [('run_scanner','运行时重新扫描'), ('applyMarkers','锁定保留盘并标记弃置'),
+                           ('protect15','保留 +15 盘'), ('protectNaturalCrit','保留原生四词条双暴盘'),
+                           ('rotateSpareLocks','换代时解除插件的旧备用锁')]:
+            toggle = SwitchSettingCard(icon=icons[len(self.flags)], title=title)
+            toggle.value_changed.connect(lambda checked,k=key:self.set_flag(k,checked))
+            self.flags[key] = toggle
+            box.addWidget(toggle)
+        self.scanner_note = BodyLabel(); self.scanner_note.setWordWrap(True); box.addWidget(self.scanner_note)
+        self.salvage_info = BodyLabel(); self.salvage_info.setWordWrap(True); box.addWidget(self.salvage_info)
         bar = QHBoxLayout(); box.addLayout(bar)
+        self.button(bar,'拆解记录',self.show_salvage)
+        self.button(bar,'配装器连接',self.configure_optimizer)
+        self.advanced = QWidget(); advanced_box = QVBoxLayout(self.advanced)
+        self.button(bar,'高级配置',lambda:self.advanced.setVisible(self.advanced.isHidden())); bar.addStretch()
+        self.editor = PlainTextEdit(); self.editor.setMinimumHeight(160); advanced_box.addWidget(self.editor)
+        self.editor_drafts = {}; self.editor_account = None
+        bar = QHBoxLayout(); advanced_box.addLayout(bar)
         self.button(bar,'保存配置',self.save_text)
-        self.button(bar,'放弃草稿，载入已保存配置',self.reset_text)
+        self.button(bar,'放弃草稿',self.reset_text)
+        box.addWidget(self.advanced); self.advanced.hide(); box.addStretch()
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'版本维护')
-        self.updates_enabled = QCheckBox('启动一条龙时提示 OhMyZZZ 更新（所有账号）')
+        self.updates_enabled = CheckBox('启动一条龙时提示 OhMyZZZ 更新（所有账号）')
         self.updates_enabled.clicked.connect(self.set_updates)
         box.addWidget(self.updates_enabled)
-        self.maintenance_status = QLabel(); self.maintenance_status.setWordWrap(True)
+        self.maintenance_status = BodyLabel(); self.maintenance_status.setWordWrap(True)
         box.addWidget(self.maintenance_status)
         bar = QHBoxLayout(); box.addLayout(bar)
         self.button(bar,'立即检查更新',self.check_release)
@@ -166,8 +193,8 @@ class ManagerInterface(BaseInterface):
         self.button(bar,'取消待办',lambda:self.queue_maintenance(''))
         self.button(bar,'刷新状态',self.show_maintenance)
         from .release_notes import installed_history
-        box.addWidget(QLabel('已发布的更新日志'))
-        history = QPlainTextEdit(); history.setReadOnly(True)
+        box.addWidget(BodyLabel('已发布的更新日志'))
+        history = PlainTextEdit(); history.setReadOnly(True)
         history.setPlainText(installed_history(PLUGIN_VERSION))
         box.addWidget(history, 1)
         from .reserve_presets import ReservePresets
@@ -176,12 +203,10 @@ class ManagerInterface(BaseInterface):
         self.reserve_presets.edit.connect(self.edit_preset)
         from .disc_detail_page import DiscDetails
         self.detail = DiscDetails(); self.detail_tab = tabs.addTab(self.detail, '盘详情')
-        tabs.setTabVisible(self.detail_tab,False)
-        self.detail.back.connect(lambda:tabs.setCurrentIndex(0))
+        self.detail.back.connect(lambda:tabs.open('仓库预览'))
         self.detail.rule.connect(self.open_detail_rule)
         self.detail.team.connect(self.open_detail_team)
         self.detail.edit_policy.connect(self.edit_detail_policy)
-        tabs.currentChanged.connect(lambda index:tabs.setTabVisible(self.detail_tab,False) if index!=self.detail_tab else None)
 
     def on_interface_shown(self):
         # OneDragon caches embedded pages by navigation stack, not by account.
@@ -204,7 +229,10 @@ class ManagerInterface(BaseInterface):
             self.only_conflicts.setChecked(True)
 
     def grid(self,headers):
-        table=QTableWidget(0,len(headers)); table.setHorizontalHeaderLabels(headers)
+        table = TableWidget()
+        table.setColumnCount(len(headers))
+        table.verticalHeader().hide()
+        table.setHorizontalHeaderLabels(headers)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.horizontalHeader().setStretchLastSection(True)
@@ -220,7 +248,7 @@ class ManagerInterface(BaseInterface):
         for title, data in [('标记后的范围估算', possible), ('上批拆解对账', last)]:
             page = QWidget(); layout = QVBoxLayout(page); tabs.addTab(page, title)
             if not data:
-                layout.addWidget(QLabel('本账号暂无记录')); continue
+                layout.addWidget(BodyLabel('本账号暂无记录')); continue
             text = data.get('resolution') or ('等待本账号新扫描对账' if data is last else '待选范围估算，未提交拆解')
             if data is possible:
                 text += f"　·　品级未读清 {data['unresolvedGrades']} 张"
@@ -230,7 +258,7 @@ class ManagerInterface(BaseInterface):
                 text += f"　·　内置任务 {completed}　·　库存 {data['beforeTotal']} → {data.get('afterTotal', '待核')} 张"
             if data.get('nativeGrade'):
                 text += f"　·　{data['nativeGrade']}　·　{data.get('selector', '筛选方式待核')}"
-            note = QLabel(text); note.setWordWrap(True); layout.addWidget(note)
+            note = BodyLabel(text); note.setWordWrap(True); layout.addWidget(note)
             grid = self.grid(['套装','号位','主属性','等级','纳入原因','实物核对']); layout.addWidget(grid)
             self.fill(grid, [(e['set'],e['slot'],e['main'],e['level'],e['source'],
                               e.get('after') or ('重复属性待核' if e['beforeMultiplicity'] != 1 else '—'))
@@ -285,15 +313,29 @@ class ManagerInterface(BaseInterface):
         if last: lines.append('最近维护：'+str(last.get('message','')))
         self.maintenance_status.setText(chr(10).join(lines))
 
-    def button(self,layout,title,fn):
-        button=QPushButton(title); layout.addWidget(button)
-        def invoke():
-            try:
-                fn()
-            except Exception as exc:
-                QMessageBox.warning(self,APP_NAME,str(exc))
-        button.clicked.connect(invoke)
+    def set_status(self, message, detail=''):
+        self.status.setText(message)
+        self.status.setToolTip(detail)
+        self.status.setVisible(bool(message))
+
+    def menu_action(self, menu, title, fn):
+        from PySide6.QtGui import QAction
+        action = QAction(title, menu)
+        action.triggered.connect(lambda _=False:self.invoke(fn))
+        menu.addAction(action)
+        return action
+
+    def button(self,layout,title,fn,primary=False):
+        button = PrimaryPushButton(title) if primary else PushButton(title)
+        layout.addWidget(button)
+        button.clicked.connect(lambda _=False:self.invoke(fn))
         return button
+
+    def invoke(self, fn):
+        try:
+            fn()
+        except Exception as exc:
+            QMessageBox.warning(self,APP_NAME,str(exc))
 
     @staticmethod
     def fill(table,rows):
@@ -333,7 +375,7 @@ class ManagerInterface(BaseInterface):
         self.show_probe(read(self.root/'single-disc.json', {}))
         if text != self.editor.toPlainText(): self.editor.setPlainText(text)
         self.rows=self.report.get('discs',[])
-        for key,toggle in self.flags.items(): toggle.setChecked(bool(self.cfg.get(key)))
+        for key,toggle in self.flags.items(): toggle.setValue(bool(self.cfg.get(key)), emit_signal=False)
         self.auto_sync.setChecked(self.cfg['auto_sync'])
         from datetime import datetime
         updated = self.rules.get('updated')
@@ -352,12 +394,22 @@ class ManagerInterface(BaseInterface):
         self.rule_rows = {key:self.rule_row(key) for key in self.keys}
         if not conflicts: self.only_conflicts.setChecked(False)
         self.filter_rules()
-        summary = f"上次预览 {self.report.get('counts',{})}" if self.report else '尚无完整库存预览'
+        counts = self.report.get('counts', {})
+        totals = [f'库存 {len(self.rows)} 张']
+        totals.extend(f'{name} {counts[name]}' for name in ('保留','弃置候选','已弃置','待复核') if counts.get(name))
+        self.warehouse_summary.setText('    ·    '.join(totals))
+        self.warehouse_summary.setVisible(bool(self.rows))
+        summary = ''
         if self.preview_stale:
-            summary += ' · '+'、'.join(changed_inputs)+'已更新，请重新计算'
-        self.status.setText(f"{summary}　待处理规则冲突 {len(conflicts)}　"+' / '.join(self.report.get('issues',[])+self.report.get('warnings',[])))
+            summary = '、'.join(changed_inputs)+'已更新，请重新计算预览'
+        messages = [summary] if self.preview_stale else []
+        if conflicts: messages.append(f'{len(conflicts)} 条规则冲突')
+        messages.extend(self.report.get('issues', []) + self.report.get('warnings', []))
+        message = messages[0] if messages else ''
+        if len(messages) > 1:
+            message += f'（另 {len(messages)-1} 项）'
+        self.set_status(message, '\n'.join(messages))
         self.refresh_teams()
-        self.engine_mode.setText('手动连接 · '+self.cfg['optimizer_url'] if self.cfg['optimizer_url'] else '由 OhMyZZZ 按需启动')
         from .salvage_audit import needs_review
         salvage = read(self.root/'dismantle-result.json', {})
         from .task_order import account_order
@@ -374,12 +426,6 @@ class ManagerInterface(BaseInterface):
         except Exception as exc:
             scanner_note = '宿主设置暂未读到 · '+str(exc)
         self.scanner_note.setText('仓库扫描器 · '+scanner_note)
-        early = read(self.root/'early-result.json', {})
-        labels = {'COMPLETED':'完成', 'daily':'由日常列表管理', 'running':'开始后尚无完成回执',
-                  'FAILED':'失败', 'STOPPED':'已停止', 'NOT_STARTED':'未启动'}
-        status = early.get('status', '')
-        parts = [early.get('date'), labels.get(status, status), early.get('reason')]
-        self.early_info.setText('最近早场 · ' + (' · '.join(filter(None, parts)) or '暂无记录'))
         field = self.cfg.get('fieldProfile')
         receipt = read(self.root/'equip-result.json', {})
         parts = [f'下次运行出场方案 · {field}' if field else '只计算配装']
@@ -389,6 +435,7 @@ class ManagerInterface(BaseInterface):
             parts.append('上次换装待核对 · '+receipt.get('error','下次从实际穿戴情况继续'))
         self.equip_status.setText('　｜　'.join(parts))
         self.refresh_open_detail()
+        self.update_calculate_buttons()
 
     def refresh_roster(self, wiki, inventory):
         self.owned_toggle.setChecked(self.cfg['includeOwned'])
@@ -448,6 +495,8 @@ class ManagerInterface(BaseInterface):
                     pct(result.get('effectiveCritRate',result.get('critRate'))),pct(result.get('relativeLossPct')),reason)
         self.fill(self.teams,[row(i,p) for i,p in enumerate(profiles)])
         self.teams.resizeColumnsToContents()
+        visible_rows = min(4, max(1, len(profiles)))
+        self.teams.setFixedHeight(self.teams.horizontalHeader().height() + self.teams.verticalHeader().defaultSectionSize() * visible_rows + 4)
         if profiles:
             index = next((i for i,p in enumerate(profiles) if p['name']==selected),0)
             self.teams.selectRow(index)
@@ -469,7 +518,12 @@ class ManagerInterface(BaseInterface):
         self.fill(self.slots,[])
         self.fill(self.panel_stats,[])
         self.panel_note.setText('选择已计算的支援、击破、异常或防护等职业方案，可查看目标与装备差值。')
-        self.team_score.setText('在配装器保存角色目标后，可导入为独立配队。')
+        self.score_detail.clear()
+        self.teams.setVisible(bool(profiles))
+        self.build_tabs.setVisible(bool(selected))
+        self.equip_status.setVisible(bool(profiles))
+        self.team_score.show()
+        self.team_score.setText('打开配装器保存角色目标，然后导入第一套方案。')
         if index < 0 or index >= len(self.cfg['profiles']): return
         profile = self.cfg['profiles'][index]
         result = self.report.get('assignments',{}).get(profile['name'],{})
@@ -477,7 +531,8 @@ class ManagerInterface(BaseInterface):
             self.team_score.setText(result.get('error') or '启用并重新计算后可查看六个号位。'); return
         by_fp = {r['fp']:r for r in self.rows}
         rows = [by_fp[fp] for fp in result['ids'] if fp in by_fp]
-        self.fill(self.slots,[(r['slot'],r['set'],r['main'],r['level'],owner_label(r),
+        from .reserve_presets import STAT_NAMES
+        self.fill(self.slots,[(r['slot'],self.set_names.get(r['set'],r['set']),STAT_NAMES.get(r['main'],r['main']),r['level'],owner_label(r),
                                '、'.join(r['reasons'])) for r in rows])
         self.slots.resizeColumnsToContents()
         details = [profile['name']]
@@ -529,7 +584,9 @@ class ManagerInterface(BaseInterface):
                 details.append('已达到联合搜索上限')
         if self.preview_stale:
             details.append('上次计算结果 · 请用当前库存和规则重新计算')
-        self.team_score.setText('　｜　'.join(details))
+        self.score_detail.setPlainText(chr(10).join(details))
+        self.team_score.setText(binding_note)
+        self.team_score.setVisible(bool(binding_note))
 
     @staticmethod
     def crit_summary(result):
@@ -649,7 +706,7 @@ class ManagerInterface(BaseInterface):
         request, targets = confirmation(account, name, current_cfg, self.report, read(root/'inventory.json'))
         dialog = QDialog(self); dialog.setWindowTitle('应用当前配队'); dialog.resize(720,420)
         panel = QVBoxLayout(dialog)
-        panel.addWidget(QLabel(f'{name} · {len(targets)} 个号位'))
+        panel.addWidget(BodyLabel(f'{name} · {len(targets)} 个号位'))
         from .store import equipment_names
         from .stat_reading import display_values
         sets = equipment_names(wiki) | current_cfg.get('aliases',{})
@@ -658,7 +715,7 @@ class ManagerInterface(BaseInterface):
         self.fill(table,[(t['profile'], agents.get(t['profile']) or t['agent'], t['slot'], sets.get(t['set'],t['set']),
                           display_values(t['observedValues']), owner_label(t)) for t in targets])
         table.resizeColumnsToContents(); panel.addWidget(table)
-        note = QLabel('请先进入游戏大世界。确认后会重新扫描驱动盘，按清单换装并复读各个号位。目标变化时会返回预览。')
+        note = BodyLabel('请先进入游戏大世界。确认后会重新扫描驱动盘，按清单换装并复读各个号位。目标变化时会返回预览。')
         note.setWordWrap(True); panel.addWidget(note)
         actions = QHBoxLayout(); panel.addLayout(actions); actions.addStretch()
         back = self.button(actions,'返回',dialog.reject); back.setDefault(True)
@@ -716,10 +773,10 @@ class ManagerInterface(BaseInterface):
         try:
             self.check_account(self.root)
             cfg = dict(self.cfg, **{key:checked})
-            if checked and key in ('afterEarly','applyMarkers'):
+            if checked and key == 'applyMarkers':
                 cfg['run_scanner'] = True
             if key=='run_scanner' and not checked:
-                cfg.update(afterEarly=False,applyMarkers=False,fieldProfile='')
+                cfg.update(applyMarkers=False,fieldProfile='')
             from .validation import validate
             validate(cfg)
             save_config(self.root,cfg,self.config_hash)
@@ -762,18 +819,13 @@ class ManagerInterface(BaseInterface):
                 self.refresh_open_detail()
 
     def show_probe(self, record):
-        from .stat_reading import display_values
         self.probe_record = record
-        self.detail_button.setEnabled(record.get('status')=='verified' or self.table.currentRow() >= 0)
-        text = record.get('error', '')
-        if record.get('status') == 'verified':
-            disc = record['disc']
-            lock = '已锁定' if disc['lockState']=='locked' else '未锁定'
-            mark = '已弃置' if disc['markState']=='marked' else '未弃置'
-            text = (f"{disc['setKey']}　{disc['slotKey']} 号位 +{disc['level']}　{lock} · {mark}　"
-                    + display_values(disc['observedValues']))
-        self.probe_note.setText(('上次单盘读取 · ' + text) if text else '')
-        self.probe_note.setVisible(bool(text))
+        verified = record.get('status') == 'verified'
+        self.observation_button.setEnabled(verified)
+        self.detail_button.setEnabled(verified or self.table.currentRow() >= 0)
+        error = record.get('error', '')
+        self.probe_note.setText(error)
+        self.probe_note.setVisible(bool(error))
 
     def configure_optimizer(self):
         from .optimizer import loopback_json
@@ -893,10 +945,20 @@ class ManagerInterface(BaseInterface):
         except Deferred as exc:
             raise ValueError('插件任务或维护正在运行，请结束后再计算仓库预览。') from exc
 
+    def update_calculate_buttons(self):
+        root = getattr(self, 'root', None)
+        has_inventory = root is not None and (root / 'inventory.json').is_file()
+        can_calculate = has_inventory and self.preview_job is None
+        self.calculate_buttons[0].setEnabled(can_calculate)
+        self.calculate_buttons[1].setEnabled(bool(can_calculate and getattr(self, 'cfg', {}).get('profiles')))
+        for button in self.calculate_buttons:
+            button.setToolTip('' if has_inventory else '先扫描仓库或导入扫描文件')
+
     def show_preview_job(self, error=''):
         busy = self.preview_job is not None
-        for button in [self.scan_button, self.import_button, *self.calculate_buttons]:
+        for button in (self.scan_button, self.import_button):
             button.setEnabled(not busy)
+        self.update_calculate_buttons()
         message = error
         if busy:
             message = (f'正在读取账号 {self.preview_job.name} 的游戏仓库并计算预览…' if self.scanning_game
@@ -1065,7 +1127,7 @@ class ManagerInterface(BaseInterface):
                         self.detail.tabs.setCurrentIndex(tab)
                         return
         self.tabs.setCurrentIndex(0)
-        self.status.setText(self.status.text()+'　原盘读数已变化或无法唯一对应，请重新选择。')
+        self.set_status('原盘读数已变化，请重新选择。')
 
     def present_detail(self, row):
         from .disc_trace import probe_trace
@@ -1088,7 +1150,7 @@ class ManagerInterface(BaseInterface):
             quotas = '、'.join(purpose+' '+('不限' if count is None else f'{count} 张')
                                for purpose, (_, count, _) in limits.items())
             self.detail.spares.setText('当前同类名额　'+quotas+'　｜　'+self.detail.spares.text())
-        self.tabs.setTabVisible(self.detail_tab,True); self.tabs.setCurrentIndex(self.detail_tab)
+        self.navigation.open('盘详情')
 
     def edit_detail_policy(self, action):
         try:
@@ -1124,24 +1186,34 @@ class ManagerInterface(BaseInterface):
     def show_reserve(self):
         index = self.table.currentRow()
         selected = 0 <= index < len(self.rows)
+        has_rows = bool(self.rows)
+        self.table.setVisible(selected)
+        self.empty.setVisible(not selected)
+        self.inventory_filter.setVisible(has_rows)
+        if not selected:
+            self.empty_title.setText('没有匹配的驱动盘' if has_rows else ('仓库里没有驱动盘' if self.report else '还没有仓库预览'))
+            self.empty_hint.setText('换个筛选条件试试' if has_rows else ('下次扫描会更新库存' if self.report else '扫描游戏仓库，或从「更多」导入扫描文件'))
         self.pin_button.setEnabled(selected and not self.rows[index]['marked'])
         self.quota_button.setEnabled(selected)
         self.detail_button.setEnabled(selected or self.probe_record.get('status')=='verified')
-        self.detail_button.setText('查看盘详情' if selected or self.probe_record.get('status')!='verified' else '查看上次单盘读数')
-        self.stat_info.clear()
+        self.detail_button.setText('盘详情' if selected or self.probe_record.get('status')!='verified' else '上次单盘读数')
+        self.stat_info.hide()
         selected_row = self.rows[index] if selected else {}
         self.restore_unlock.setText('取消这张盘的撤销弃置保护' if selected_row.get('manualKeep') else '取消这张盘的手动解锁保护')
         self.restore_unlock.setVisible(bool(selected_row.get('manualUnlock') or selected_row.get('manualKeep')) and not selected_row['marked'])
-        self.reserve_info.setText('选择一张盘，可查看同类备用名额和各用途的实际张数。')
+        self.reserve_info.hide()
         if not 0 <= index < len(self.rows): return
         from .stat_reading import display_values
-        self.stat_info.setText(display_values(self.rows[index].get('observedValues')))
+        if selected_row.get('observedValues'):
+            self.stat_info.setText(display_values(selected_row['observedValues']))
+            self.stat_info.show()
         group = self.coverage.get(tuple(self.rows[index][k] for k in SELECTORS))
         if not group: return
         parts = []
         for use in group['purposes']:
             cap = '不限' if use['count'] is None else str(use['count'])
             parts.append(f"{use['purpose']} {use['covered']}/{cap}")
+        self.reserve_info.show()
         self.reserve_info.setText(f"同类可选 {group['eligible']} 张，实际备用 {group['kept']} 张　｜　"+'　'.join(parts))
 
     def clear_manual_exception(self):
@@ -1201,7 +1273,7 @@ class ManagerInterface(BaseInterface):
         if root in self.rule_updates: return
         self.rule_updates.add(root)
         self.sync_button.setEnabled(False)
-        self.status.setText('正在更新此账号的订阅来源…')
+        self.set_status('正在更新此账号的订阅来源…')
 
         def fetch_rules():
             error = ''
@@ -1224,7 +1296,7 @@ class ManagerInterface(BaseInterface):
         self.sync_button.setEnabled(True)
         if error:
             fallback = '沿用最近成功版本' if self.rules.get('fields') else '尚无可用规则快照'
-            self.status.setText(f'订阅更新失败，{fallback} · {error}')
+            self.set_status(f'订阅更新失败，{fallback} · {error}')
             return
         try:
             if (root/'inventory.json').is_file():
@@ -1237,7 +1309,7 @@ class ManagerInterface(BaseInterface):
                 self.only_conflicts.setChecked(True)
         except Exception as exc:
             self.reload()
-            self.status.setText('订阅已更新，预览待重新计算 · '+str(exc))
+            self.set_status('订阅已更新，预览待重新计算 · '+str(exc))
 
     def edit_rule(self):
         i=self.fields.currentRow()
@@ -1338,13 +1410,18 @@ class ManagerInterface(BaseInterface):
                 self.fields.selectRow(self.visible_keys.index(selected) if selected in self.visible_keys else 0)
         finally:
             self.fields.blockSignals(False)
+        for index, key in enumerate(self.visible_keys):
+            self.fields.item(index, 6).setToolTip('上游原文　' + self.rule_rows[key][4])
         self.rule_total.setText(f'{len(self.visible_keys)} / {len(self.keys)} 条')
         self.select_rule()
 
     def select_rule(self):
         index = self.fields.currentRow()
         conflict = self.conflicts.get(self.visible_keys[index]) if 0 <= index < len(self.visible_keys) else None
+        for col in (3, 4):
+            self.fields.setColumnHidden(col, not conflict)
         for action, button in self.rule_actions.items():
+            button.setVisible(bool(conflict))
             button.setEnabled(can_merge(conflict) if action=='union' else bool(conflict))
 
     def resolve(self,action):

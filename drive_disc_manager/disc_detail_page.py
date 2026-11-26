@@ -1,13 +1,15 @@
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QPushButton, QTableWidget,
-                               QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout,
+                               QTableWidgetItem, QVBoxLayout, QWidget)
 
+from qfluentwidgets import BodyLabel, TableWidget, PushButton, PlainTextEdit
+from .navigation import DetailPages
 from .disc_trace import teams_for_disc
 from .stat_reading import display_values
 
 
 def label():
-    widget = QLabel()
+    widget = BodyLabel()
     widget.setTextFormat(Qt.TextFormat.PlainText)
     widget.setWordWrap(True)
     widget.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -15,7 +17,9 @@ def label():
 
 
 def table(headers):
-    widget = QTableWidget(0, len(headers))
+    widget = TableWidget()
+    widget.setColumnCount(len(headers))
+    widget.verticalHeader().hide()
     widget.setHorizontalHeaderLabels(headers)
     widget.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -53,28 +57,27 @@ class DiscDetails(QWidget):
         super().__init__()
         outer = QVBoxLayout(self)
         bar = QHBoxLayout(); outer.addLayout(bar)
-        close = QPushButton('返回仓库'); bar.addWidget(close); close.clicked.connect(self.back.emit)
+        close = PushButton('返回仓库'); bar.addWidget(close); close.clicked.connect(self.back.emit)
         self.title = label(); bar.addWidget(self.title, 1)
-        self.pin = QPushButton(); bar.addWidget(self.pin)
-        self.quota = QPushButton('同类备用数量'); bar.addWidget(self.quota)
+        self.pin = PushButton(); bar.addWidget(self.pin)
+        self.quota = PushButton('同类备用数量'); bar.addWidget(self.quota)
         self.pin.clicked.connect(lambda: self.edit_policy.emit('pin'))
         self.quota.clicked.connect(lambda: self.edit_policy.emit('quota'))
         self.stats = label(); outer.addWidget(self.stats)
-        self.tabs = QTabWidget(); outer.addWidget(self.tabs)
+        self.tabs = DetailPages(); outer.addWidget(self.tabs)
         page = QWidget(); box = QVBoxLayout(page); self.tabs.addTab(page,'规则来源')
         self.rules = table(['角色 / 套装','字段','来源页签','对这张盘的判断']); box.addWidget(self.rules)
         self.field_value = label(); box.addWidget(self.field_value)
-        self.rule_button = QPushButton('在规则订阅中查看'); box.addWidget(self.rule_button)
+        self.rule_button = PushButton('在规则订阅中查看'); box.addWidget(self.rule_button)
         self.rule_button.clicked.connect(self.open_rule)
         self.rules.itemSelectionChanged.connect(self.select_rule)
         page = QWidget(); box = QVBoxLayout(page); self.tabs.addTab(page,'配队与备用')
         self.teams = table(['方案','角色','同时出场组','选择依据']); box.addWidget(self.teams)
-        self.team_button = QPushButton('在我的配队中查看'); box.addWidget(self.team_button)
+        self.team_button = PushButton('在我的配队中查看'); box.addWidget(self.team_button)
         self.team_button.clicked.connect(self.open_team)
         self.teams.itemSelectionChanged.connect(self.select_team)
         self.spares = label(); box.addWidget(self.spares)
-        from PySide6.QtWidgets import QPlainTextEdit
-        self.summary = QPlainTextEdit(); self.summary.setReadOnly(True); self.tabs.addTab(self.summary,'判定明细')
+        self.summary = PlainTextEdit(); self.summary.setReadOnly(True); self.tabs.addTab(self.summary,'判定明细')
         self.version = label(); outer.addWidget(self.version)
 
     def present(self, row, report, *, set_name, coverage, rule_keys, team_names, probe=False, stale=False, pinned=False):

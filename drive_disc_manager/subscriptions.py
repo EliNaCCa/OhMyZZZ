@@ -328,6 +328,7 @@ def save_config_draft(root, base, edited):
                 current.pop(key, None)
             else:
                 current[key] = after
+        current.pop('afterEarly', None)
         validate(current)
         save(root/'config.json', current)
 

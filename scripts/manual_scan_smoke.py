@@ -24,7 +24,7 @@ def smoke(home, tmp):
     app = QApplication([])
     os_utils.set_work_dir(str(tmp))
     root = tmp/'accounts'/'1'
-    cfg = dict(config(root), run_scanner=True, afterEarly=True, applyMarkers=True, fieldProfile='日常出场')
+    cfg = dict(config(root), run_scanner=True, applyMarkers=True, fieldProfile='日常出场')
     save(root/'config.json', cfg)
     disc = dict(id='1', setKey='SwingJazz', slotKey='4', mainStatKey='def_', rarity='S', level=0,
                 substats=[dict(key=s, upgrades=0) for s in ('pen', 'hp', 'atk')],
@@ -98,6 +98,21 @@ def smoke(home, tmp):
     from drive_disc_manager.salvage_audit import close_reviewed, needs_review
     close_reviewed(root, outstanding['batch'], outstanding['afterInventory'])
     assert not needs_review(read(root/'dismantle-result.json'))
+    # Fresh account, ordinary task-list entry. Use cached sample rules to stay offline.
+    from time import time
+    fresh = root.parent / '2'
+    manager.account = ctx.current_instance_idx = 2
+    manager.root = fresh
+    save(fresh/'rules.json', dict(updated=time(), fields={}, version='fixture'))
+    assert not (fresh/'config.json').exists()
+    with patch('drive_disc_manager.scan_marks.capture_marks', lambda _:nullcontext()), \
+         patch('drive_disc_manager.live.Marker') as marker, \
+         patch('drive_disc_manager.loadout.apply_loadout') as equip, \
+         patch('drive_disc_manager.dismantle.handoff') as dismantle:
+        assert '预览' in ManagerApp.manage_inventory(manager)
+        assert len(read(fresh/'preview.json')['discs']) == 1
+        for action in (marker, equip, dismantle):
+            action.assert_not_called()
     widget.close()
 
 

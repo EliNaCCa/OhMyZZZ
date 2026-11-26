@@ -113,12 +113,14 @@ def inventory(z):
 
 def defaults():
     return dict(reserve=2, reserve_rules=[], trimRecommended=False, pins=[], protect15=True, protectNaturalCrit=True, profiles=[], overrides={},
-                auto_sync=True, run_scanner=False, afterEarly=False, applyMarkers=False, rotateSpareLocks=False, fieldProfile='',
+                auto_sync=True, run_scanner=True, applyMarkers=False, rotateSpareLocks=False, fieldProfile='',
                 optimizer_url='', roster=[], aliases={}, includeOwned=True, futureAgents=[], excludedAgents=[])
 
 
 def config(root):
-    return {**defaults(), **read(root / 'config.json', {})}
+    saved = read(root / 'config.json', {})
+    saved.pop('afterEarly', None)  # Retired scheduler integration.
+    return {**defaults(), **saved}
 
 
 def observed_agents(snapshot):

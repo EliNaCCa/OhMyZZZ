@@ -206,14 +206,14 @@ def smoke(home, tmp):
     save(account/'config.json',dict(config(account), profiles=[team], fieldProfile=team['name'], run_scanner=True))
     widget.reload()
     with patch.object(QInputDialog, 'getText', return_value=('爆发队',True)):
-        widget.profile_menu.menu().actions()[0].trigger()
+        widget.profile_menu.menu().menuActions()[0].trigger()
     current = config(account)
     original_team, variant = current['profiles']
     assert original_team == team and variant == dict(team, name='爆发队', simultaneous='')
     assert current['fieldProfile'] == original_team['name'] and widget.teams.currentRow() == 1
     widget.teams.selectRow(0)
     with patch.object(QInputDialog, 'getText', return_value=('常态队',True)):
-        widget.profile_menu.menu().actions()[1].trigger()
+        widget.profile_menu.menu().menuActions()[1].trigger()
     assert config(account)['fieldProfile'] == '常态队' and config(account)['profiles'][1] == variant
     from contextlib import nullcontext
     source = dict(sourceId='ellen', agent='Ellen Joe', requiresClaimMapping=False,
@@ -247,7 +247,8 @@ def smoke(home, tmp):
     save(account/'preview.json', dict(widget.report, managerVersion='0.0.0', rules=widget.rules['version'],
                                       inventory=digest(old_inventory)))
     widget.reload()
-    assert '插件版本已更新，请重新计算' in widget.status.text() and not widget.apply_button.isEnabled()
+    assert '插件版本' in widget.status.text() and '请重新计算' in widget.status.text()
+    assert not widget.apply_button.isEnabled()
     (account/'inventory.json').unlink()
     browser = widget.inventory_filter
     browser.search.setText('摇摆爵士 5号')
@@ -330,7 +331,9 @@ def smoke(home, tmp):
         while widget.preview_job is not None and monotonic() < deadline:
             app.processEvents()
             sleep(.005)
-        assert widget.preview_job is None and all(b.isEnabled() for b in widget.calculate_buttons)
+        assert widget.preview_job is None
+        assert widget.calculate_buttons[0].isEnabled() == (widget.root/'inventory.json').is_file()
+        assert not widget.calculate_buttons[1].isEnabled()  # no saved team in this fixture
     with patch('drive_disc_manager.settings.preview', side_effect=delay_first) as worker:
         widget.calculate_buttons[0].click()
         assert started.wait(1) and not widget.import_button.isEnabled()
@@ -342,7 +345,7 @@ def smoke(home, tmp):
         assert read(account/'preview.json')['configuration'] == digest(config(account))
     started.clear(); proceed.clear()
     with patch('drive_disc_manager.settings.preview', side_effect=delay_first) as worker:
-        widget.calculate_buttons[1].click()
+        widget.calculate_buttons[0].click()
         assert started.wait(1)
         context.current_instance_idx = 2
         widget.on_interface_shown()

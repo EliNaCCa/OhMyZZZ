@@ -105,13 +105,15 @@ class ManagerApp(ZApplication):
                 names = equipment_names(read(wiki_path(), {}))
                 names.update(cfg.get('aliases', {}))
                 reconcile_scan(self.root, snapshot, names)
+            if scanner is None and not (self.root / 'inventory.json').is_file():
+                return self.round_fail('本账号还没有库存。请开启「运行时重新扫描」，或在仓库页导入扫描文件。')
             report = preview(self.root,wiki_path(),snapshot=pinned)
             if scan_only:
                 return self.round_success(f"已扫描 {len(snapshot['discs'])} 张驱动盘 · 预览已保存")
             if mark:
                 from .salvage_audit import needs_review
                 if needs_review(read(self.root/'dismantle-result.json', {})):
-                    return self.round_fail('上批拆解待复核，请在「运行设置 → 查看拆解记录」核对后继续')
+                    return self.round_fail('上批拆解待复核，请在「设置 → 拆解记录」核对后继续')
             if self.group == MANUAL_GROUP:
                 self.guard_game()
                 verify_selection(request, cfg, report, snapshot)

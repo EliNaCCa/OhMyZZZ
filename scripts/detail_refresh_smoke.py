@@ -20,6 +20,15 @@ def smoke(home, tmp):
     ctx = SimpleNamespace(current_instance_idx=1, get_plugin_data_dir=lambda _:tmp/'accounts')
     widget = ManagerInterface(ctx)
     widget.on_interface_shown()
+    nav = widget.navigation
+    assert list(nav.pivot.items) == ['仓库', '配队', '规则', '设置']
+    assert not widget.empty.isHidden() and widget.table.isHidden()
+    nav.pivot.items['规则'].click()
+    nav.selectors['规则'].items['备用规则'].click()
+    assert widget.tabs.currentWidget() is widget.reserve_presets
+    nav.pivot.items['设置'].click()
+    assert widget.tabs.currentWidget() is nav.pages['运行设置'] and 'afterEarly' not in widget.flags
+    nav.pivot.items['仓库'].click()
     root = widget.root
     a = dict(id='a', fp='first', set='SwingJazz', slot='4', main='atk_', level=0,
              decision='保留', reasons=['备用 · 通用'], review=[], marked=False)
@@ -51,7 +60,7 @@ def smoke(home, tmp):
     widget.table.selectRow(0)
     widget.detail_button.click()
     finish([a, dict(updated, ambiguous=True), dict(updated, id='copy', ambiguous=True)])
-    assert widget.tabs.currentIndex() == 0 and not widget.tabs.isTabVisible(widget.detail_tab)
+    assert widget.tabs.currentIndex() == 0 and widget.tabs.currentWidget() is nav.pages['仓库预览']
     widget.table.selectRow(1)
     widget.detail_button.click()
     finish([a, updated])  # A surviving lookalike cannot identify the original physical copy.

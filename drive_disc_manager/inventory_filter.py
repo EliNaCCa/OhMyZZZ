@@ -1,5 +1,6 @@
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QWidget
+from qfluentwidgets import BodyLabel, ComboBox, LineEdit
 
 from .disc_owner import owner_label
 from .reserve_presets import STAT_NAMES
@@ -14,12 +15,12 @@ class InventoryFilter(QWidget):
         self.table = table
         self.index = []
         self.rows = []
-        self.search = QLineEdit()
+        self.search = LineEdit()
         self.search.setPlaceholderText('搜索套装、号位、主属性或保留理由')
         self.search.setClearButtonEnabled(True)
-        self.kind = QComboBox()
+        self.kind = ComboBox()
         self.kind.addItems(['全部', '配队用盘', '额外备用', '保留', '弃置候选', '已标记弃置', '待复核'])
-        self.total = QLabel()
+        self.total = BodyLabel()
         bar = QHBoxLayout(self)
         bar.setContentsMargins(0, 0, 0, 0)
         bar.addWidget(self.search, 1)
@@ -46,13 +47,19 @@ class InventoryFilter(QWidget):
         self.rows = rows
         self.index = []
         formatted = []
+        tooltips = []
         for row in rows:
             reasons = row['reasons']
-            notes = '、'.join(dict.fromkeys(reasons + row['review'] + row.get('explanation',[]) + row.get('recommendations',[])))
+            items = list(dict.fromkeys(row['review'] + reasons + row.get('explanation', []) + row.get('recommendations', [])))
+            notes = '、'.join(items)
+            headline = items[0] if items else '未命中保留规则'
+            if len(items) > 1:
+                headline += f'  ·  +{len(items) - 1}'
             suit = names.get(row['set'], row['set'])
             main = STAT_NAMES.get(row['main'],row['main'])
             slot = str(row['slot'])+' 号位'
-            formatted.append((suit,slot,main,row['level'],row['decision'],notes))
+            formatted.append((suit,row['slot'],main,f"+{row['level']}",row['decision'],headline))
+            tooltips.append(notes)
             kinds = {row['decision']}
             if row['marked']: kinds.add('已标记弃置')
             if any(reason.startswith('配队 · ') for reason in reasons): kinds.add('配队用盘')
@@ -62,6 +69,8 @@ class InventoryFilter(QWidget):
         self.table.blockSignals(True)
         try:
             fill(self.table, formatted)
+            for index, note in enumerate(tooltips):
+                self.table.item(index, 5).setToolTip(note)
         finally:
             self.table.blockSignals(False)
         self.filter(selected)

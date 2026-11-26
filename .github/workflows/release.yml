@@ -20,7 +20,7 @@ jobs:
       - run: python scripts/allocation_input_smoke.py
       - run: python scripts/scan_copies_smoke.py
       - run: python scripts/maintenance_smoke.py
-      - run: python scripts/early_smoke.py
+      - run: python scripts/task_order_smoke.py
       - run: python scripts/subscription_smoke.py
       - run: python scripts/package_manager.py
       - name: Keep the verified package for recovery
