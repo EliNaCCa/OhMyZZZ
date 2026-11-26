@@ -173,13 +173,34 @@ class Marker:
             if mode=='release' and row['decision']=='弃置候选' and row.get('managedSpareLock'): todo[fp]=row
         return todo
 
+    def next_page(self):
+        from inventory_scan.drive_disk.drive_disk_scan_const import SCROLL_MOVE_MIN_DIFF
+        from .scan_copies import scroll_thumb
+
+        def position():
+            screen = self.frame()
+            thumb = scroll_thumb(screen)
+            # Only card pixels count. The footer and right-hand detail panel can animate independently.
+            cards = cv2.resize(cv2.cvtColor(screen[240:860,110:1310], cv2.COLOR_RGB2GRAY), (160, 96),
+                               interpolation=cv2.INTER_AREA)
+            return thumb, cards
+
+        start, before = position()
+        self.app.ctx.controller.scroll(3, self.grid._scroll_list_center())
+        time.sleep(.6)
+        end, after = position()
+        return bool(start and end and end[1] > start[1]) or cv2.absdiff(before, after).mean() >= SCROLL_MOVE_MIN_DIFF
+
     def apply(self, mode, todo):
-        seen = set()
-        for page in range(400):
+        stop = '达到翻页上限'
+        stalled = False
+        for _ in range(400):
             points = self.grid._detect_points(self.frame())
-            if not points: break
+            if not points:
+                stop = '仓库网格未识别'
+                break
             grid,_ = self.grid._resolve_grid(points)
-            new = 0
+            self.grid.grid_rows = grid
             for r,line in enumerate(grid):
                 for c,pt in enumerate(line):
                     self.frame()
@@ -189,16 +210,18 @@ class Marker:
                     if not detail: continue
                     fp,_,mark,_ = detail
                     self.observed[fp] = mark
-                    if fp not in seen:
-                        seen.add(fp); new+=1
                     if fp in todo and self.handle_disc(mode, detail, todo[fp]):
                         del todo[fp]
                         if not todo: return
             if not todo: return
-            if not new and page: break
-            self.app.ctx.controller.scroll(3,grid[-1][0]); time.sleep(.6)
+            moved = self.next_page()
+            if not moved and stalled:
+                stop = '仓库列表未移动'
+                break
+            stalled = not moved
         if todo:
-            raise ValueError(f'{mode} 尚有 {len(todo)} 张未核实，保留现场记录')
+            action = {'lock':'锁定', 'release':'解除旧备用锁', 'mark':'弃置标记'}[mode]
+            raise ValueError(f'{stop}，{action}尚有 {len(todo)} 张未核实，保留现场记录')
 
     def run(self):
         reason = marker_conflict(self.app.ctx,self.app.account,self.app.group)

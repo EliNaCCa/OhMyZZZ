@@ -297,8 +297,6 @@ class ManagerInterface(BaseInterface):
                 item=QTableWidgetItem(str(value)); item.setToolTip(str(value)); table.setItem(r,col,item)
 
     def reload(self):
-        if self.tabs.currentIndex() == self.detail_tab:
-            self.tabs.setCurrentIndex(0)
         if self.editor_account is not None:
             text = self.editor.toPlainText()
             if text != pretty(self.editor_base):
@@ -384,6 +382,7 @@ class ManagerInterface(BaseInterface):
         elif receipt.get('status') in ('checking','interrupted'):
             parts.append('上次换装待核对 · '+receipt.get('error','下次从实际穿戴情况继续'))
         self.equip_status.setText('　｜　'.join(parts))
+        self.refresh_open_detail()
 
     def refresh_roster(self, wiki, inventory):
         self.owned_toggle.setChecked(self.cfg['includeOwned'])
@@ -751,6 +750,8 @@ class ManagerInterface(BaseInterface):
         if str(self.root) == root and self.root.name == str(self.ctx.current_instance_idx):
             self.show_probe(record)
             self.show_reserve()
+            if self.tabs.currentWidget() is self.detail and self.detail_selection[2]:
+                self.refresh_open_detail()
 
     def show_probe(self, record):
         from .stat_reading import display_values
@@ -1025,22 +1026,49 @@ class ManagerInterface(BaseInterface):
         self.edit_cfg(pins=sorted(pins^{fp}))
 
     def open_disc_detail(self, *, probe=None):
-        from .disc_trace import probe_trace
-        from .store import equipment_names
         if self.root.name != str(self.ctx.current_instance_idx):
             self.on_interface_shown(); return
         idx = self.table.currentRow()
-        report = self.report
-        wiki = read(wiki_path(), {})
-        names = equipment_names(wiki) | self.cfg.get('aliases', {})
         if probe is None:
             probe = not 0 <= idx < len(self.rows)
         if probe:
+            self.present_detail(None)
+        elif 0 <= idx < len(self.rows):
+            self.present_detail(self.rows[idx])
+
+    def refresh_open_detail(self):
+        if self.tabs.currentWidget() is not self.detail:
+            return
+        account, previous, probe = self.detail_selection
+        tab = self.detail.tabs.currentIndex()
+        if account == self.root and account.name == str(self.ctx.current_instance_idx):
+            if probe and self.detail_observation == digest(self.probe_record):
+                self.present_detail(None)
+                self.detail.tabs.setCurrentIndex(tab)
+                return
+            if not probe and not previous.get('ambiguous'):
+                matches = [(i, row) for i, row in enumerate(self.rows) if row['fp'] == previous['fp']]
+                if len(matches) == 1:
+                    index, row = matches[0]
+                    if not row.get('ambiguous') and row.get('observedValues') == previous.get('observedValues'):
+                        if not self.table.isRowHidden(index):
+                            self.table.selectRow(index)
+                        self.present_detail(row)
+                        self.detail.tabs.setCurrentIndex(tab)
+                        return
+        self.tabs.setCurrentIndex(0)
+        self.status.setText(self.status.text()+'　原盘读数已变化或无法唯一对应，请重新选择。')
+
+    def present_detail(self, row):
+        from .disc_trace import probe_trace
+        probe = row is None
+        report = self.report
+        if probe:
+            wiki = read(wiki_path(), {})
             row, report = probe_trace(self.probe_record,self.cfg,self.rules,wiki,read(self.root/'owned-agents.json', []))
-        else:
-            row = self.rows[idx]
+            self.detail_observation = digest(self.probe_record)
         self.detail_selection = (self.root, row, probe)
-        self.detail.present(row, report, set_name=names.get(row['set'],row['set']), probe=probe, pinned=row['fp'] in self.cfg['pins'],
+        self.detail.present(row, report, set_name=self.set_names.get(row['set'],row['set']), probe=probe, pinned=row['fp'] in self.cfg['pins'],
                             coverage=None if probe or row['marked'] else self.coverage.get(tuple(row[k] for k in SELECTORS)),
                             rule_keys=self.keys, team_names=[p['name'] for p in self.cfg['profiles']],
                             stale=not probe and self.preview_stale)
@@ -1056,25 +1084,17 @@ class ManagerInterface(BaseInterface):
 
     def edit_detail_policy(self, action):
         try:
-            root, row, probe = self.detail_selection
+            root, row, _ = self.detail_selection
             if root != self.root or root.name != str(self.ctx.current_instance_idx):
                 self.on_interface_shown(); return
-            tab = self.detail.tabs.currentIndex()
             if action == 'pin':
                 if row['marked']: return
                 self.edit_cfg(pins=sorted(set(self.cfg['pins']) ^ {row['fp']}))
-                change = ''
             else:
                 change = self.set_quota(row)
-                if change is None: return
-            if not probe:
-                match = next((i for i, d in enumerate(self.rows) if d['id'] == row['id'] and d['fp'] == row['fp']), None)
-                if match is None or self.table.isRowHidden(match): return
-                self.table.selectRow(match)
-            self.open_disc_detail(probe=probe)
-            self.detail.tabs.setCurrentIndex(1 if change else tab)
-            if change:
-                self.detail.spares.setText(change+'　｜　'+self.detail.spares.text())
+                if change and self.tabs.currentWidget() is self.detail:
+                    self.detail.tabs.setCurrentIndex(1)
+                    self.detail.spares.setText(change+'　｜　'+self.detail.spares.text())
         except Exception as exc:
             QMessageBox.warning(self,APP_NAME,str(exc))
 

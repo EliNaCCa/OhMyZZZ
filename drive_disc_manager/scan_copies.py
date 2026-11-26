@@ -33,11 +33,9 @@ def selected_position(image, target):
     return None
 
 
-def viewport_stamp(image, selected_col):
-    """Match scroll position and neighboring cards when comparing rows in one column."""
+def scroll_thumb(image):
+    """Return the warehouse scrollbar thumb in the fixed 1080p scrollbar band."""
     import cv2
-    import numpy as np
-    from hashlib import sha256
 
     # Exclude the fixed arrows at the ends of the warehouse scrollbar.
     band = cv2.cvtColor(image[233:866,1355:1375], cv2.COLOR_RGB2GRAY)
@@ -45,9 +43,19 @@ def viewport_stamp(image, selected_col):
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     thumbs = [cv2.boundingRect(c) for c in contours]
     thumbs = [(x,y,w,h) for x,y,w,h in thumbs if 3 <= w <= 7 and 6 <= h and 0 < y < y+h < band.shape[0]]
-    if len(thumbs) != 1:
+    return thumbs[0] if len(thumbs) == 1 else None
+
+
+def viewport_stamp(image, selected_col):
+    """Match scroll position and neighboring cards when comparing rows in one column."""
+    import cv2
+    import numpy as np
+    from hashlib import sha256
+
+    thumb = scroll_thumb(image)
+    if thumb is None:
         return None
-    evidence = sha256(str(thumbs[0]).encode('ascii'))
+    evidence = sha256(str(thumb).encode('ascii'))
     for col in ((selected_col+3)%9, (selected_col+6)%9):
         x = 167+135*col
         strip = cv2.cvtColor(image[240:860,x-22:x+22], cv2.COLOR_RGB2GRAY)

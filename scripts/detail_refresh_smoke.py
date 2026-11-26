@@ -1,0 +1,90 @@
+"""Exercise a background preview completion with two discs and one saved observation."""
+import argparse
+import os
+import sys
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+
+
+def smoke(home, tmp):
+    os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+    sys.path[:0] = [str(Path(__file__).resolve().parents[1]), str(home/'src'), str(home/'plugins')]
+    from PySide6.QtWidgets import QApplication
+    from one_dragon.utils import os_utils
+    from drive_disc_manager.settings import ManagerInterface
+    from drive_disc_manager.store import save
+
+    app = QApplication([])
+    os_utils.set_work_dir(str(tmp))
+    ctx = SimpleNamespace(current_instance_idx=1, get_plugin_data_dir=lambda _:tmp/'accounts')
+    widget = ManagerInterface(ctx)
+    widget.on_interface_shown()
+    root = widget.root
+    a = dict(id='a', fp='first', set='SwingJazz', slot='4', main='atk_', level=0,
+             decision='保留', reasons=['备用 · 通用'], review=[], marked=False)
+    b = dict(a, id='b', fp='second', level=3)
+
+    def finish(rows):
+        save(root/'preview.json', dict(discs=rows, counts={}))
+        widget.preview_job = root
+        widget.preview_finished.emit(root, '')
+        app.processEvents()
+        assert widget.preview_job is None
+
+    finish([a, b])
+    widget.inventory_filter.kind.setCurrentText('额外备用')
+    widget.table.selectRow(1)
+    widget.detail_button.click()
+    widget.detail.tabs.setCurrentIndex(1)
+    updated = dict(b, id='rescanned', reasons=[], decision='弃置候选')
+    finish([updated, a])
+    assert widget.tabs.currentWidget() is widget.detail, 'background job closed the open disc'
+    assert widget.detail.tabs.currentIndex() == 1 and '弃置候选' in widget.detail.title.text()
+    assert widget.detail_selection[1]['id'] == 'rescanned' and widget.table.isRowHidden(0)
+    widget.detail.back.emit()
+    assert widget.inventory_filter.selected_identity() == ('a', 'first')
+    finish([updated, a])
+    assert widget.tabs.currentIndex() == 0
+
+    widget.inventory_filter.kind.setCurrentIndex(0)
+    widget.table.selectRow(0)
+    widget.detail_button.click()
+    finish([a, dict(updated, ambiguous=True), dict(updated, id='copy', ambiguous=True)])
+    assert widget.tabs.currentIndex() == 0 and not widget.tabs.isTabVisible(widget.detail_tab)
+    widget.table.selectRow(1)
+    widget.detail_button.click()
+    finish([a, updated])  # A surviving lookalike cannot identify the original physical copy.
+    assert widget.tabs.currentIndex() == 0
+    widget.table.selectRow(1)
+    widget.detail_button.click()
+    finish([a])
+    assert widget.tabs.currentIndex() == 0
+
+    observation = dict(status='verified', started=1, finished=2, disc=dict(fingerprint=a['fp'],
+        setKey='SwingJazz', slotKey='4', level=0, rarity='S', markState='unmarked', lockState='unlocked',
+        observedValues=dict(main={'atk_':7.5}, subs={'hp':112, 'atk':19, 'pen':9})))
+    save(root/'single-disc.json', observation)
+    widget.reload()
+    widget.open_disc_detail(probe=True)
+    widget.detail.tabs.setCurrentIndex(1)
+    finish([a])  # Inventory and probe may share the exact same fingerprint.
+    assert widget.tabs.currentWidget() is widget.detail and '单盘实测' in widget.detail.version.text()
+    assert widget.detail.tabs.currentIndex() == 1
+    save(root/'single-disc.json', dict(observation, started=3, finished=4))
+    widget.reload()
+    assert widget.tabs.currentIndex() == 0
+    widget.detail_button.click()
+    save(tmp/'accounts/2/preview.json', dict(discs=[a], counts={}))
+    ctx.current_instance_idx = 2
+    widget.on_interface_shown()
+    assert widget.tabs.currentIndex() == 0 and widget.root.name == '2'
+    widget.close()
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--home', type=Path, required=True)
+    with TemporaryDirectory() as tmp:
+        smoke(parser.parse_args().home.resolve(), Path(tmp))
+    print('PASS disc detail keeps the selected view and handles changed inventory, observation and account')
