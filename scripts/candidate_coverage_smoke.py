@@ -46,11 +46,24 @@ def smoke(endpoint):
         assert abs(Decimal(found[ids]['rawOutput']) - score) < Decimal('0.00000001'), (ids, found[ids]['rawOutput'], score)
         assert Decimal(found[ids]['rawCritRate']) == crit
     best = max(score for score, _ in reference.values())
-    eligible = [ids for ids, (score, crit) in reference.items() if crit >= Decimal('97.6') and score >= best * Decimal('.995')]
+    eligible = [ids for ids, (score, crit) in reference.items() if crit == 100 and score >= best * Decimal('.995')]
     expected = max(eligible or reference, key=lambda ids: reference[ids][0])
     selected = select_candidate(list(found.values()), profile, set())
     assert tuple(selected['ids']) == expected
     print('PASS 8 fixture discs, 4 combinations, 2 combat windows; chosen', expected[2:4])
+
+    # One combat window, two slot-3 pieces. +19 ATK beats +2.4 crit on damage
+    # by just over 0.3%. Only the latter brings this 98% build to full crit.
+    flat = dict(fixed[2], id='flat', subStats=[dict(type='ATK_FLAT', value=19)])
+    cap = dict(fixed[2], id='cap', subStats=[dict(type='CRIT_RATE', value=2.4)])
+    pair = [*fixed[:2], flat, cap, *fixed[3:]]
+    team = dict(request=dict(request, baseCritRate=98, baseCritDmg=50))
+    candidates = candidate_pool(endpoint, team, pair, set())
+    assert {row['ids'][2]: Decimal(row['rawCritRate']) for row in candidates} == {'flat':98, 'cap':100}
+    for tolerance, wanted in [(0.5, 'cap'), (0.3, 'flat')]:
+        picked = select_candidate(candidates, dict(team, tolerancePct=tolerance), set())
+        assert picked['ids'][2] == wanted
+    print('PASS 7 fixture discs; 0.5% selects full crit, 0.3% selects 98% crit')
 
 
 if __name__ == '__main__':

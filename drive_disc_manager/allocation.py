@@ -1,5 +1,5 @@
 """Assign complete builds to simultaneous profiles in player priority order."""
-from .optimizer import NEAR_CRIT_GAP, NoBuildCandidates, number, select_candidate
+from .optimizer import NoBuildCandidates, effective_crit_rate, number, select_candidate
 
 
 def reusable_assignments(report, allocation_key, groups, pool):
@@ -67,8 +67,7 @@ def same_priority(left, right, current):
         return False
     if 'outputScore' in left:
         def priority(row):
-            return (number(row.get('rawOutput', row['outputScore'])),
-                    number(row.get('rawCritRate', row['critRate'])) >= 100 - NEAR_CRIT_GAP)
+            return number(row.get('rawOutput', row['outputScore'])), effective_crit_rate(row) == 100
         return priority(left) == priority(right)
     if 'roleOrder' in left:
         from .role_panel import compare_order
@@ -153,7 +152,7 @@ def assign_group(members, pool, url, fetch, max_nodes=160):
                     if 'outputScore' in preferred:
                         for key in ('reason','bestOutput','rawBestOutput','relativeLossPct','bestNearFullOutput','bestFullOutput'):
                             choice[key] = preferred[key]
-                        choice['effectiveCritRate'] = min(100, candidate['critRate'])
+                        choice['effectiveCritRate'] = float(effective_crit_rate(candidate))
                         choice['rawAvailableBestOutput'] = str(best)
                         score = number(candidate.get('rawOutput', candidate['outputScore']))
                         choice['availableLossPct'] = float(100*(best-score)/best)

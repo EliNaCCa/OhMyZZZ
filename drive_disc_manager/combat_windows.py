@@ -49,7 +49,7 @@ def window_requests(profile):
                 raise ValueError('请指定增益是否已计入配装器，以及本窗口是否生效')
         prepared.append((name, weight, dict(base, combatExtraStats=stats)))
     if profile.get('mainWindow', '') not in names:
-        raise ValueError('请选择判断近满暴的主要窗口')
+        raise ValueError('请选择判断满暴的主要窗口')
     return prepared
 
 
@@ -60,7 +60,7 @@ def combine(window_rows, main):
     return dict(ids=primary['ids'], critRate=primary['critRate'], rawCritRate=primary['rawCritRate'], outputScore=float(score), rawOutput=str(score),
                 uncappedCritRate=primary['uncappedCritRate'], overflowCritRate=primary['overflowCritRate'],
                 mainWindow=main, windows=[dict(name=row['name'], share=float(row['weight']/weight),
-                    outputScore=row['outputScore'], rawOutput=row['rawOutput'], critRate=row['critRate'], panelCritRate=row.get('panelCritRate'),
+                    outputScore=row['outputScore'], rawOutput=row['rawOutput'], critRate=row['critRate'], rawCritRate=row['rawCritRate'], panelCritRate=row.get('panelCritRate'),
                     uncappedCritRate=row['uncappedCritRate'], overflowCritRate=row['overflowCritRate'],
                     metric=row['metric'], metricValue=row['metricValue'], critDamage=row['critDamage'], damageBonus=row['damageBonus'], sheerBonus=row['sheerBonus'])
                     for row in window_rows])

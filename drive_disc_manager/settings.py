@@ -18,10 +18,18 @@ from .drive_disc_manager_const import APP_ID, APP_NAME, PLUGIN_VERSION
 from .reserve_policy import matching_rules, normalized_rule, SELECTORS
 from .roster import roster_catalog
 from .disc_owner import owner_label
+from .optimizer import effective_crit_rate
 
 
 def pretty(value):
     return json.dumps(value,ensure_ascii=False,indent=2)
+
+
+def crit_rate_text(result):
+    if result.get('critRate') is None:
+        return '—'
+    value = format(effective_crit_rate(result), 'f')
+    return (value.rstrip('0').rstrip('.') if '.' in value else value) + '%'
 
 
 class ManagerInterface(BaseInterface):
@@ -529,7 +537,7 @@ class ManagerInterface(BaseInterface):
             role = (p.get('request') or {}).get('roleSystem','').upper()
             tolerance = pct(p.get('tolerancePct',0.5)) if role in ('ATTACK','STRONG','RUPTURE') else '—'
             return (title,label,tolerance,
-                    pct(result.get('effectiveCritRate',result.get('critRate'))),pct(result.get('relativeLossPct')),reason)
+                    crit_rate_text(result),pct(result.get('relativeLossPct')),reason)
         self.fill(self.teams,[row(i,p) for i,p in enumerate(profiles)])
         self.teams.resizeColumnsToContents()
         visible_rows = min(4, max(1, len(profiles)))
@@ -632,7 +640,7 @@ class ManagerInterface(BaseInterface):
 
     @staticmethod
     def crit_summary(result):
-        effective = f"有效暴击 {result['critRate']:g}%"
+        effective = '有效暴击 ' + crit_rate_text(result)
         if result.get('overflowCritRate', 0) > 0:
             return f"加成后暴击 {result['uncappedCritRate']:g}% · {effective}（溢出 {result['overflowCritRate']:g} 个百分点）"
         return effective
@@ -709,7 +717,7 @@ class ManagerInterface(BaseInterface):
         if index < 0: return
         token = self.edit_token()
         profile = self.cfg['profiles'][index]
-        value, ok = QInputDialog.getDouble(self,profile['name'],'为实战暴击 ≥ 97.6% 最多接受的输出差距（%）',
+        value, ok = QInputDialog.getDouble(self,profile['name'],'为满暴最多接受的输出差距（%）',
                                             profile.get('tolerancePct',0.5),0,100,4)
         if ok:
             self.edit_profile_fields(token, index, {'tolerancePct':value})

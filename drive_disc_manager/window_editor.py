@@ -24,7 +24,7 @@ class WindowEditor(QDialog):
         layout = QVBoxLayout(self)
         self.enabled = QCheckBox('按窗口输出占比计算配装'); layout.addWidget(self.enabled)
         self.enabled.setChecked(profile.get('windowsEnabled', bool(profile.get('windows'))))
-        layout.addWidget(QLabel('主要窗口用于判断近满暴。占比按相对权重计算。'))
+        layout.addWidget(QLabel('按各窗口的输出占比选盘，用主要窗口的实战暴击率判断满暴。'))
         self.windows = QTableWidget(0,3); self.windows.setHorizontalHeaderLabels(['窗口','输出占比','主要窗口'])
         self.windows.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.group = QButtonGroup(self)

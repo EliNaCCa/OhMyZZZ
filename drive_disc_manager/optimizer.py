@@ -147,6 +147,10 @@ def number(v):
 NEAR_CRIT_GAP = Decimal('2.4')
 
 
+def effective_crit_rate(candidate):
+    return min(Decimal(100), number(candidate.get('rawCritRate', candidate['critRate'])))
+
+
 def prefer(candidates, tolerance_pct, current):
     candidates = tuple(candidates)
     tol = number(tolerance_pct)/100
@@ -157,24 +161,20 @@ def prefer(candidates, tolerance_pct, current):
     best = max(candidates, key=key)
     if key(best)[0] <= 0:
         raise ValueError('缺少正的预期输出')
-    # outputScore already includes the optimizer's capped crit expectation.
-    # A rate within one roll of 100 qualifies; it still deals its real damage.
-    near = [c for c in candidates if number(c.get('rawCritRate', c['critRate'])) >= 100 - NEAR_CRIT_GAP]
-    cap = max(near,key=key) if near else None
-    chosen = cap if cap and key(cap)[0] >= key(best)[0]*(1-tol) else best
-    if cap is None:
-        reason = '候选暴击率均低于 97.6%，选最高输出'
-    elif chosen is cap and key(chosen)[0] == key(best)[0]:
-        reason = '实战暴击达 97.6%，且输出最高'
-    elif chosen is cap:
-        reason = '实战暴击达 97.6%，输出差距在容差内'
+    # Only actual full crit may spend the team's damage tolerance.
+    minimum = key(best)[0] * (1 - tol)
+    full = max((c for c in candidates if effective_crit_rate(c) == 100), key=key, default=None)
+    near = max((c for c in candidates if effective_crit_rate(c) >= 100 - NEAR_CRIT_GAP), key=key, default=None)
+    if full is not None and key(full)[0] >= minimum:
+        chosen = full
+        reason = '满暴且输出最高' if key(full)[0] == key(best)[0] else '输出接近，优先满暴'
     else:
-        reason = '近满暴方案超出输出容差，选最高输出'
-    full = [c for c in near if number(c.get('rawCritRate', c['critRate'])) >= 100]
+        chosen = best
+        reason = '输出最高'
     return dict(chosen, bestOutput=best['outputScore'], rawBestOutput=str(key(best)[0]), relativeLossPct=float(100*(key(best)[0]-key(chosen)[0])/key(best)[0]),
-                reason=reason, effectiveCritRate=float(min(100,number(chosen['critRate']))),
-                bestNearFullOutput=cap['outputScore'] if cap else None,
-                bestFullOutput=max(full,key=key)['outputScore'] if full else None)
+                reason=reason, effectiveCritRate=float(effective_crit_rate(chosen)),
+                bestNearFullOutput=near['outputScore'] if near else None,
+                bestFullOutput=full['outputScore'] if full else None)
 
 
 class NoBuildCandidates(ValueError):
