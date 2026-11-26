@@ -552,7 +552,8 @@ class ManagerInterface(BaseInterface):
         if text != self.editor.toPlainText(): self.editor.setPlainText(text)
         self.rows=self.report.get('discs',[])
         from .scan_observations import show_observations
-        self.last_seen_title = show_observations(self.last_seen, self.fill, self.root, not self.rows and not self.report, self.agent_labels)
+        self.last_seen_title, can_recount = show_observations(self.last_seen, self.fill, self.root, not self.rows and not self.report, self.agent_labels)
+        self.recount_account = self.root if can_recount else None
         for key,toggle in self.flags.items(): toggle.setValue(bool(self.cfg.get(key)), emit_signal=False)
         self.auto_sync.setChecked(self.cfg['auto_sync'])
         from datetime import datetime
@@ -1221,6 +1222,9 @@ class ManagerInterface(BaseInterface):
             with exclusive(account.parent/'_maintenance'):
                 if import_path is not None:
                     import_inventory(account,import_path)
+                elif config(account)['inventorySource'] == 'ocr' and not (account/'inventory.json').is_file():
+                    from .store import recount_inventory
+                    recount_inventory(account)
                 preview(account,wiki,refresh=False,reuse_allocations=reuse_allocations)
         except Deferred as exc:
             raise ValueError('插件任务或维护正在运行，请结束后再计算仓库预览。') from exc
@@ -1228,11 +1232,14 @@ class ManagerInterface(BaseInterface):
     def update_calculate_buttons(self):
         root = getattr(self, 'root', None)
         has_inventory = root is not None and snapshot_path(root, getattr(self, 'cfg', {})).is_file()
-        can_calculate = has_inventory and self.preview_job is None
+        can_recount = (root is not None and getattr(self, 'cfg', {}).get('inventorySource') == 'ocr'
+                       and not has_inventory and getattr(self, 'recount_account', None) == root)
+        can_calculate = (has_inventory or can_recount) and self.preview_job is None
         self.calculate_buttons[0].setEnabled(can_calculate)
         self.calculate_buttons[1].setEnabled(bool(can_calculate and getattr(self, 'cfg', {}).get('profiles')))
         for button in self.calculate_buttons:
-            button.setToolTip('' if has_inventory else f'请先在「仓库」点「{self.scan_button.text()}」')
+            button.setToolTip('按上次保存的盘位重新核对仓库' if can_recount else
+                              '' if has_inventory else f'请先在「仓库」点「{self.scan_button.text()}」')
 
     def show_preview_job(self, error=''):
         busy = self.preview_job is not None

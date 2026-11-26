@@ -24,7 +24,7 @@ def smoke(home):
     from drive_disc_manager.optimizer import as_disc
     from drive_disc_manager.scan_marks import MarkReader, observed_header
     from drive_disc_manager.scan_resume import ScanTextCache
-    from drive_disc_manager.scan_copies import selected_position, viewport_stamp
+    from drive_disc_manager.scan_copies import grid_copies, scroll_thumb, selected_position, viewport_stamp
     from drive_disc_manager.stat_reading import measure
     from drive_disc_manager.disc_probe import read_selected
     from drive_disc_manager.warehouse import enter_warehouse
@@ -53,6 +53,7 @@ def smoke(home):
         values = {'main':{'atk_':12},'subs':{'atk':19,'crit_':2.4,'def_':4.8,'hp':112}}
         # Only the title count uses 319. There is no inventory traversal.
         marker = Marker(app, scanner, dict(discs=[dict(fp=fp,observedValues=values)]+[dict(fp=f'fixture-{i}') for i in range(318)]))
+        control_cache = {}
         for name, state in [('mark_before','unmarked'), ('mark_after','marked')]:
             path = repo/'docs/e2e/recap_20261101'/f'{name}.jpg'
             frame = cv2.imdecode(np.frombuffer(path.read_bytes(), np.uint8), cv2.IMREAD_COLOR_RGB)
@@ -81,6 +82,21 @@ def smoke(home):
                 other = cv2.imdecode(np.frombuffer(other_bytes,np.uint8), cv2.IMREAD_COLOR_RGB)
                 other = cv2.resize(other[-900:],(1920,1080),interpolation=cv2.INTER_CUBIC)
                 assert viewport_stamp(other,3) != stamp
+                # Replay the same disc in one column at two recorded scroll positions.
+                # A nearby overlapping view must still count once. Header is 319 in these frames.
+                def position_at(name):
+                    img = cv2.imdecode(np.frombuffer((path.parent/name).read_bytes(), np.uint8), cv2.IMREAD_COLOR_RGB)
+                    return cv2.resize(img[-900:],(1920,1080),interpolation=cv2.INTER_CUBIC)
+                def cell(i, img):
+                    return dict(sample, scanCell=(i, 3, 798, viewport_stamp(img, 3), scroll_thumb(img)))
+                near = cell(1, other)
+                distant = cell(0, position_at('mark_grid_l15.jpg'))
+                assert all(d['scanCell'][3] for d in (near, distant))
+                assert len(grid_copies([near, distant], 319)) == 2
+                assert len(grid_copies([near, dict(distant, scanCell=(1, *distant['scanCell'][1:]))], 319)) == 1
+                assert len(grid_copies([near, dict(distant, scanCell=(2, *distant['scanCell'][1:]))], 319)) == 1
+                assert len(grid_copies([near, dict(near, scanCell=(3, *near['scanCell'][1:]))], 319)) == 1
+                assert len(grid_copies([near, distant], 1302)) == 1  # thumb size for the wrong warehouse
                 scanner.ctx, scanner.screenshot = ctx, app.screenshot
                 total = enter_warehouse(scanner, lambda:None)
                 assert total == 319
@@ -117,7 +133,11 @@ def smoke(home):
             part = frame[267:768,1408:1838]
             items = [dict(text=text,confidence=m.confidence,position=(m.x,m.y,m.x+m.w,m.y+m.h))
                      for text,matches in ocr.run_ocr(part).items() for m in matches]
-            scanned = MarkReader(parser, ocr, frame[985:1070,1050:1920]).parse_ocr_result(items,part)
+            footer = frame[985:1070,1050:1920]
+            scanned = MarkReader(parser, ocr, footer, controls=control_cache).parse_ocr_result(items,part)
+            from drive_disc_manager.scan_marks import read_controls
+            with patch.object(ocr, 'run_ocr', side_effect=AssertionError('unchanged control labels')):
+                assert read_controls(ocr, footer.copy(), control_cache) == (state, 'unlocked')
             assert scanned['observedValues'] == values and fingerprint(scanned) == fp and scanned['markState'] == state
             cache = ScanTextCache(root, ocr)
             if name == 'mark_before':
@@ -134,6 +154,14 @@ def smoke(home):
                 reread = MarkReader(parser, ocr, frame[985:1070,1050:1920], text_cache=cache).parse_ocr_result(cached_items,repeated)
                 assert cache.reused == 1 and reread['observedValues'] == values and reread['markState'] == 'marked'
                 cache.finish()
+                tomorrow = ScanTextCache(root, ocr)
+                with patch.object(ocr, 'run_ocr', side_effect=AssertionError('verified text lost after successful scan')):
+                    assert tomorrow.run_ocr(tomorrow.frame(previous_pixels)) and tomorrow.reused == 1
+                changed = previous_pixels.copy()
+                changed[240:270] = 0
+                with patch.object(ocr, 'run_ocr', return_value={}) as recognize:
+                    assert tomorrow.run_ocr(tomorrow.frame(changed)) == {}
+                    recognize.assert_called_once()
             if name == 'mark_before':
                 # Same frame, with the label and fraction delivered out of order as two OCR boxes.
                 label = next(i for i in items if '等级' in i['text'])

@@ -214,7 +214,7 @@ def import_inventory(root, path, *, readings=None, cn_export=None, names=None):
     path = Path(path)
     if 'partial' in path.name.lower():
         raise ValueError('部分扫描文件')
-    z = read(path)
+    original = z = read(path)
     try:
         if cn_export is not None:
             from .inventory_comparison import verify_cn_inventory
@@ -226,7 +226,11 @@ def import_inventory(root, path, *, readings=None, cn_export=None, names=None):
     except ValueError:
         if readings is not None and isinstance(z, dict):
             from .scan_observations import save_observations
-            save_observations(root, z, path.stat().st_mtime)
+            recount = None
+            if cn_export is None and any(row.get('scanCell') for row in readings):
+                # Only this account's own just-finished scan may supply the observations.
+                recount = dict(export=original, readings=readings)
+            save_observations(root, z, path.stat().st_mtime, recount=recount)
         raise
     # An account keeps unlocked agents. A later disc-only export has an empty
     # characters array and should not retire agents seen in earlier full scans.
@@ -234,3 +238,22 @@ def import_inventory(root, path, *, readings=None, cn_export=None, names=None):
     remember_agents(root, observed_agents(previous) | observed_agents(z))
     save(root / 'inventory.json', z)
     return len(z['discs'])
+
+
+def recount_inventory(root):
+    """Rebuild a missing OCR inventory from the last finished traversal, without game input."""
+    from .scan_copies import with_copies
+    if (root/'inventory.json').exists():
+        return
+    record = read(root/'scan-observations.json', {})
+    evidence = record.get('recount')
+    if not evidence:
+        raise ValueError('请先扫描仓库')
+    export = evidence['export']
+    if export.get('source') != 'Zenless Optimizer' or record['total'] != export['audit'].get('game_total'):
+        raise ValueError('扫描记录缺少仓库总数，请重新扫描')
+    repaired = with_copies(export, evidence['readings'])
+    inventory(repaired)
+    repaired['observedAt'] = record['at']
+    remember_agents(root, observed_agents(repaired))
+    save(root/'inventory.json', repaired)

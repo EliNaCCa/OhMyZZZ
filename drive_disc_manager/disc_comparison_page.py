@@ -62,7 +62,7 @@ class DiscComparison(QWidget):
             data = read(path)
             partial = path.name == 'scan-observations.json'
             rows, base = (data['rows'], 1) if partial else (data['discs'], roll_base(data))
-            date = datetime.fromtimestamp(data['at'] if partial else path.stat().st_mtime)
+            date = datetime.fromtimestamp(data['at'] if partial else data.get('observedAt', path.stat().st_mtime))
             source = '导出库存' if exported else '扫描记录'
             self.stamp.setText(f'{source}　{date:%m-%d %H:%M}')
             plans = {}

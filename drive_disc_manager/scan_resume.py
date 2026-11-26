@@ -1,4 +1,4 @@
-"""Reuse verified OCR text from an interrupted scan when a fresh detail crop matches."""
+"""Reuse verified OCR text when the current disc detail image matches exactly."""
 import hashlib
 import json
 import logging
@@ -20,6 +20,7 @@ class ScanTextCache:
         self.path = root / 'scan-text.sqlite'
         self.matcher = matcher
         self.reused = 0
+        self.verified = set()
         self.disabled = True
         params = getattr(matcher, '_ocr_param', None)
         if not params or not callable(getattr(params, 'to_dict', None)):
@@ -34,8 +35,11 @@ class ScanTextCache:
                 models.append((key, stat.st_size, stat.st_mtime_ns))
             self.version = digest([1, type(matcher).__name__, options, models])
             root.mkdir(parents=True, exist_ok=True)
-            with closing(sqlite3.connect(self.path)) as db:
+            with closing(sqlite3.connect(self.path)) as db, db:
                 db.execute('CREATE TABLE IF NOT EXISTS disc_text (image TEXT PRIMARY KEY, boxes TEXT NOT NULL)')
+                # Bound growth across repeated interrupted scans, including older cache files.
+                db.execute('DELETE FROM disc_text WHERE rowid <= '
+                           '(SELECT rowid FROM disc_text ORDER BY rowid DESC LIMIT 1 OFFSET 6000)')
             self.disabled = False
         except (OSError, KeyError, sqlite3.Error) as exc:
             logging.getLogger(__name__).info('本轮重新识别驱动盘词条 · %s', exc)
@@ -71,7 +75,10 @@ class ScanTextCache:
         return self.matcher.run_ocr(image, *args, **kwargs)
 
     def remember(self, frame, items):
-        if self.disabled or not isinstance(frame, DetailFrame) or frame.from_cache:
+        if self.disabled or not isinstance(frame, DetailFrame):
+            return
+        self.verified.add(frame.text_key)
+        if frame.from_cache:
             return
         try:
             data = json.dumps(items, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
@@ -85,7 +92,14 @@ class ScanTextCache:
         self.disabled = True
 
     def finish(self):
+        if self.disabled:
+            return
         try:
-            self.path.unlink(missing_ok=True)
-        except OSError as exc:
-            logging.getLogger(__name__).info('读取完成，稍后清理词条记录 · %s', exc)
+            # The warehouse count has been reconciled. Keep just the verified
+            # images from this scan for the next run, including cache hits.
+            with closing(sqlite3.connect(self.path)) as db, db:
+                db.execute('CREATE TEMP TABLE current_text (image TEXT PRIMARY KEY)')
+                db.executemany('INSERT INTO current_text VALUES (?)', ((key,) for key in self.verified))
+                db.execute('DELETE FROM disc_text WHERE image NOT IN (SELECT image FROM current_text)')
+        except sqlite3.Error as exc:
+            self.disable(exc)

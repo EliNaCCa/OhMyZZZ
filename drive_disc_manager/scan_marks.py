@@ -33,12 +33,13 @@ def observed_grade(items):
 
 
 class MarkReader:
-    def __init__(self, parser, ocr, footer, cell=None, text_cache=None):
+    def __init__(self, parser, ocr, footer, cell=None, text_cache=None, controls=None):
         self.parser = parser
         self.ocr = ocr
         self.footer = footer
         self.cell = cell
         self.text_cache = text_cache
+        self.controls = controls
 
     def parse_ocr_result(self, items, image):
         # The host's spelling dictionary mutates its input. Preserve raw value tokens.
@@ -48,7 +49,7 @@ class MarkReader:
             return None
         from .disc_owner import read_owner
         result['ownerState'], result['location'] = read_owner(image, getattr(self.parser, 'icon_matcher', None))
-        mark, lock = read_controls(self.ocr, self.footer)
+        mark, lock = read_controls(self.ocr, self.footer, self.controls)
         result.update(markState=mark, trash=mark == 'marked', lockState=lock, lock=lock == 'locked')
         slot, level, grade = observed_header(items)
         result['observedGrade'] = grade
@@ -65,8 +66,13 @@ class MarkReader:
         return result
 
 
-def read_controls(ocr, footer):
+def read_controls(ocr, footer, recent=None):
     # These are actions offered by the game: an Unlock button means the disc IS locked.
+    if recent is not None:
+        from hashlib import sha256
+        key = (footer.shape, footer.dtype.str, sha256(footer.tobytes()).digest())
+        if key in recent:
+            return recent[key]
     matches = ocr.run_ocr(footer) or {}
     tokens = {text.replace(' ', '') for text, boxes in matches.items() if any(box.confidence >= .9 for box in boxes)}
     # A detached prefix can reverse either button. Never interpret the remaining suffix alone.
@@ -75,8 +81,13 @@ def read_controls(ocr, footer):
     def control(mapping):
         values = {mapping[token] for token in tokens if token in mapping}
         return values.pop() if len(values) == 1 else 'unknown'
-    return (control({'解除弃置':'marked', '弃置':'unmarked'}),
-            control({'解除锁定':'locked', '解锁':'locked', '锁定':'unlocked'}))
+    result = (control({'解除弃置':'marked', '弃置':'unmarked'}),
+              control({'解除锁定':'locked', '解锁':'locked', '锁定':'unlocked'}))
+    if recent is not None and 'unknown' not in result:
+        if len(recent) >= 32:
+            recent.pop(next(iter(recent)))
+        recent[key] = result
+    return result
 
 
 def mark_hint(ocr, footer):
@@ -92,6 +103,7 @@ def capture_marks(scanner, root=None):
     cache = scanner.screenshot_cache
     unique = cache.save_unique
     witnessed = set()
+    controls = {}
     pending = local()
     text_cache = None
     worker_ctx = worker.ctx
@@ -108,15 +120,16 @@ def capture_marks(scanner, root=None):
         worker.ctx = WorkerContext()
 
     def capture(row, col, image):
-        from .scan_copies import selected_position, viewport_stamp
+        from .scan_copies import scroll_thumb, selected_position, viewport_stamp
         selected = selected_position(image, grid.grid_rows[row][col])
         pending.cell = None
         if selected:
             column, y = selected
             pending.cell = (grid.scroll_rounds, column)
-            stamp = viewport_stamp(image, column)
+            thumb = scroll_thumb(image)
+            stamp = viewport_stamp(image, column, thumb) if thumb else None
             if stamp:
-                pending.cell += (y, stamp)
+                pending.cell += (y, stamp, thumb)
         pending.footer = image[985:1070,1050:1920].copy()
         try:
             return save_image(row, col, image)
@@ -140,7 +153,7 @@ def capture_marks(scanner, root=None):
         if kind == 'disc' and footer is not None:
             if text_cache is not None:
                 image = text_cache.frame(image)
-            parser = MarkReader(parser, scanner.ctx.ocr, footer, pending.cell, text_cache)
+            parser = MarkReader(parser, scanner.ctx.ocr, footer, pending.cell, text_cache, controls)
         return submit(kind, image, parser)
 
     grid._save_screenshot = capture

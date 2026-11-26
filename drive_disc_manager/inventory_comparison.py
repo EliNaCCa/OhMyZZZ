@@ -136,7 +136,10 @@ def compare_observations(exported, record, names):
 
 def compare_game_scan(exported, scanned, names):
     game_discs, _ = inventory(scanned)
-    return _compare_rows(exported, game_discs, roll_base(scanned), scanned.get('source') == 'OhMyZZZ CN', names)
+    result = _compare_rows(exported, game_discs, roll_base(scanned), scanned.get('source') == 'OhMyZZZ CN', names)
+    if 'observedAt' in scanned:
+        result['observedAt'] = scanned['observedAt']
+    return result
 
 
 def _compare_rows(exported, game_discs, game_base, bound_ids, names, *, partial=False):

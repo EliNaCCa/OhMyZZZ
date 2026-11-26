@@ -199,6 +199,38 @@ def smoke(home, tmp):
     reconcile(fresh, dict(scan, discs=[], audit=dict(game_total=0, exported=0, delta=0)))
     assert read(fresh/'dismantle-result.json')['stockChanges'][0]['after'] == '清单外少盘'
     assert read(fresh/'dismantle-result.json')['status'] == 'needs_review'
+    # Replay two identical pieces from a completed traversal that an earlier
+    # counter could not separate. Recalculate from the ordinary warehouse button.
+    from drive_disc_manager.store import import_inventory
+    recovery = root.parent/'3'
+    ctx.current_instance_idx = 3
+    first = dict(disc, observedGrade='S', ownerState='bag', markState='unmarked', trash=False,
+                 mainStatKey='def_', level=0, scanCell=(0, 2),
+                 substats=[dict(key=k, upgrades=1) for k in ('pen','hp','atk')],
+                 observedValues=dict(main={'def_':12}, subs={'pen':9,'hp':112,'atk':19}))
+    second = dict(first, id='2', scanCell=(1, 7))
+    source = tmp/'recount_input.json'
+    save(source, dict(snapshot, source='Zenless Optimizer', discs=[first], audit=dict(game_total=2, exported=1, delta=-1)))
+    with patch('drive_disc_manager.scan_copies.with_copies', side_effect=lambda z, _:z):
+        try:
+            import_inventory(recovery, source, readings=[first, second])
+        except ValueError as exc:
+            assert '游戏内 2，导出 1' in str(exc)
+        else:
+            raise AssertionError('incomplete warehouse accepted')
+    evidence = read(recovery/'scan-observations.json')
+    assert len(evidence['recount']['readings']) == 2 and not (recovery/'inventory.json').exists()
+    widget.on_interface_shown()
+    assert widget.calculate_buttons[0].isEnabled()
+    with patch('drive_disc_manager.manual_equip.run_scan_preview', side_effect=AssertionError('unexpected game scan')):
+        widget.calculate_buttons[0].click()
+        end = monotonic() + 8
+        while widget.preview_job is not None and monotonic() < end:
+            app.processEvents()
+            sleep(.01)
+    recovered = read(recovery/'inventory.json')
+    assert recovered['observedAt'] == evidence['at'] and recovered['audit']['delta'] == 0
+    assert len(widget.rows) == 2 and all(row['ambiguous'] for row in widget.rows)
     widget.close()
 
 
