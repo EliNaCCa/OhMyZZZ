@@ -73,7 +73,8 @@ class ManagerApp(ZApplication):
             source = cfg['inventorySource']
             network = source in ('cn_export', 'network')
             cn_inventory = cn_plan = None
-            if network and cfg['run_scanner'] and not interactive:
+            manual_cn = self.group == MANUAL_GROUP and source == 'cn_export'
+            if manual_cn or (network and cfg['run_scanner'] and not interactive):
                 def same_account():
                     if self.ctx.current_instance_idx != self.account or not self.ctx.run_context.is_context_running:
                         raise ValueError('账号已切换或任务已停止')
@@ -84,11 +85,19 @@ class ManagerApp(ZApplication):
                     from .network_reader import capture
                     capture(self.root, same_account)
                 if mark or field:
-                    network_plan = preview(self.root, wiki_path(), snapshot=pinned)
+                    if manual_cn:
+                        from .store import preview_path
+                        cn_inventory = read(self.root/'cn-inventory.json')
+                        saved = read(preview_path(self.root, cfg), {})
+                        if (saved.get('networkPreview') and saved.get('inventory') == digest(cn_inventory)
+                                and saved.get('configuration') == request['configuration'] and saved.get('rules') == request['rules']):
+                            cn_plan = saved
+                    network_plan = cn_plan or preview(self.root, wiki_path(), snapshot=pinned, reuse_allocations=manual_cn)
                     if network_plan['issues']:
                         return self.round_fail('配装待复核 · '+' / '.join(network_plan['issues']))
                     if source == 'cn_export':
-                        cn_inventory = read(self.root/'cn-inventory.json')
+                        if cn_inventory is None:
+                            cn_inventory = read(self.root/'cn-inventory.json')
                         cn_plan = network_plan
             scanner = None
             if interactive or (cfg['run_scanner'] and (not network or mark or field)):

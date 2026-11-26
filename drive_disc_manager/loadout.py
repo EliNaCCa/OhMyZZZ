@@ -31,7 +31,9 @@ def target_loadout(cfg, report, snapshot, name, *, preview_only=False, names=Non
     if names is None:
         names = equipment_names({}) | cfg.get('aliases', {})
     keys, counts = scanned_identities(discs, names)
-    by_fp = {fingerprint(d):d for d in discs}
+    cn_preview = preview_only and snapshot.get('source') == 'zzz-drive-exporter' and snapshot.get('networkPreview') is True
+    by_id = {d['id'] if cn_preview else fingerprint(d):d for d in discs}
+    preview_rows = {r['exportUid']:r for r in report.get('discs', []) if r.get('exportUid')} if cn_preview else {}
     reader_owners = report.get('readerOwners', {}) if snapshot.get('networkPreview') is True else {}
     agents, claimed, targets = set(), set(), []
     for profile in lineup:
@@ -43,24 +45,32 @@ def target_loadout(cfg, report, snapshot, name, *, preview_only=False, names=Non
         ids = assignment.get('ids', [])
         if len(ids) != 6 or assignment.get('error'):
             raise ValueError(profile['name']+' 缺少完整六盘方案')
-        for slot, fp in enumerate(ids, 1):
+        for slot, piece in enumerate(ids, 1):
+            if piece not in by_id or piece in claimed:
+                raise ValueError(f"请核对「{profile['name']}」的 {slot} 号位，目标盘已缺失或与同场方案重盘")
+            disc = by_id[piece]
+            fp = fingerprint(disc)
             if counts.get(fp, 0) > 1:
                 raise ValueError(f"「{profile['name']}」的 {slot} 号位有 {counts[fp]} 张盘属性相同，无法确定要换哪张")
-            if fp not in by_fp or fp in claimed:
-                raise ValueError(f"请核对「{profile['name']}」的 {slot} 号位，目标盘已缺失或与同场方案重盘")
-            disc = by_fp[fp]
-            if disc.get('ownerState') == 'unknown':
+            if not cn_preview and disc.get('ownerState') == 'unknown':
                 raise ValueError(f'{agent} 的 {slot} 号盘穿戴者待复核，请重新扫描')
-            if int(disc['slotKey']) != slot or disc.get('trash') or disc.get('markState') != 'unmarked':
+            allowed_marks = ('unmarked', 'unknown') if cn_preview else ('unmarked',)
+            if int(disc['slotKey']) != slot or disc.get('trash') or disc.get('markState') not in allowed_marks:
                 raise ValueError('目标盘号位或弃置状态不适合换装')
             observed = checked_values(disc, roll_base(snapshot))
             if not observed:
                 raise ValueError(f'{agent} 的 {slot} 号盘缺少实测词条数值，请用 OhMyZZZ 重新扫描')
-            claimed.add(fp)
-            location = disc.get('location', '')
+            claimed.add(piece)
+            owner = preview_rows.get(piece, disc)
+            location = owner.get('location', '')
+            # The physical ID identifies a CN selection even if the game writes its
+            # set name or optional mainStatValue differently. Values remain checked.
+            uid = disc['id'] if cn_preview else disc.get('exportUid')
             targets.append(dict(profile=profile['name'],agent=agent,slot=slot,fp=fp,
-                                selectionFp=fingerprint(dict(disc, setKey=keys[disc['setKey']])),
-                                location=reader_owners.get(location, location),ownerState=disc.get('ownerState','legacy'),
+                                selectionFp=('cn-uid/'+uid if uid and cfg.get('inventorySource') == 'cn_export'
+                                             else fingerprint(dict(disc, setKey=keys[disc['setKey']]))),
+                                selectionSet=keys[disc['setKey']],
+                                location=reader_owners.get(location, location),ownerState=owner.get('ownerState','legacy'),
                                 set=disc['setKey'],main=disc['mainStatKey'],level=disc['level'],rarity=disc['rarity'],
                                 observedValues=observed))
     return targets

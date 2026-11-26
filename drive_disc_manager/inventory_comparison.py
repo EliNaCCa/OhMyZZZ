@@ -91,6 +91,13 @@ def execution_plan(planned, inspected, snapshot, *, fielded=()):
                 row['review'].append('游戏内已解除锁定')
                 continue
             row['decision'] = '保留'
+            if any(reason.startswith('配队 · ') for reason in reasons):
+                # The inspection pass omits the optimizer. The selected team is
+                # itself a keep rule, regardless of subscription coverage.
+                rule_checks = row.get('ruleReview', [])
+                row['explanation'].extend(note for note in rule_checks if note not in row['explanation'])
+                row['review'] = [note for note in row['review'] if note not in rule_checks]
+                row['keptBeforeReserves'] = True
         elif row['decision'] == '弃置候选' and not wanted.get('checkForDiscard'):
             row['decision'] = '待复核'
         if row['marked'] and any(reason.startswith('配队 · ') for reason in wanted['reasons']):
@@ -119,8 +126,14 @@ def compare_game_scan(exported, scanned, names):
             groups[key].append(disc)
         return groups
 
-    observed = group(game_discs, roll_base(scanned))
-    imported = group(exported['discs'], roll_base(exported))
+    if scanned.get('source') == 'OhMyZZZ CN':
+        # A previously bound ID is authoritative. A newly dropped lookalike
+        # cannot inherit the departed disc's old owner from that scan.
+        observed = {d['exportUid']:[d] for d in game_discs if d.get('exportUid') == d['id']}
+        imported = {d['id']:[d] for d in exported['discs']}
+    else:
+        observed = group(game_discs, roll_base(scanned))
+        imported = group(exported['discs'], roll_base(exported))
     owner_slots = Counter((d.get('location'), str(d['slotKey'])) for d in game_discs if d.get('ownerState') == 'worn')
     matched = measured = 0
     last_worn = {}
@@ -128,6 +141,10 @@ def compare_game_scan(exported, scanned, names):
     # common copies, but attribute an old wearer only for a one-to-one match.
     for key in observed.keys() & imported.keys():
         old, new = observed[key], imported[key]
+        if scanned.get('source') == 'OhMyZZZ CN' and (
+                attribute_key(old[0], roll_base(scanned), names, reverse) !=
+                attribute_key(new[0], roll_base(exported), names, reverse)):
+            continue
         matched += min(len(old), len(new))
         if len(old) != 1 or len(new) != 1:
             continue

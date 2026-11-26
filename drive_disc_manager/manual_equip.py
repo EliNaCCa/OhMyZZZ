@@ -18,17 +18,27 @@ class SelectionChanged(ValueError):
         self.targets = targets
 
 
-def confirmation(account, name, cfg, report, snapshot, *, preview_only=False, names=None):
-    targets = target_loadout(cfg, report, snapshot, name, preview_only=preview_only, names=names)
+def selection_digest(targets, unknown_owners=()):
     identity = []
     for target in targets:
         entry = {k:target[k] for k in ('profile','agent','slot','selectionFp','location','ownerState')}
+        if target['selectionFp'].startswith('cn-uid/'):
+            entry.update(level=target['level'], rarity=target['rarity'], main=target['main'], set=target['selectionSet'])
+            if target['selectionFp'] in unknown_owners and ((entry['ownerState'], entry['location']) in
+                    (('bag', ''), ('worn', entry['agent']))):
+                entry.update(ownerState='unknown', location='')
         # OCR writes 19.0 and the reader exports 19. checked_values bounds both to 99999.
         entry['values'] = {group:{k:float(v) for k, v in stats.items()}
                            for group, stats in target['observedValues'].items()}
         identity.append(entry)
+    return digest(identity)
+
+
+def confirmation(account, name, cfg, report, snapshot, *, preview_only=False, names=None):
+    targets = target_loadout(cfg, report, snapshot, name, preview_only=preview_only, names=names)
+    unknown = [t['selectionFp'] for t in targets if t['selectionFp'].startswith('cn-uid/') and t['ownerState'] == 'unknown']
     return dict(account=account, name=name, configuration=digest(cfg), rules=report.get('rules'),
-                selection=digest(identity)), targets
+                selection=selection_digest(targets), unknownOwners=unknown), targets
 
 
 def run_confirmed(ctx, request):
@@ -78,7 +88,9 @@ def verify_selection(request, cfg, report, snapshot, *, names=None):
     if request['configuration'] != digest(cfg) or request['rules'] != report.get('rules'):
         raise ValueError('配队配置或规则已更新，请重新计算')
     current, targets = confirmation(request['account'], request['name'], cfg, report, snapshot, names=names)
-    if current['selection'] != request['selection']:
+    # Reading an unassigned disc in the bag or already on its recipient needs
+    # no new decision. Borrowing from a different agent still changes the plan.
+    if selection_digest(targets, request.get('unknownOwners', ())) != request['selection']:
         raise SelectionChanged(request, current, targets)
 
 

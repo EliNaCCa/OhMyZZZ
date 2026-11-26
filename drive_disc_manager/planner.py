@@ -255,7 +255,14 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
             else:
                 row.update(decision='已弃置',reasons=['游戏已标记弃置'],review=[])
             continue
+        checks = len(row['review'])
         assess_rules(row, cfg, fields, reverse, by_set, unresolved, excluded)
+        rule_checks = row['review'][checks:]
+        if rule_checks:
+            row['ruleReview'] = rule_checks
+            if any(reason.startswith('配队 · ') for reason in row['reasons']):
+                row['explanation'].extend(rule_checks)
+                del row['review'][checks:]
         if issues:
             row['review'].append('有启用配队尚未完成计算')
     quotas = [normalized_rule(rule, reverse) for rule in cfg['reserve_rules']]

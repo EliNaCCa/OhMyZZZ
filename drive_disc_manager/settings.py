@@ -634,11 +634,10 @@ class ManagerInterface(BaseInterface):
         self.panel_stats.horizontalHeaderItem(3).setText(baseline)
         self.panel_stats.horizontalHeaderItem(5).setText('变化')
         self.slots.horizontalHeaderItem(4).setText('穿戴者')
-        self.apply_button.setEnabled(bool(ready or reviewing) and not stats_only and not unbound and not self.equip_busy and self.preview_job is None)
+        self.apply_button.setEnabled(bool(ready or reviewing) and not unbound and not self.equip_busy and self.preview_job is None)
         binding_note = '请同步角色目标 · ' + '、'.join(unbound) if unbound else ''
         hint = '查看要换的盘' if ready else '先计算配装'
-        self.apply_button.setToolTip('切换到「游戏画面扫描」后可换装' if stats_only
-                                     else binding_note or ('对照上次确认和游戏重扫的配装' if reviewing else hint))
+        self.apply_button.setToolTip(binding_note or ('对照上次确认和游戏重扫的配装' if reviewing else hint))
         self.fill(self.slots,[])
         self.fill(self.panel_stats,[])
         self.panel_note.setText('暂无面板对比'); self.panel_note.show()
@@ -900,7 +899,7 @@ class ManagerInterface(BaseInterface):
             table = self.grid(['号位','变动项','上次确认','游戏重扫']); self.fill(table, changes)
             table.resizeColumnsToContents(); panel.addWidget(table)
         panel.addWidget(BodyLabel(f'{name} · {len(targets)} 个号位' if not review else '最新配装'))
-        stat_header = '主副词条（换算值）' if not review and current_cfg['inventorySource'] == 'network' else '主副词条'
+        stat_header = '主副词条（换算值）' if not review and current_cfg['inventorySource'] in ('network', 'cn_export') else '主副词条'
         table = self.grid(['方案','目标角色','号位','套装',stat_header,'当前装备者'])
         self.fill(table,[(t['profile'], agents.get(t['profile']) or t['agent'], t['slot'], sets.get(t['set'],t['set']),
                           display_values(t['observedValues']), owner_names.get(owner_label(t), owner_label(t))) for t in targets])
