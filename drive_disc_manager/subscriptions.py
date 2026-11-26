@@ -297,11 +297,18 @@ def save_field_override(root, key, *, seen_remote, seen_local, override):
         fields = read(root/'rules.json', {}).get('fields', {})
         if fields.get(key) != seen_remote or cfg['overrides'].get(key) != seen_local:
             raise ValueError('编辑期间该字段已更新，请查看最新值后再保存。')
+        # Checkbox order is presentational. Keep the acknowledgement on the saved rule.
+        if override is None and seen_local is None:
+            return False
+        if (override and seen_local and override['mode'] == seen_local['mode']
+                and set(override['values']) == set(seen_local['values'])):
+            return False
         if override is None:
             cfg['overrides'].pop(key, None)
         else:
             cfg['overrides'][key] = override
         save(root/'config.json', cfg)
+        return True
 
 
 def save_config(root, value, expected):

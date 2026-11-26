@@ -117,6 +117,12 @@ def smoke(root):
     assert (root/'rules.json').read_bytes() == original
     sub.resolve_conflict(root, key, latest, 'local')
     assert conflict(read(root/'rules.json')) is None
+    cfg_path = root/'config.json'
+    acknowledged = cfg_path.read_bytes()
+    saved_local = config(root)['overrides'][key]
+    assert sub.save_field_override(root, key, seen_remote=two['fields'][key], seen_local=saved_local,
+                                   override=dict(mode='only',values=['crit_'])) is False
+    assert cfg_path.read_bytes() == acknowledged and conflict(two) is None
     assert conflict(update(['crit_dmg_'])) is None
     three = update(['crit_dmg_', 'anomProf'])
     sub.resolve_conflict(root, key, conflict(three), 'union')

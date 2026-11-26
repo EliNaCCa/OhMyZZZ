@@ -1406,8 +1406,11 @@ class ManagerInterface(BaseInterface):
         if mode != 'inherit' and (role_field or (key.startswith('matrix/') and field in ('4','5','6'))):
             from .main_rule_editor import MainRuleEditor
             dialog = MainRuleEditor(self, row[0]+' · '+row[1], field[-1], mode, seen_remote or [], selected, role_field=role_field)
+            initial = dialog.values()
             if not dialog.exec(): return
-            override = dict(mode=mode, values=dialog.values())
+            chosen = dialog.values()
+            # Existing guide rules can store the original sheet text for the same checkboxes.
+            override = dict(mode=mode, values=selected if chosen == initial and mode == old['mode'] else chosen)
         elif mode != 'inherit' and key.startswith('build/') and key.rsplit('/',1)[-1] in ('sets4','sets2'):
             from .set_rule_editor import SetRuleEditor
             matrix_sets = {k.split('/')[1] for k in self.keys if k.startswith('matrix/') and k.count('/') == 2}
@@ -1423,10 +1426,10 @@ class ManagerInterface(BaseInterface):
             self.on_interface_shown()
             raise ValueError('账号已切换，请在当前账号重新选择字段。')
         try:
-            save_field_override(account, key, seen_remote=seen_remote, seen_local=seen_local, override=override)
+            changed = save_field_override(account, key, seen_remote=seen_remote, seen_local=seen_local, override=override)
         finally:
             self.reload()
-        if snapshot_path(account,config(account)).is_file():
+        if changed and snapshot_path(account,config(account)).is_file():
             self.refresh_saved_preview()
 
     def rule_row(self, key):
