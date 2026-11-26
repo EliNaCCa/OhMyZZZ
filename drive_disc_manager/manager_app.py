@@ -95,11 +95,11 @@ class ManagerApp(ZApplication):
                     return self.round_fail('本轮扫描文件无法唯一识别')
                 if interactive:
                     self.guard_game()
-                import_inventory(self.root,fresh[0],readings=scanner.ocr_worker.scanned_discs)
                 from .marks import reconcile_scan
                 from .salvage_audit import native_run, observe_native, reconcile
-                snapshot = read(self.root/'inventory.json')
                 observe_native(self.root, self.account, native_run(Path(os_utils.get_work_dir()), self.account), scan_started)
+                import_inventory(self.root,fresh[0],readings=scanner.ocr_worker.scanned_discs)
+                snapshot = read(self.root/'inventory.json')
                 reconcile(self.root,snapshot)
                 from .store import equipment_names
                 names = equipment_names(read(wiki_path(), {}))
@@ -108,6 +108,10 @@ class ManagerApp(ZApplication):
             report = preview(self.root,wiki_path(),snapshot=pinned)
             if scan_only:
                 return self.round_success(f"已扫描 {len(snapshot['discs'])} 张驱动盘 · 预览已保存")
+            if mark:
+                from .salvage_audit import needs_review
+                if needs_review(read(self.root/'dismantle-result.json', {})):
+                    return self.round_fail('上批拆解待复核，请在「运行设置 → 查看拆解记录」核对后继续')
             if self.group == MANUAL_GROUP:
                 self.guard_game()
                 verify_selection(request, cfg, report, snapshot)

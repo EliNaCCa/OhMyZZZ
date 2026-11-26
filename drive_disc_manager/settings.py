@@ -224,6 +224,8 @@ class ManagerInterface(BaseInterface):
                 from datetime import datetime
                 completed = datetime.fromtimestamp(data['independentNative']['updated']).strftime('%m-%d %H:%M')
                 text += f"　·　内置任务 {completed}　·　库存 {data['beforeTotal']} → {data.get('afterTotal', '待核')} 张"
+            if data.get('nativeGrade'):
+                text += f"　·　{data['nativeGrade']}　·　{data.get('selector', '筛选方式待核')}"
             note = QLabel(text); note.setWordWrap(True); layout.addWidget(note)
             grid = self.grid(['套装','号位','主属性','等级','纳入原因','实物核对']); layout.addWidget(grid)
             self.fill(grid, [(e['set'],e['slot'],e['main'],e['level'],e['source'],

@@ -24,7 +24,7 @@ def needs_review(receipt):
     return False
 
 
-def prepare_batch(z, report, observed, grade):
+def prepare_batch(z, report, observed, grade, *, include_marked=True):
     discs, counts = inventory(z)
     if report['inventory'] != digest(z) or grade not in GRADE_FILTERS:
         raise ValueError('拆解品级或库存已变化，需重新预览')
@@ -33,10 +33,10 @@ def prepare_batch(z, report, observed, grade):
     for disc in discs:
         fp = fingerprint(disc)
         mark = observed.get(fp, disc.get('markState')) if counts[fp]==1 else disc.get('markState')
-        if mark not in ('marked','unmarked'):
+        if include_marked and mark not in ('marked','unmarked'):
             raise ValueError('存在未读清的弃置标记，已停在可逆标记阶段')
         rank = disc.get('observedGrade')
-        if mark == 'marked':
+        if include_marked and mark == 'marked':
             source = '游戏原有弃置' if disc.get('markState') == 'marked' else '本轮观察到弃置'
         elif rank in GRADE_FILTERS[grade]:
             # Scanner lock/location fields cannot establish the native selection.
@@ -47,7 +47,7 @@ def prepare_batch(z, report, observed, grade):
         entries.append(dict(fp=fp, set=disc['setKey'], slot=disc['slotKey'], main=disc['mainStatKey'],
                             level=disc['level'], source=source, beforeMultiplicity=counts[fp]))
     return dict(batch=uuid4().hex, started=time(), inventory=report['inventory'], rules=report.get('rules'),
-                configuration=report['configuration'], selector='全选已弃置', nativeGrade=grade,
+                configuration=report['configuration'], selector='全选已弃置' if include_marked else '仅按品级', nativeGrade=grade,
                 beforeTotal=len(discs), entries=entries, unresolvedGrades=unresolved_grades, status='not_submitted')
 
 
@@ -76,16 +76,19 @@ def native_run(home, account):
 
 
 def observe_native(root, account, native, scan_started):
-    """Only a changed terminal receipt before this scan can explain a later inventory difference."""
-    if not native or native['account'] != account or native['status'] not in (1, 2):
+    """Associate a newer run stamp with its batch, even if the host lost the final result."""
+    if not native or native['account'] != account or native['status'] not in (0, 1, 2, 3):
         return
+    if native['updated'] > scan_started:
+        raise ValueError('扫描期间内置拆解记录已变化，请重新扫描后对账')
     before = read(root/'dismantle-preview.json', {})
     last = read(root/'dismantle-result.json', {})
     if (before.get('account') != account or before.get('status') != 'not_submitted'
-            or not before.get('entries') or before['batch'] == last.get('batch') or needs_review(last)):
+            or not (before.get('entries') or before.get('unresolvedGrades'))
+            or before['batch'] == last.get('batch') or needs_review(last)):
         return
     baseline = before.get('nativeAtPreview') or {}
-    if not max(before['started'], baseline.get('updated', 0)) < native['updated'] <= scan_started:
+    if native['updated'] <= max(before['started'], baseline.get('updated', 0)):
         return
     record(root, dict(before, status='pending', independentNative=native))
 
@@ -100,7 +103,7 @@ def reconcile(root, fresh):
         return
     discs, counts = inventory(fresh)
     previous.update(observedAt=time(), afterInventory=digest(fresh), afterTotal=len(discs))
-    if not previous.get('entries'):
+    if not previous.get('entries') and not previous.get('independentNative'):
         # v0.1.2 only saved a native result. Its scope cannot be inferred.
         previous.setdefault('batch', uuid4().hex)
         previous.update(status='legacy_unverifiable', resolution='旧版未保存逐盘清单，请人工核对')
@@ -133,13 +136,15 @@ def reconcile(root, fresh):
         for entry in previous['entries']:
             if entry['after'] == '已不在库存':
                 remaining[entry['fp']] -= 1
-        resolved = (resolved and native['status'] == 1 and previous.get('unresolvedGrades') == 0
-                    and expected is not None and remaining == counts)
+        all_gone = bool(previous['entries']) and states['已不在库存'] == len(previous['entries'])
+        resolved = (resolved and (native['status'] == 1 or all_gone)
+                    and previous.get('unresolvedGrades') == 0 and expected is not None and remaining == counts)
     previous.update(status='reconciled' if resolved else 'needs_review', observations=dict(states),
                     resolution='已核对库存差额和现存标记' if resolved else '确认结果待核，本批不会自动重试')
     if native:
-        note = '成功' if native['status'] == 1 else '失败'
-        previous['resolution'] = '内置任务回执'+note+' · '+('前后库存已对上' if resolved else '库存变化待核')
+        result = {0:'记录已重置，缺少结束结果', 1:'回执成功', 2:'回执失败', 3:'只有开始记录，缺少结束结果'}
+        stock = ('本批全部离库，其余盘已对上' if all_gone else '前后库存已对上') if resolved else '库存变化待核'
+        previous['resolution'] = '内置任务'+result[native['status']]+' · '+stock
     record(root, previous)
 
 

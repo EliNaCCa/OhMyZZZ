@@ -7,8 +7,10 @@ from .task_order import group_settings
 
 
 def handoff(app, report, observed):
-    _, native = group_settings(app.ctx, app.account)
-    if native is None or not native.dismantle_abandon:
+    _, native = group_settings(app.ctx, app.account, app.group)
+    if native is None and app.group != 'one_dragon':
+        _, native = group_settings(app.ctx, app.account)
+    if native is None:
         return '已标记，等待游戏内拆解'
     if app.ctx.current_instance_idx != app.account or not app.ctx.run_context.is_context_running:
         raise ValueError('账号或运行状态变化，请下次从新扫描继续')
@@ -18,7 +20,7 @@ def handoff(app, report, observed):
     if needs_review(previous):
         return '已标记，上批确认结果待核。请查看运行设置的拆解记录。'
     snapshot = read(app.root/'inventory.json')
-    receipt = prepare_batch(snapshot,report,observed,native.dismantle_level)
+    receipt = prepare_batch(snapshot,report,observed,native.dismantle_level, include_marked=native.dismantle_abandon)
     from collections import Counter
     from .store import fingerprint
     receipt.update(account=app.account, nativeAtPreview=native_run(Path(os_utils.get_work_dir()), app.account),
@@ -27,5 +29,5 @@ def handoff(app, report, observed):
     # proceed to confirm. Keep the independent host task out of this invocation.
     save(app.root/'dismantle-preview.json', receipt)
     if not receipt['entries'] and not receipt['unresolvedGrades']:
-        return '当前无弃置或符合品级条件的盘'
+        return '本轮内置筛选范围为空'
     return SCOPE_UNAVAILABLE

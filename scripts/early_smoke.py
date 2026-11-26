@@ -63,6 +63,14 @@ def smoke():
             assert '核对内置拆解' in str(exc)
         else:
             raise AssertionError('Unrecognized native grade accepted')
+        # Custom groups enable their own rows, but the installed native factory
+        # always reads the current account's default-group dismantle filters.
+        item.enabled = True
+        group.app_list = [item]
+        ctx.app_group_manager.get_group_config = lambda idx, gid: NS(app_list=[native])
+        actual = {'one_dragon':'S及以下', 'custom':'B'}
+        ctx.run_context.get_config = lambda app_id, idx, gid: NS(dismantle_level=actual[gid], dismantle_abandon=True)
+        assert '未弃置的 S 级盘' in marker_conflict(ctx, 1, 'custom')
     print('PASS early account receipt, replay, daily entry, and game exit')
 
 

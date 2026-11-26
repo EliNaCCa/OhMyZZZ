@@ -56,6 +56,11 @@ def smoke(home, tmp):
         return Obj(app_id=app_id, instance_idx=account, group_id=group, finish_reason=Obj(value='COMPLETED'))
     run.run_application = launch
     widget = ManagerInterface(ctx)
+    # A past unresolved batch must still allow the read-only scan required to review it.
+    from drive_disc_manager.store import digest
+    outstanding = dict(batch='single-fixture', status='needs_review', afterInventory=digest(snapshot),
+                       independentNative=dict(account=1, updated=1, status=3))
+    save(root/'dismantle-result.json', outstanding)
     widget.on_interface_shown()
     with ExitStack() as stack:
         for name, value in [('drive_disc_manager.disc_probe.interactive_slot', lambda:nullcontext((3, lambda:None))),
@@ -77,6 +82,22 @@ def smoke(home, tmp):
         for action in forbidden:
             action.assert_not_called()
     assert read(root/'inventory.json') == snapshot and config(root) == cfg
+    # Reuse the same one-disc warehouse via the daily entry. No new mark can
+    # reach the game until the displayed batch has been reviewed.
+    manager.group = 'one_dragon'
+    manager.round_fail = lambda reason:('failed', reason)
+    run.is_context_stop, run.is_context_running = False, True
+    scanner.execute = lambda: (save(tmp/'.debug/inventory_exports/inventory_daily.json', snapshot) or Obj(success=True))
+    save(root/'config.json', dict(cfg, auto_sync=False, fieldProfile=''))
+    with patch('drive_disc_manager.scan_marks.capture_marks', lambda _:nullcontext()), \
+         patch('drive_disc_manager.live.Marker') as marker:
+        status, reason = ManagerApp.manage_inventory(manager)
+        assert status == 'failed' and '上批拆解待复核' in reason
+        marker.assert_not_called()
+    assert read(root/'dismantle-result.json') == outstanding
+    from drive_disc_manager.salvage_audit import close_reviewed, needs_review
+    close_reviewed(root, outstanding['batch'], outstanding['afterInventory'])
+    assert not needs_review(read(root/'dismantle-result.json'))
     widget.close()
 
 

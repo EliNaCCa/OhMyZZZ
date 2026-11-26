@@ -46,6 +46,10 @@ with TemporaryDirectory() as tmp:
     batch=prepare_batch(z,report,{},'A及以下')
     assert [r['source'] for r in batch['entries']]==['游戏原有弃置']
     assert batch['status']=='not_submitted'
+    grade_only = dict(z, discs=[z['discs'][0], dict(z['discs'][1], rarity='A', observedGrade='A', markState='unknown')])
+    grades = prepare_batch(grade_only, plan(grade_only, limited, rules, {}), {}, 'A及以下', include_marked=False)
+    assert grades['selector'] == '仅按品级' and len(grades['entries']) == 1
+    assert grades['entries'][0]['source'] == '低品级可能入选' and grades['entries'][0]['fp'] != batch['entries'][0]['fp']
     # A v0.1.9 execution that stopped near confirmation must be reconciled first.
     record(root,dict(batch,status='pending'))
     reconcile(root,z)
@@ -59,8 +63,36 @@ with TemporaryDirectory() as tmp:
     before = dict(batch, account=1, started=10, nativeAtPreview={'updated':8},
                   beforeCounts={fingerprint(d):1 for d in z['discs']})
     save(observed/'dismantle-preview.json', before)
-    for account, stamp, status in [(2, 11, 1), (1, 8, 1), (1, 13, 1), (1, 11, 3)]:
+    for account, stamp, status in [(2, 11, 1), (1, 8, 1), (1, 11, 99)]:
         observe_native(observed, 1, dict(account=account, updated=stamp, status=status), 12)
+    assert not (observed/'dismantle-result.json').exists()
+    # Start then interruption, or the host's daily reset of that receipt.
+    for status in (3, 0):
+        interrupted = root/f'interrupted-{status}'
+        save(interrupted/'dismantle-preview.json', before)
+        observe_native(interrupted, 1, dict(account=1, updated=11, status=status), 12)
+        reconcile(interrupted, z)
+        raw = read(interrupted/'dismantle-result.json')
+        assert raw['batch'] == before['batch'] and raw['status'] == 'needs_review'
+        assert raw['observations'] == {'仍标弃置':1} and '结束结果' in raw['resolution']
+        # Another run and a new drop cannot rewrite the first observed evidence.
+        observe_native(interrupted, 1, dict(account=1, updated=16, status=1), 17)
+        reconcile(interrupted, after)
+        assert read(interrupted/'dismantle-result.json') == raw
+    # Missing host confirmation alone should not block a new batch if every
+    # expected identity is absent and the rest of the warehouse matches.
+    absent = root/'already-gone'; save(absent/'dismantle-preview.json', before)
+    observe_native(absent, 1, dict(account=1, updated=11, status=3), 12)
+    reconcile(absent, after)
+    settled = read(absent/'dismantle-result.json')
+    assert settled['status'] == 'reconciled' and '全部离库' in settled['resolution'] and '缺少结束结果' in settled['resolution']
+    overlap = dict(account=1, updated=13, status=1)
+    try:
+        observe_native(observed, 1, overlap, 12)
+    except ValueError as exc:
+        assert '扫描期间' in str(exc)
+    else:
+        raise AssertionError('overlapping scan accepted for native handoff')
     assert not (observed/'dismantle-result.json').exists()
     native = dict(account=1, updated=11, status=1)
     observe_native(observed, 1, native, 12)

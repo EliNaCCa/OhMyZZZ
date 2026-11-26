@@ -13,7 +13,8 @@ def group_settings(ctx, account, group_id='one_dragon'):
         raise ValueError('未读取到本账号的任务组 · '+group_id)
     native = None
     if any(row.app_id == NATIVE_ID and row.enabled for row in group.app_list):
-        native = ctx.run_context.get_config(NATIVE_ID, account, group_id)
+        # DriveDiscDismantleApp reads DEFAULT_GROUP_ID even when launched from a custom group.
+        native = ctx.run_context.get_config(NATIVE_ID, account, 'one_dragon')
         if native is None or native.dismantle_level not in ('A及以下','B','S及以下') or type(native.dismantle_abandon) is not bool:
             raise ValueError('请在一条龙中核对内置拆解的品级和「全选已弃置」')
     return group, native
