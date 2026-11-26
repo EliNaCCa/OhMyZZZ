@@ -1,8 +1,8 @@
 """View incomplete game readings without publishing an actionable inventory."""
 from datetime import datetime
 
-from .stat_reading import format_stats
-from .store import read, save
+from .stat_reading import checked_values, format_stats
+from .store import observed_agents, read, remember_agents, save
 
 
 def save_observations(root, scan, observed_at):
@@ -14,6 +14,10 @@ def save_observations(root, scan, observed_at):
             and type(d.get('level')) is int]
     if rows:
         save(root/'scan-observations.json', dict(at=observed_at, total=total, rows=rows))
+        worn = [d for d in rows if d.get('ownerState') == 'worn' and d.get('observedGrade') in ('S','A','B')
+                and d['observedGrade'] == d.get('rarity') and isinstance(d.get('substats'), list)
+                and d.get('mainStatKey') and checked_values(d, 1)]
+        remember_agents(root, observed_agents({'discs':worn}))
 
 
 def show_observations(grid, fill, root, enabled, agents):

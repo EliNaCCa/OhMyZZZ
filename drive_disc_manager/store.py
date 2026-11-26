@@ -172,6 +172,13 @@ def observed_agents(snapshot):
     return {key.strip() for key in keys if isinstance(key, str) and key.strip()}
 
 
+def remember_agents(root, keys):
+    path = root / 'owned-agents.json'
+    previous = set(read(path, []))
+    if keys - previous:
+        save(path, sorted(previous | keys))
+
+
 def network_agents(root):
     path = root/'network-owned-agents.json'
     if path.is_file():
@@ -208,11 +215,7 @@ def import_inventory(root, path, *, readings=None, cn_export=None, names=None):
         raise
     # An account keeps unlocked agents. A later disc-only export has an empty
     # characters array and should not retire agents seen in earlier full scans.
-    keys = set(read(root/'owned-agents.json', []))
     previous = read(root/'inventory.json', {})
-    for snapshot in (previous, z):
-        keys.update(observed_agents(snapshot))
-    if keys:
-        save(root/'owned-agents.json', sorted(keys))
+    remember_agents(root, observed_agents(previous) | observed_agents(z))
     save(root / 'inventory.json', z)
     return len(z['discs'])
