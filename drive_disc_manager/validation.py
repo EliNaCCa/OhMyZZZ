@@ -9,6 +9,9 @@ def validate(value):
     quota(cfg['reserve'])
     if cfg['inventorySource'] not in ('ocr', 'network', 'cn_export'):
         raise ValueError('请选择库存读取方式')
+    from .showcase import valid_uid
+    if cfg.get('showcaseUid', '') != '' and not valid_uid(cfg['showcaseUid']):
+        raise ValueError('请填写 8 到 12 位游戏 UID，或留空关闭展柜')
     for key in ('dailyLimit', 'weeklyLimit'):
         if type(cfg[key]) is not int or not 1 <= cfg[key] <= 99:
             raise ValueError('运行次数可填 1 到 99')

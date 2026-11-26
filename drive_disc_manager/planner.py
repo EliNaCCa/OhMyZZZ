@@ -62,6 +62,12 @@ def assess_rules(row, cfg, fields, reverse, by_set, unresolved, excluded):
 
 def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_owned=(),history=None,previous_preview=None,comparison=None):
     ds, _ = inventory(z, preview_only=True)
+    stats_only = z.get('networkPreview') is True and z.get('source') == 'zzz-drive-exporter'
+    showcase = z.get('showcase') or {}
+    shown = showcase.get('owners', {}) if stats_only and showcase.get('uid') == cfg.get('showcaseUid') else {}
+    if shown:
+        ds = [dict(d, location=shown[d['id']], ownerState='worn', ownerSource='showcase')
+              if d['id'] in shown and not d.get('location') else d for d in ds]
     reader_owners = {}
     if z.get('networkPreview') is True and wiki:
         for raw in {d['location'] for d in ds if d.get('location')}:
@@ -83,10 +89,15 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     fields = rules.get('fields',{})
     catalog = roster_catalog(z, fields, cfg, wiki or {}, known_owned)
     by_set, unresolved, excluded = compile_roster(catalog, fields, cfg['overrides'], reverse)
-    stats_only = z.get('networkPreview') is True and z.get('source') == 'zzz-drive-exporter'
+    if stats_only:
+        slots = Counter((d['location'], d['slotKey']) for d in ds if d.get('location') and d.get('ownerSource') != 'showcase')
+        if any(count > 1 for count in slots.values()):
+            raise ValueError('同一代理人的一个号位有两张盘，请核对导出文件')
+        ds = [dict(d, location='', ownerState='unknown', ownerSource='')
+              if d.get('ownerSource') == 'showcase' and (d['location'], d['slotKey']) in slots else d for d in ds]
     last_worn = comparison['lastWorn'] if stats_only and comparison else {}
-    last_owner_labels = {agent.get('code') or (agent.get('EN') or '').replace(' ', ''): agent['CHS']
-                         for agent in (wiki or {}).get('character', {}).values() if last_worn and agent.get('CHS')}
+    owner_labels = {agent.get('code') or (agent.get('EN') or '').replace(' ', ''): agent['CHS']
+                    for agent in (wiki or {}).get('character', {}).values() if agent.get('CHS')}
     by_piece = {}
     inputs = {}
     for d in ds:
@@ -106,6 +117,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         raise ValueError('配队方案名称重复')
     bindings = preview_bindings(enabled, wiki or {})
     binding_errors = {}
+    baselines = {}
     for p in enabled:
         name = p['name']
         owner = bindings[name]
@@ -117,13 +129,22 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         group = ('group',p['simultaneous']) if p.get('simultaneous') else ('solo',name)
         current = {piece for piece, d in by_piece.items() if owner and d.get('location') == owner}
         if stats_only:
-            current = {piece for piece, actor in last_worn.items() if owner and actor == owner}
+            # Use one observation for all six slots; never fill its gaps from older scans.
+            direct = {piece for piece in current if by_piece[piece].get('ownerSource') != 'showcase'}
+            if direct:
+                source, current = 'export', direct
+            elif current:
+                source = 'showcase'
+            else:
+                source = 'scan'
+                current = {piece for piece, actor in last_worn.items() if owner and actor == owner and not by_piece[piece].get('location')}
             if len(current) != 6 or {str(by_piece[piece]['slotKey']) for piece in current} != set('123456'):
                 current = set()
+            baselines[name] = source if current else 'unknown'
         groups[group].append((dict(p, agentKey=owner), current))
     pool = [disc for disc in inputs.values() if disc and not disc['discarded']]
     inventory_hash = digest(z)
-    allocation_key = digest([PLUGIN_VERSION, 'full-crit-shortlist-v2', inventory_hash, enabled, bindings, optimizer_names, reader_owners, last_worn, cfg['optimizer_url']]) if enabled else None
+    allocation_key = digest([PLUGIN_VERSION, 'wearer-baseline-v1', inventory_hash, enabled, bindings, optimizer_names, reader_owners, last_worn, shown, cfg['optimizer_url']]) if enabled else None
     saved = reusable_assignments(previous_preview, allocation_key, groups, pool)
     for (_,group_name), members in groups.items():
         try:
@@ -137,7 +158,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
                        assign_group(members, pool, cfg['optimizer_url'], fetch_candidates))
             for profile,result in results:
                 name = profile['name']
-                assignments[name] = result
+                assignments[name] = dict(result, baselineSource=baselines[name]) if stats_only else result
                 for fp in result['ids']:
                     used_by[fp].append('配队 · '+name)
         except Exception as exc:
@@ -151,7 +172,8 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         piece = d['id'] if stats_only else fp
         why = list(used_by[piece])
         if d.get('location'):
-            why.append('已装备 · '+d['location'])
+            label = owner_labels.get(d['location'], d['location'])
+            why.append(('角色展柜 · ' if d.get('ownerSource') == 'showcase' else '已装备 · ') + label)
         values = checked_values(d, base)
         entry = history.get(fp, {})
         managed = (counts[fp] == 1 and owns_spare(entry, values) and d.get('lockState') == 'locked'
@@ -170,9 +192,13 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         row['pinKeys'] = pin_keys(d, names, reverse, fp)
         if stats_only:
             row['buildId'] = piece
-            if piece in last_worn:
+            if d.get('location'):
+                row['ownerSource'] = d.get('ownerSource') or 'export'
+            elif piece in last_worn:
                 row['lastScanOwner'] = last_worn[piece]
-                row['lastScanOwnerLabel'] = last_owner_labels.get(last_worn[piece], last_worn[piece])
+                row['lastScanOwnerLabel'] = owner_labels.get(last_worn[piece], last_worn[piece])
+        if d.get('location'):
+            row['ownerLabel'] = owner_labels.get(d['location'], d['location'])
         if is_pinned(row, pins):
             why.append('手动保护')
         row['marked'] = d.get('trash') is True

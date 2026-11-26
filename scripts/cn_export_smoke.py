@@ -13,7 +13,7 @@ from unittest.mock import patch
 def smoke(home, sample, temp):
     os.environ['QT_QPA_PLATFORM'] = 'offscreen'
     sys.path[:0] = [str(Path(__file__).resolve().parents[1]), str(home / 'src')]
-    from PySide6.QtWidgets import QApplication, QFileDialog
+    from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog
     from one_dragon.utils import os_utils
     from drive_disc_manager.cn_export import refresh
     from drive_disc_manager.manager_app import ManagerApp
@@ -125,6 +125,25 @@ def smoke(home, sample, temp):
     else:
         raise AssertionError('accepted duplicate item ID')
     assert snap_path.read_bytes() == good
+    # Turn on the optional showcase from the normal settings page. Only the
+    # attributes came from the real scan; the UID and association are fixtures.
+    save(file, exported)
+    with patch.object(QInputDialog, 'getText', return_value=('123456789', True)):
+        widget.showcase_button.click()
+    assert config(account)['showcaseUid'] == '123456789'
+    from drive_disc_manager.showcase import PROPERTIES
+    prop = {name: number for number, name in PROPERTIES.items()}
+    disc = records[0]
+    item = dict(Uid=int(disc['id']), Id=34041, Level=disc['level'], MainStatList=[dict(PropertyId=11103)],
+                RandomPropertyList=[dict(PropertyId=prop[s['key']], PropertyLevel=s['upgrades']) for s in disc['substats']])
+    avatar = dict(Id=1141, EquippedList=[dict(Slot=1, Equipment=item)])
+    response = dict(uid='123456789', PlayerInfo=dict(ShowcaseDetail=dict(AvatarList=[avatar])))
+    with patch('drive_disc_manager.showcase.fetch', return_value=response) as remote:
+        assert '预览' in ManagerApp.manage_inventory(manager)
+        remote.assert_called_once_with('123456789')
+    widget.reload()
+    assert widget.rows[0]['ownerSource'] == 'showcase' and widget.rows[0]['location'] == '1141'
+    assert 'lastScanOwner' not in widget.rows[0] and '对上 1 张' in widget.warehouse_summary.text()
     widget.close()
 
 

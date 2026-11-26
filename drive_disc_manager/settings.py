@@ -17,7 +17,7 @@ from .manager_app import wiki_path
 from .drive_disc_manager_const import APP_ID, APP_NAME, PLUGIN_VERSION
 from .reserve_policy import matching_rules, normalized_rule, SELECTORS
 from .roster import roster_catalog
-from .disc_owner import owner_label
+from .disc_owner import owner_label, preview_owner
 from .optimizer import effective_crit_rate
 
 
@@ -185,6 +185,7 @@ class ManagerInterface(BaseInterface):
         self.reader.currentIndexChanged.connect(lambda _:self.invoke(lambda:self.edit_cfg(inventorySource=self.reader.currentData())))
         bar.addWidget(self.reader)
         self.reader_open = self.button(bar, '打开读取器', self.open_reader)
+        self.showcase_button = self.button(bar, '绑定角色展柜', self.edit_showcase)
         self.reader_help = self.button(bar, '读取器说明', self.open_reader_guide)
         bar.addStretch()
         bar = QHBoxLayout(); box.addLayout(bar); self.limits = {}
@@ -315,6 +316,13 @@ class ManagerInterface(BaseInterface):
             url = 'https://github.com/Treageer/zzz-drive-exporter/blob/v0.2.1/README.md'
         QDesktopServices.openUrl(QUrl(url))
 
+    def edit_showcase(self):
+        token = self.edit_token()
+        uid, ok = QInputDialog.getText(self, '角色展柜', '输入游戏 UID，从 Enka 读取公开展示角色的穿戴。留空关闭。',
+                                       text=token[2].get('showcaseUid', ''))
+        if ok:
+            self.finish_edit(token, dict(token[2], showcaseUid=uid.strip()))
+
     def open_reader(self):
         import os
         from .reader_install import install
@@ -418,6 +426,8 @@ class ManagerInterface(BaseInterface):
         self.reader_open.setVisible(self.cfg['inventorySource'] == 'network')
         source = self.cfg['inventorySource']
         cn_export = source == 'cn_export'
+        self.showcase_button.setVisible(cn_export)
+        self.showcase_button.setText('更改展柜 UID' if self.cfg.get('showcaseUid') else '绑定角色展柜')
         bound = cn_export and snapshot_path(self.root, self.cfg).is_file()
         self.scan_button.setText(('刷新导出文件' if bound else '选择国服导出文件') if cn_export
                                  else ('读取仓库' if source == 'network' else '扫描仓库'))
@@ -486,6 +496,14 @@ class ManagerInterface(BaseInterface):
         totals = [f'库存 {len(self.rows)} 张']
         if cn_export and inventory.get('lastChange') and not self.preview_stale:
             totals.append('上次变化 · ' + inventory['lastChange'])
+        if cn_export and self.cfg.get('showcaseUid') and not self.preview_stale:
+            info = inventory.get('showcase') or {}
+            if info.get('uid') == self.cfg['showcaseUid']:
+                count = sum(r.get('ownerSource') == 'showcase' for r in self.rows)
+                stamp = datetime.fromtimestamp(info['at']).strftime('%m-%d %H:%M')
+                totals.append(info.get('note') or f'展柜 {stamp} · 对上 {count} 张')
+            else:
+                totals.append('刷新导出文件后同步展柜')
         totals.extend(f'{name} {counts[name]}' for name in ('保留','弃置候选','已弃置','待复核') if counts.get(name))
         self.warehouse_summary.setText('    ·    '.join(totals))
         self.warehouse_summary.setVisible(bool(self.rows))
@@ -608,13 +626,15 @@ class ManagerInterface(BaseInterface):
         lineup = fielded_profiles(self.cfg, selected['name']) if selected and selected.get('enabled', True) else []
         unbound = [p['name'] for p in lineup if not p.get('agentKey') or p['agentKey'] != self.preview_bindings.get(p['name'])]
         stats_only = self.cfg['inventorySource'] == 'cn_export'
-        self.panel_stats.horizontalHeaderItem(3).setText('上次扫描' if stats_only else '当前装备')
-        self.panel_stats.horizontalHeaderItem(5).setText('相比上次' if stats_only else '相比当前')
-        self.slots.horizontalHeaderItem(4).setText('上次扫描穿戴者' if stats_only else '当前装备者')
+        source = self.report.get('assignments', {}).get(selected.get('name'), {}).get('baselineSource')
+        baseline = {'scan':'上次扫描', 'export':'导出配装', 'showcase':'角色展柜', 'unknown':'原配装'}.get(source, '原配装' if stats_only else '当前装备')
+        self.panel_stats.horizontalHeaderItem(3).setText(baseline)
+        self.panel_stats.horizontalHeaderItem(5).setText('变化')
+        self.slots.horizontalHeaderItem(4).setText('穿戴者')
         self.apply_button.setEnabled(bool(ready or reviewing) and not stats_only and not unbound and not self.equip_busy and self.preview_job is None)
         binding_note = '请同步角色目标 · ' + '、'.join(unbound) if unbound else ''
         hint = '查看要换的盘' if ready else '先计算配装'
-        self.apply_button.setToolTip('导出文件没有穿戴信息，切换到游戏画面扫描后可换装' if stats_only
+        self.apply_button.setToolTip('切换到「游戏画面扫描」后可换装' if stats_only
                                      else binding_note or ('对照上次确认和游戏重扫的配装' if reviewing else hint))
         self.fill(self.slots,[])
         self.fill(self.panel_stats,[])
@@ -638,7 +658,7 @@ class ManagerInterface(BaseInterface):
         rows = [pieces[piece] for piece in result['ids'] if piece in pieces]
         from .reserve_presets import STAT_NAMES
         self.fill(self.slots,[(r['slot'],self.set_names.get(r['set'],r['set']),STAT_NAMES.get(r['main'],r['main']),r['level'],
-                               r.get('lastScanOwnerLabel', '—') if stats_only else owner_label(r),
+                               preview_owner(r),
                                '、'.join(r['reasons'])) for r in rows])
         self.slots.resizeColumnsToContents()
         details = [profile['name']]
@@ -654,7 +674,7 @@ class ManagerInterface(BaseInterface):
             self.panel_note.hide()
             details.append(result.get('panelMode','职业面板'))
             if not result.get('currentPanel'):
-                details.append('上次扫描的六张穿戴盘未对齐' if stats_only else '当前穿戴六盘未核实')
+                details.append('还缺原配装的穿戴记录')
         if 'outputScore' in result:
             details += [f"所选输出 {result.get('rawOutput', result['outputScore'])}", f"候选最高 {result.get('rawBestOutput', result['bestOutput'])}"]
             if profile.get('simultaneous') and 'rawAvailableBestOutput' in result:
@@ -663,10 +683,9 @@ class ManagerInterface(BaseInterface):
             worn = result.get('wornOutput')
             if worn is not None and number(worn) > 0:
                 change = (number(result.get('rawOutput',result['outputScore'])) / number(worn) - 1) * 100
-                baseline = '上次扫描配装' if stats_only else '当前六盘'
                 details.append(f'{baseline}输出 {worn} · 方案变化 {float(change):+.6g}%')
             else:
-                details.append('上次扫描的六张穿戴盘未对齐' if stats_only else '当前六盘输出待核')
+                details.append('原配装输出待核对')
             if result.get('metric'):
                 details.append(self.crit_summary(result))
                 details.append(f"实战{result['metric']} {result['metricValue']:g} · 暴伤 {result['critDamage']:g}% · 增伤 {result['damageBonus']:g}%")
@@ -1202,7 +1221,7 @@ class ManagerInterface(BaseInterface):
                             raise ValueError('读取方式已切换，请重新读取')
                         if cn_import:
                             from .cn_export import refresh
-                            refresh(account, same_account, path=import_path)
+                            refresh(account, same_account, path=import_path, showcase_uid=pinned[0].get('showcaseUid', ''), wiki=read(wiki, {}))
                         else:
                             from .network_reader import capture
                             capture(account, same_account)

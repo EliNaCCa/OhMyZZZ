@@ -78,7 +78,7 @@ class ManagerApp(ZApplication):
                         raise ValueError('账号已切换或任务已停止')
                 if source == 'cn_export':
                     from .cn_export import refresh
-                    refresh(self.root, same_account)
+                    refresh(self.root, same_account, showcase_uid=cfg.get('showcaseUid', ''), wiki=read(wiki_path(), {}))
                 else:
                     from .network_reader import capture
                     capture(self.root, same_account)

@@ -182,7 +182,10 @@ def network_agents(root):
 
 def known_agents(root):
     declared = read(root/'challenge-preferences.json', {}).get('agents', {})
-    return set(read(root/'owned-agents.json', [])) | network_agents(root) | set(declared)
+    cn = read(root/'cn-inventory.json', {})
+    showcase = cn.get('showcase') or {}
+    shown = showcase.get('owners', {}).values() if showcase.get('uid') == config(root).get('showcaseUid') else ()
+    return set(read(root/'owned-agents.json', [])) | network_agents(root) | set(declared) | observed_agents(cn) | set(shown)
 
 
 def import_inventory(root, path, *, readings=None):

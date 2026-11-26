@@ -74,4 +74,12 @@ def owner_label(disc):
         return '背包'
     if state == 'unknown':
         return '穿戴者待复核'
-    return disc.get('location') or '穿戴状态未核实'
+    return disc.get('ownerLabel') or disc.get('location') or '穿戴状态未核实'
+
+
+def preview_owner(row):
+    if row.get('ownerSource') == 'showcase':
+        return owner_label(row) + '（展柜）'
+    if row.get('ownerState') == 'unknown' and row.get('lastScanOwner'):
+        return (row.get('lastScanOwnerLabel') or row['lastScanOwner']) + '（上次扫描）'
+    return owner_label(row)

@@ -44,12 +44,15 @@ def normalize_disc(raw):
         if type(count) is not int or not 1 <= count <= 6:
             raise ValueError('副词条强化档数有误')
         rolls[key] = count
-    if type(raw.get('lock')) is not bool or raw.get('location') != '' or raw.get('trash') is not False:
+    owner = raw.get('location', '')
+    if (not isinstance(owner, str) or len(owner) > 80 or (owner and (not owner.isprintable() or not owner.strip()))
+            or type(raw.get('lock')) is not bool or raw.get('trash') is not False):
         raise ValueError('该导出版本的穿戴或标记格式有变化')
-    # This exporter has no owner/trash data and may use false when the lock field is missing.
+    owner = owner.strip()
+    # v0.2.1 writes a blank for every disc. Only a named wearer is evidence.
     disc = dict(id=uid, setKey=SET_KEYS.get(name, name), slotKey=slot, rarity=rank, level=level,
                 mainStatKey=main, substats=[dict(key=k, upgrades=rolls[k]) for k in sorted(rolls)],
-                location='', ownerState='unknown', markState='unknown', lock=raw['lock'],
+                location=owner, ownerState='worn' if owner else 'unknown', markState='unknown', lock=raw['lock'],
                 lockState='locked' if raw['lock'] else 'unknown')
     if rank == 'S':
         from .reserve_policy import development
@@ -72,6 +75,9 @@ def normalize(data):
     discs = sorted((normalize_disc(row) for row in data['discs']), key=lambda d: int(d['id']))
     if not discs:
         raise ValueError('导出文件里没有驱动盘，请检查读取器')
+    owners = [(d['location'].casefold(), d['slotKey']) for d in discs if d['location']]
+    if len(set(owners)) != len(owners):
+        raise ValueError('导出文件里同一代理人的一个号位有两张盘')
     snapshot = dict(format='ZOD', version=1, dbVersion=2, networkPreview=True, source=SOURCE,
                     discs=discs, characters=[], wengines=[])
     inventory(snapshot, preview_only=True)
@@ -87,13 +93,16 @@ def compare(previous, current):
     changed = []
     for name, count in [('新增', len(after.keys() - before.keys())), ('减少', len(before.keys() - after.keys())),
                         ('属性变化', sum(fingerprint(before[k]) != fingerprint(after[k]) for k in common)),
-                        ('锁定变化', sum(before[k]['lock'] != after[k]['lock'] for k in common))]:
+                        ('锁定变化', sum(before[k]['lock'] != after[k]['lock'] for k in common)),
+                        ('换装', sum(bool(before[k].get('location') and after[k].get('location')) and
+                                    before[k]['location'] != after[k]['location'] for k in common)),
+                        ('穿戴记录更新', sum(bool(before[k].get('location')) != bool(after[k].get('location')) for k in common))]:
         if count:
             changed.append(f'{name} {count} 张')
     return '，'.join(changed) or '驱动盘没有变化'
 
 
-def refresh(root, check_account, path=None):
+def refresh(root, check_account, path=None, *, showcase_uid='', wiki=None):
     """Under the maintenance lock, refresh only the file selected for this account."""
     previous = read(root / FILE, {})
     bound = previous.get('exportFile', '')
@@ -119,10 +128,20 @@ def refresh(root, check_account, path=None):
     before, after = previous.get('discs', []), snapshot['discs']
     if before and not manual and {d['id'] for d in before}.isdisjoint(d['id'] for d in after):
         raise ValueError('这份文件与上次没有同一张盘，请在仓库重新选择本账号的导出文件')
+    if showcase_uid:
+        from .showcase import read_showcase
+        snapshot['showcase'] = read_showcase(showcase_uid, after, wiki or {}, previous.get('showcase', {}))
     check_account()
-    if bound and path == Path(bound) and before == after:
+    if bound and path == Path(bound) and before == after and previous.get('showcase') == snapshot.get('showcase'):
         return '驱动盘没有变化'
     message = compare(before, after)
+    old_show, new_show = previous.get('showcase') or {}, snapshot.get('showcase') or {}
+    if old_show.get('uid') and old_show.get('uid') == new_show.get('uid'):
+        old_owners, new_owners = old_show['owners'], new_show['owners']
+        moved = sum(old_owners[key] != new_owners[key] for key in old_owners.keys() & new_owners.keys())
+        if moved:
+            change = f'展柜换装 {moved} 张'
+            message = change if message == '驱动盘没有变化' else message + '，' + change
     snapshot.update(exportFile=str(path), lastChange=message)
     save(root / FILE, snapshot)
     return message

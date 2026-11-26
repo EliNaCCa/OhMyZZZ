@@ -45,8 +45,10 @@ def normalize(data):
         raise ValueError('请在网络读取器导出角色、驱动盘和音擎，再登录游戏读取库存。')
     discs = []
     for i, d in enumerate(data['discs']):
-        if not isinstance(d, dict) or type(d.get('lock')) is not bool or type(d.get('trash')) is not bool or not isinstance(d.get('location'), str):
-            raise ValueError('网络读取器缺少锁定、弃置或穿戴信息')
+        if not isinstance(d, dict) or type(d.get('lock')) is not bool or type(d.get('trash')) is not bool:
+            raise ValueError('网络读取器缺少锁定或弃置记录')
+        if not isinstance(d.get('location'), str):
+            raise ValueError('请在国际服读取器开启驱动盘穿戴信息后刷新')
         if not isinstance(d.get('substats'), list) or not all(isinstance(s, dict) for s in d['substats']):
             raise ValueError('副词条格式有误')
         # The reader pads unused lines to four. Exported upgrades start at zero.
