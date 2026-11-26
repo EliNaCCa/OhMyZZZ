@@ -106,7 +106,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         groups[group].append((dict(p, agentKey=owner), current))
     pool = [disc for disc in inputs.values() if disc and not disc['discarded']]
     inventory_hash = digest(z)
-    allocation_key = digest([PLUGIN_VERSION, inventory_hash, enabled, bindings, optimizer_names, reader_owners, cfg['optimizer_url']]) if enabled else None
+    allocation_key = digest([PLUGIN_VERSION, 'group-reservations-v1', inventory_hash, enabled, bindings, optimizer_names, reader_owners, cfg['optimizer_url']]) if enabled else None
     saved = reusable_assignments(previous_preview, allocation_key, groups, pool)
     for (_,group_name), members in groups.items():
         try:

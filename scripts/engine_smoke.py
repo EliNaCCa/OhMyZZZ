@@ -61,6 +61,23 @@ def smoke_role_targets(endpoint, pieces):
     print('PASS direct-output tie preserves 118 impact for the stunner; measured worn impact 100')
 
 
+def smoke_contested_shortlist(endpoint, pieces):
+    # 216 combinations, with every one of the attacker's top 24 using the only impact disc.
+    pool = [dict(disc, id=f'{slot}-{variant}', subStats=[dict(type='PEN_FLAT', value=9*variant)] if variant else [])
+            for slot, disc in enumerate(pieces[:5], 1) for variant in range(3 if slot <= 3 else 2)]
+    pool.extend([dict(pieces[5], id='impact', mainStat=dict(type='IMPACT', value=18),
+                      subStats=[dict(type='CRIT_DMG', value=19.2)]),
+                 dict(pieces[5], id='energy', mainStat=dict(type='ENERGY_REGEN', value=60), subStats=[])])
+    attacker = dict(name='艾莲', request=dict(characterName='艾莲', roleSystem='ATTACK', baseATK=1250,
+                                              baseCritRate=100, baseCritDmg=100, characterElement='ICE'))
+    stunner = dict(name='莱卡恩', request=dict(characterName='莱卡恩', roleSystem='STUN', mode='UTILITY_BALANCE',
+                                              baseImpact=100, baseEnergyRegen=1.2, baseATK=1000, targetImpact=118))
+    (_, carry), (_, stun) = assign_group([(attacker, set()), (stunner, set())], pool, endpoint, candidate_pool)
+    assert carry['search']['reservationAttempts'] and carry['search']['candidateBuilds'] == 24
+    assert carry['ids'][-1] == 'energy' and stun['ids'][-1] == 'impact' and stun['panel']['IMPACT'] == 118
+    assert set(carry['ids']).isdisjoint(stun['ids']) and '6 号位' in carry['reason']
+
+
 def smoke(source):
     with TemporaryDirectory() as tmp:
         root = Path(tmp)/'1'
@@ -123,6 +140,7 @@ def smoke(source):
             assert chosen['metric']=='贯穿力' and chosen['metricValue']>0
             print('PASS equal API scores distinguished, raw crit threshold respected, rupture index verified')
             smoke_role_targets(endpoint, pieces)
+            smoke_contested_shortlist(endpoint, pieces)
         assert not second.is_running()
         cfg = defaults()
         cfg['profiles'] = [dict(name='演示队', agentKey='Ellen', request=saved['request'])]

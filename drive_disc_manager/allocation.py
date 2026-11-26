@@ -75,6 +75,33 @@ def same_priority(left, right, current):
     return left['ids'] == right['ids']
 
 
+def reserve_options(members, originals):
+    """Try the shared discs first, then one complete build as a fallback."""
+    common_options, complete_options = [], []
+    for index in range(1, len(members)):
+        rows = originals[index]
+        if not rows:
+            continue
+        earlier = {fp for group in originals[:index] for row in group for fp in row['ids']}
+        shared = frozenset(rows[0]['ids']).intersection(*(row['ids'] for row in rows[1:]))
+        if shared & earlier:
+            common_options.append((index, shared))
+        profile, current = members[index]
+        preferred = frozenset(select_candidate(rows, profile, current)['ids'])
+        if preferred != shared and preferred & earlier:
+            complete_options.append((index, preferred))
+    return (common_options + complete_options)[:3]
+
+
+def preferred_lineup(lineups, members):
+    for index, (profile, current) in enumerate(members):
+        if len(lineups) == 1:
+            break
+        best = select_candidate([lineup[index][1] for lineup in lineups], profile, current)
+        lineups = [lineup for lineup in lineups if same_priority(lineup[index][1], best, current)]
+    return lineups[0]
+
+
 def assign_group(members, pool, url, fetch, max_nodes=160):
     # Search the available inventory at each step. Multiple branches may reach
     # the same set of claimed discs and reuse the cached optimizer response.
@@ -87,7 +114,7 @@ def assign_group(members, pool, url, fetch, max_nodes=160):
     highest_seen = {}
     last_problem = ''
     limited = False
-    def search(index, prefixes):
+    def search(index, prefixes, reservation=None):
         nonlocal nodes, limited
         profile, current = members[index]
         def candidates(excluded):
@@ -98,7 +125,7 @@ def assign_group(members, pool, url, fetch, max_nodes=160):
                     # Keep one restricted lookup for each later role, even when
                     # many tied prefixes compete for the extra search budget.
                     if index in restricted_searches:
-                        if extra_queries >= 16:
+                        if extra_queries >= (4 if reservation else 16):
                             limited = True
                             return []
                         extra_queries += 1
@@ -123,8 +150,11 @@ def assign_group(members, pool, url, fetch, max_nodes=160):
                 limited = True
                 break
             nodes += 1
-            restricted = candidates(claimed) if claimed else []
-            feasible = {tuple(c['ids']):c for c in (*original, *restricted) if claimed.isdisjoint(c['ids'])}
+            blocked = claimed
+            if reservation and index < reservation[0]:
+                blocked = claimed | reservation[1]
+            restricted = candidates(blocked) if blocked else []
+            feasible = {tuple(c['ids']):c for c in (*original, *restricted) if blocked.isdisjoint(c['ids'])}
             outputs = (number(c.get('rawOutput', c['outputScore'])) for c in feasible.values() if 'outputScore' in c)
             best = max(outputs, default=None)
             for ids, candidate in feasible.items():
@@ -149,6 +179,8 @@ def assign_group(members, pool, url, fetch, max_nodes=160):
                         limited = truncated = True
                         break
                     choice = dict(candidate, availableBuilds=available)
+                    if reservation and index < reservation[0]:
+                        choice['_reservedFor'] = reservation
                     if 'outputScore' in preferred:
                         for key in ('reason','bestOutput','rawBestOutput','relativeLossPct','bestNearFullOutput','bestFullOutput'):
                             choice[key] = preferred[key]
@@ -166,7 +198,7 @@ def assign_group(members, pool, url, fetch, max_nodes=160):
                     following[after] = (after, lineup)
                 if truncated:
                     break
-            result = search(index+1, following.values())
+            result = search(index+1, following.values(), reservation)
             if result is not None:
                 return result
             if truncated:
@@ -176,11 +208,32 @@ def assign_group(members, pool, url, fetch, max_nodes=160):
             backtracked = True
         return None
 
-    result = search(0, [(frozenset(), [])])
+    start = [(frozenset(), [])]
+    result = search(0, start)
+    visited = nodes
+    attempts = 0
+    if result is None and len(members) > 1:
+        originals = [cache.get((index, frozenset()), []) for index in range(len(members))]
+        clipped = any(rows and rows[0].get('optimizerScope', {}).get('atReturnLimit') for rows in originals)
+        if clipped:
+            # A top-N shortlist can spend every place on the same contested disc.
+            # Keep every role in player priority order when generating alternatives.
+            alternatives = []
+            for reservation in reserve_options(members, originals):
+                attempts += 1
+                nodes = extra_queries = 0
+                restricted_searches.clear()
+                alternative = search(0, start, reservation)
+                visited += nodes
+                if alternative is not None:
+                    alternatives.append(alternative)
+            if alternatives:
+                result = preferred_lineup(alternatives, members)
     if result is None:
         reason = '达到本轮联合分配搜索上限，配队待复核' if limited else last_problem or '在搜索范围内没有找到全员六盘不重复的组合'
         raise ValueError(reason)
     for index, (profile, choice) in enumerate(result):
+        reserved = choice.pop('_reservedFor', None)
         original = cache.get((index, frozenset()), [])
         if original:
             baseline = select_candidate(original,profile,members[index][1])
@@ -195,7 +248,16 @@ def assign_group(members, pool, url, fetch, max_nodes=160):
                     detail = '、'.join(f'{name} 占用 {slot} 号位' for name, slot in claimed_by)
                     choice['reason'] = '同时出场组协调让盘 · '+detail+' · '+choice.get('reason','')
                 elif index < len(result)-1:
-                    choice['reason'] = '同时出场组协调让盘 · '+choice.get('reason','')
+                    later = []
+                    for position, (other_profile, other) in enumerate(result[index+1:], index+1):
+                        if reserved and position != reserved[0]:
+                            continue
+                        slots = [str(slot) for slot, fp in enumerate(baseline['ids'], 1)
+                                 if fp in other['ids'] and (not reserved or fp in reserved[1])]
+                        if slots:
+                            later.append(f"给{other_profile['name']}留 {'、'.join(slots)} 号位")
+                    detail = '，'.join(later)
+                    choice['reason'] = (detail or '同时出场组协调让盘')+' · '+choice.get('reason','')
         if index in highest_seen:
             best = highest_seen[index]
             choice['rawBestOutput'] = str(best)
@@ -203,7 +265,7 @@ def assign_group(members, pool, url, fetch, max_nodes=160):
             score = number(choice.get('rawOutput', choice['outputScore']))
             choice['relativeLossPct'] = float(100*(best-score)/best)
         choice['search'] = dict(candidateBuilds=len(original), availableBuilds=choice.pop('availableBuilds'),
-                                calls=queries, visited=nodes, limited=limited)
+                                calls=queries, visited=visited, limited=limited, reservationAttempts=attempts)
         if original and original[0].get('optimizerScope'):
             choice['search']['initialScope'] = original[0]['optimizerScope']
         if 'panel' in choice:

@@ -615,7 +615,7 @@ class ManagerInterface(BaseInterface):
         if 'outputScore' in result:
             details += [f"所选输出 {result.get('rawOutput', result['outputScore'])}", f"候选最高 {result.get('rawBestOutput', result['bestOutput'])}"]
             if profile.get('simultaneous') and 'rawAvailableBestOutput' in result:
-                details.append(f"扣除前序角色用盘后最高 {result['rawAvailableBestOutput']} · 所选与其相差 {result['availableLossPct']:.6g}%")
+                details.append(f"本轮可选最高 {result['rawAvailableBestOutput']} · 所选与其相差 {result['availableLossPct']:.6g}%")
             from .optimizer import number
             worn = result.get('wornOutput')
             if worn is not None and number(worn) > 0:
@@ -649,7 +649,9 @@ class ManagerInterface(BaseInterface):
                 if initial['atReturnLimit']:
                     details.append('已触及单次候选返回上限')
             if profile.get('simultaneous') and 'availableBuilds' in scope:
-                details.append(f"扣除前序占用后可选 {scope['availableBuilds']} 套")
+                details.append(f"分盘时可选 {scope['availableBuilds']} 套")
+            if scope.get('reservationAttempts') and result.get('reason'):
+                details.append(result['reason'])
             if scope.get('limited'):
                 details.append('已达到联合搜索上限')
         if self.preview_stale:
