@@ -8,7 +8,7 @@ def compact(text):
     return ''.join(unicodedata.normalize('NFKC', str(text)).split()).casefold()
 
 
-def format_stats(items):
+def format_stats(items, *, signed=False):
     labels = {'hp':'生命值','atk':'攻击力','def':'防御力','crit':'暴击率','crit_dmg':'暴击伤害',
               'anomProf':'异常精通','anomMas':'异常掌控','impact':'冲击力','energyRegen':'能量自动回复',
               'pen':'穿透值','pen_':'穿透率','physical_dmg':'物理伤害','ice_dmg':'冰属性伤害',
@@ -18,7 +18,8 @@ def format_stats(items):
     for key, value in items.items():
         label = labels.get(key) or labels.get(key.rstrip('_'), key)
         unit = '%' if key.endswith('_') or key == 'impact' else ''
-        parts.append(f'{label} {value:g}{unit}')
+        amount = f'{value:+g}' if signed else f'{value:g}'
+        parts.append(f'{label} {amount}{unit}')
     return '、'.join(parts)
 
 

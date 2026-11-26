@@ -128,15 +128,23 @@ class ManagerApp(ZApplication):
                 # Suppress the scanner's optional browser launch for this invocation only.
                 from unittest.mock import patch
                 from .scan_marks import capture_marks
-                with capture_marks(scanner, self.root) as text_cache, patch.object(scanner,'_open_export',lambda path: None):
-                    result = checked_scan(scanner, self.guard_game) if interactive else scanner.execute()
-                if not result.success or self.ctx.current_instance_idx != self.account:
-                    return self.round_fail('扫描中断，下次读取仓库会重新核对')
+                try:
+                    with capture_marks(scanner, self.root) as text_cache, patch.object(scanner,'_open_export',lambda path: None):
+                        result = checked_scan(scanner, self.guard_game) if interactive else scanner.execute()
+                    if self.ctx.current_instance_idx != self.account:
+                        return self.round_fail('当前账号已改变')
+                    if not result.success:
+                        raise ValueError(getattr(result, 'status', None) or '扫描中断')
+                    if interactive:
+                        self.guard_game()
+                except Exception:
+                    if self.ctx.current_instance_idx == self.account:
+                        from .scan_observations import save_interrupted_scan
+                        save_interrupted_scan(self.root, scanner, scan_started)
+                    raise
                 fresh = [p for p in exports.glob('inventory_*.json') if before.get(p)!=p.stat().st_mtime_ns]
                 if len(fresh)!=1:
                     return self.round_fail('本轮扫描文件无法唯一识别')
-                if interactive:
-                    self.guard_game()
                 from .marks import reconcile_scan
                 from .salvage_audit import native_run, observe_native, reconcile
                 observe_native(self.root, self.account, native_run(Path(os_utils.get_work_dir()), self.account), scan_started)

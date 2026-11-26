@@ -5,11 +5,26 @@ from .stat_reading import checked_values, format_stats
 from .store import observed_agents, read, remember_agents, save
 
 
+def save_interrupted_scan(root, scanner, observed_at):
+    """Use only this invocation's worker and its warehouse header, never the shared exports directory."""
+    import logging
+    try:
+        worker = scanner.ocr_worker
+        total = getattr(scanner, '_disc_game_total', None)
+        scan = dict(source='Zenless Optimizer', audit=dict(game_total=total, partial=True),
+                    discs=list(worker.scanned_discs), characters=list(getattr(worker, 'scanned_agents', ())))
+        save_observations(root, scan, observed_at)
+    except Exception:
+        # Saving optional readings must not hide the game's original failure.
+        logging.getLogger(__name__).exception('未能保存本轮扫描记录')
+
+
 def save_observations(root, scan, observed_at):
     rows = scan.get('discs', [])
     total = (scan.get('audit') or {}).get('game_total')
-    if scan.get('source') != 'Zenless Optimizer' or not rows or type(total) is not int or total < 1:
+    if scan.get('source') != 'Zenless Optimizer' or type(total) is not int or total < 1:
         return
+    agents = observed_agents({'characters':scan.get('characters', [])})
     rows = [d for d in rows if isinstance(d, dict) and d.get('setKey') and str(d.get('slotKey')) in tuple('123456')
             and type(d.get('level')) is int]
     if rows:
@@ -17,7 +32,8 @@ def save_observations(root, scan, observed_at):
         worn = [d for d in rows if d.get('ownerState') == 'worn' and d.get('observedGrade') in ('S','A','B')
                 and d['observedGrade'] == d.get('rarity') and isinstance(d.get('substats'), list)
                 and d.get('mainStatKey') and checked_values(d, 1)]
-        remember_agents(root, observed_agents({'discs':worn}))
+        agents.update(observed_agents({'discs':worn}))
+    remember_agents(root, agents)
 
 
 def show_observations(grid, fill, root, enabled, agents):

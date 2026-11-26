@@ -95,6 +95,28 @@ def smoke(home, tmp):
         assert status == 'failed' and '库存记录' in reason
         marker.assert_not_called()
     assert read(root/'dismantle-result.json') == outstanding
+    # An interrupted one-disc read supplies observations even without a native export.
+    # A stale partial in the shared export directory must never supply this account's rows.
+    original = (root/'inventory.json').read_bytes()
+    save(tmp/'.debug/inventory_exports/inventory_partial_old.json', dict(snapshot, discs=[dict(disc, level=8)]))
+    scanner._disc_game_total = 3
+    scanner.ocr_worker.scanned_agents = [{'key':'Soldier11'}]
+    def interrupted():
+        raise ValueError('人工结束')
+    scanner.execute = interrupted
+    with patch('drive_disc_manager.scan_marks.capture_marks', lambda *_:nullcontext()):
+        assert ManagerApp.manage_inventory(manager) == ('failed', '人工结束')
+        record = read(root/'scan-observations.json')
+        assert record['total'] == 3 and record['rows'] == [disc]
+        assert 'Soldier11' in read(root/'owned-agents.json')
+        def switched():
+            ctx.current_instance_idx = 2
+            return Obj(success=False, status='扫描结束')
+        scanner.execute = switched
+        assert ManagerApp.manage_inventory(manager) == ('failed','当前账号已改变')
+        assert record == read(root/'scan-observations.json') and (root/'inventory.json').read_bytes() == original
+    ctx.current_instance_idx = 1
+    scanner.execute = lambda: (save(tmp/'.debug/inventory_exports/inventory_daily.json', snapshot) or Obj(success=True))
     from drive_disc_manager.salvage_audit import close_reviewed, needs_review
     close_reviewed(root, outstanding['batch'], outstanding['afterInventory'])
     assert not needs_review(read(root/'dismantle-result.json'))

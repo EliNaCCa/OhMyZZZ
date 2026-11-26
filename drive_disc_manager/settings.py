@@ -63,6 +63,7 @@ class ManagerInterface(BaseInterface):
         self.calculate_buttons = [self.button(bar,'重新计算',self.start_preview)]
         bar.addStretch()
         self.detail_button = self.button(bar,'盘详情',self.open_disc_detail)
+        self.button(bar,'对比换盘',lambda:tabs.open('对比换盘'))
         more = DropDownPushButton('更多'); bar.addWidget(more)
         actions = RoundMenu(parent=more); more.setMenu(actions)
         self.import_button = self.menu_action(actions, '导入扫描文件', self.load_inventory)
@@ -265,6 +266,18 @@ class ManagerInterface(BaseInterface):
         tabs.addTab(self.challenge, '关卡分队')
         self.tabs.currentChanged.connect(self.optimizer_tab_changed)
         self.tabs.currentChanged.connect(self.show_challenge)
+        from .disc_comparison_page import DiscComparison
+        self.disc_comparison = DiscComparison(lambda:tabs.open('仓库预览'))
+        tabs.addTab(self.disc_comparison, '对比换盘')
+        self.tabs.currentChanged.connect(self.show_disc_comparison)
+
+    def show_disc_comparison(self, *_):
+        if self.tabs.currentWidget() is self.disc_comparison and hasattr(self, 'set_names'):
+            if self.root.name != str(self.ctx.current_instance_idx):
+                self.on_interface_shown()
+                return
+            self.disc_comparison.present(self.root, self.agent_labels, self.set_names, self.cfg,
+                                         self.report if not self.preview_stale else {})
 
     def show_challenge(self, *_):
         if self.tabs.currentWidget() is self.challenge and hasattr(self, 'root'):
@@ -553,6 +566,7 @@ class ManagerInterface(BaseInterface):
         self.equip_status.setText('　｜　'.join(parts))
         self.equip_status.setVisible(bool(parts) and bool(self.cfg['profiles']))
         self.refresh_open_detail()
+        self.show_disc_comparison()
         self.update_calculate_buttons()
 
     def refresh_roster(self, wiki, inventory):
