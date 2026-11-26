@@ -38,8 +38,10 @@ def smoke(home, source, temp):
     save(root/'config.json', cfg)
     refresh(root, lambda: None)
     cn = read(root/FILE)
+    save(root/'scan-observations.json', dict(at=source.stat().st_mtime, total=read(source)['audit']['game_total'], rows=readings))
 
     def choose(_url, profile, pool, _current):
+        assert _current == set('123456')  # Six worn discs from one partial OCR scan.
         ids = ['1', '2', '3', '4' if profile['name'] == '日常' else '7', '5', '6']
         assert set(ids) <= {d['id'] for d in pool}
         return [dict(ids=ids, outputScore=100, critRate=100)]
@@ -48,6 +50,8 @@ def smoke(home, source, temp):
           patch('drive_disc_manager.optimizer.candidate_pool', side_effect=choose)):
         planned = preview(root, wiki_path, refresh=False)
     assert all(r['decision'] == '保留' for r in planned['discs'])
+    assert planned['assignments']['日常']['baselineSource'] == 'scan'
+    assert all(row['ownerState'] == 'unknown' for row in planned['discs'])
     assert [r for r in planned['discs'][0]['reasons'] if r.startswith('配队 · ')] == ['配队 · 日常','配队 · 爆发']
     request, wanted = confirmation(1, '爆发', cfg, planned, cn, preview_only=True, names=names)
     assert len(wanted) == 6 and all(t['ownerState'] == 'unknown' for t in wanted)

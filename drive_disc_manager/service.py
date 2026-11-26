@@ -33,13 +33,14 @@ def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=F
     names.update(cfg.get('aliases',{}))
     comparison = None
     game_stamp = None
-    game_file = root / 'inventory.json'
     if inputs.get('inventorySource') == 'cn_export':
-        from .inventory_comparison import compare_game_scan
+        from .inventory_comparison import compare_game_scan, compare_observations, saved_scan
+        game_file = saved_scan(root)
+        compare = compare_game_scan if game_file.name == 'inventory.json' else compare_observations
         try:
             with game_file.open(encoding='utf-8-sig') as game:
                 game_stamp = os.fstat(game.fileno()).st_mtime_ns
-                comparison = compare_game_scan(z, json.load(game), names)
+                comparison = compare(z, json.load(game), names)
             comparison['gameStamp'] = game_stamp
         except FileNotFoundError:
             pass  # The export alone is enough to plan a build.
@@ -69,6 +70,7 @@ def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=F
         report = execution_plan(cn_plan, report, z, fielded=fielded)
     if game_stamp is not None:
         report['gameStamp'] = game_stamp
+        report['scanFile'] = game_file.name
     if comparison is not None:
         report['gameComparison'] = {key: value for key, value in comparison.items() if key != 'lastWorn'}
     report.update(warnings=warnings,generated=time.time(), mode='preview')

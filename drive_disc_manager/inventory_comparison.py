@@ -115,8 +115,31 @@ def execution_plan(planned, inspected, snapshot, *, fielded=()):
     return inspected
 
 
+def saved_scan(root):
+    # Prefer the complete scan, which may already have physical UIDs bound.
+    complete = root/'inventory.json'
+    return complete if complete.is_file() else root/'scan-observations.json'
+
+
+def compare_observations(exported, record, names):
+    rows, total = record['rows'], record['total']
+    if not isinstance(rows, list) or type(total) is not int or total < 1 or not rows:
+        raise ValueError('缺少扫描记录')
+    stamp = record['at']
+    if type(stamp) not in (int, float) or not 0 < stamp < 32_503_680_000:
+        raise ValueError('缺少扫描时间')
+    # Keep every observed attribute group for duplicate detection. Only a
+    # measured, grade-checked one-to-one match can supply a past wearer.
+    result = _compare_rows(exported, rows, 1, False, names, partial=True)
+    return dict(result, gameTotal=total, observedRows=len(rows), observedAt=stamp)
+
+
 def compare_game_scan(exported, scanned, names):
     game_discs, _ = inventory(scanned)
+    return _compare_rows(exported, game_discs, roll_base(scanned), scanned.get('source') == 'OhMyZZZ CN', names)
+
+
+def _compare_rows(exported, game_discs, game_base, bound_ids, names, *, partial=False):
     reverse = equipment_keys(names)
 
     def group(discs, base):
@@ -126,13 +149,13 @@ def compare_game_scan(exported, scanned, names):
             groups[key].append(disc)
         return groups
 
-    if scanned.get('source') == 'OhMyZZZ CN':
+    if bound_ids:
         # A previously bound ID is authoritative. A newly dropped lookalike
         # cannot inherit the departed disc's old owner from that scan.
         observed = {d['exportUid']:[d] for d in game_discs if d.get('exportUid') == d['id']}
         imported = {d['id']:[d] for d in exported['discs']}
     else:
-        observed = group(game_discs, roll_base(scanned))
+        observed = group(game_discs, game_base)
         imported = group(exported['discs'], roll_base(exported))
     owner_slots = Counter((d.get('location'), str(d['slotKey'])) for d in game_discs if d.get('ownerState') == 'worn')
     matched = measured = 0
@@ -141,14 +164,16 @@ def compare_game_scan(exported, scanned, names):
     # common copies, but attribute an old wearer only for a one-to-one match.
     for key in observed.keys() & imported.keys():
         old, new = observed[key], imported[key]
-        if scanned.get('source') == 'OhMyZZZ CN' and (
-                attribute_key(old[0], roll_base(scanned), names, reverse) !=
+        if bound_ids and (
+                attribute_key(old[0], game_base, names, reverse) !=
                 attribute_key(new[0], roll_base(exported), names, reverse)):
             continue
         matched += min(len(old), len(new))
         if len(old) != 1 or len(new) != 1:
             continue
-        values = checked_values(old[0], roll_base(scanned))
+        if partial and old[0].get('observedGrade') != new[0]['rarity']:
+            continue
+        values = checked_values(old[0], game_base)
         if values is None or values != checked_values(new[0], roll_base(exported)):
             continue
         measured += 1

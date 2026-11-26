@@ -454,9 +454,11 @@ class ManagerInterface(BaseInterface):
         changed_inputs = []
         if self.report:
             if cn_export:
-                scan = self.root / 'inventory.json'
+                from .inventory_comparison import saved_scan
+                scan = saved_scan(self.root)
                 stamp = scan.stat().st_mtime_ns if scan.is_file() else None
-                if stamp != self.report.get('gameStamp'):
+                if (stamp != self.report.get('gameStamp') or
+                        (stamp is not None and scan.name != self.report.get('scanFile', 'inventory.json'))):
                     changed_inputs.append('游戏扫描记录')
             if self.report.get('managerVersion') != PLUGIN_VERSION:
                 changed_inputs.append('插件版本')
@@ -515,8 +517,11 @@ class ManagerInterface(BaseInterface):
         comparison = self.report.get('gameComparison') if cn_export and not self.preview_stale else None
         self.scan_comparison.setVisible(bool(comparison))
         if comparison:
-            day = datetime.fromtimestamp(comparison['gameStamp'] / 1e9).strftime('%m-%d %H:%M')
-            self.scan_comparison.setText(f"对照 {day} 保存的扫描 · 当时 {comparison['gameTotal']} 张，套装和词条对上 {comparison['matched']} 张")
+            day = datetime.fromtimestamp(comparison.get('observedAt', comparison['gameStamp'] / 1e9)).strftime('%m-%d %H:%M')
+            if 'observedRows' in comparison:
+                self.scan_comparison.setText(f"{day} 扫描记录 · 读到 {comparison['observedRows']} 条，词条数值对上 {comparison['measured']} 张")
+            else:
+                self.scan_comparison.setText(f"对照 {day} 保存的扫描 · 当时 {comparison['gameTotal']} 张，套装和词条对上 {comparison['matched']} 张")
             self.scan_comparison.setToolTip(f"按套装、号位、等级、品级和词条档数比对。逐张核实主副词条数值 {comparison['measured']} 张。")
         summary = ''
         if self.preview_stale:
@@ -666,6 +671,7 @@ class ManagerInterface(BaseInterface):
                                '、'.join(r['reasons'])) for r in rows])
         self.slots.resizeColumnsToContents()
         details = [profile['name']]
+        gain_text = ''
         if binding_note:
             details.append(binding_note)
         if result.get('panelRows'):
@@ -688,6 +694,8 @@ class ManagerInterface(BaseInterface):
             if worn is not None and number(worn) > 0:
                 change = (number(result.get('rawOutput',result['outputScore'])) / number(worn) - 1) * 100
                 details.append(f'{baseline}输出 {worn} · 方案变化 {float(change):+.6g}%')
+                gain_text = (f'相比{baseline}，预计输出 {float(change):+.3g}%' if change
+                             else f'与{baseline}的预计输出相同')
             else:
                 details.append('原配装输出待核对')
             if result.get('metric'):
@@ -724,8 +732,8 @@ class ManagerInterface(BaseInterface):
         if self.preview_stale:
             details.append('上次计算结果 · 请用当前库存和规则重新计算')
         self.score_detail.setPlainText(chr(10).join(details))
-        self.team_score.setText('　·　'.join(filter(None, (party, binding_note))))
-        self.team_score.setVisible(bool(party or binding_note))
+        self.team_score.setText('　·　'.join(filter(None, (party, gain_text, binding_note))))
+        self.team_score.setVisible(bool(self.team_score.text()))
 
     def squad_text(self, profile):
         if 'mindscape' not in profile and not profile.get('squad'):
