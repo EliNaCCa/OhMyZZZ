@@ -33,6 +33,7 @@ class ManagerInterface(BaseInterface):
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.preview_job = None
+        self.scanning_game = False
         self.preview_refresh_accounts = set()
         self.preview_finished.connect(self.finish_preview, Qt.ConnectionType.QueuedConnection)
         self.preview_note = QLabel(); self.preview_note.setWordWrap(True); self.preview_note.hide()
@@ -40,8 +41,11 @@ class ManagerInterface(BaseInterface):
         self.tabs = tabs = QTabWidget(); layout.addWidget(tabs)
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'仓库预览')
         bar = QHBoxLayout(); box.addLayout(bar)
+        self.scan_button = self.button(bar,'从游戏扫描并预览',self.start_game_scan)
+        self.scan_button.setToolTip('读取已打开游戏的驱动盘仓库，保存完整快照并计算预览。本次仅扫描。')
         self.import_button = self.button(bar,'导入本账号扫描',self.load_inventory)
         self.calculate_buttons = [self.button(bar,'重新计算',self.start_preview)]
+        bar = QHBoxLayout(); box.addLayout(bar)
         self.pin_button = self.button(bar,'始终保留 / 取消',self.pin)
         self.quota_button = self.button(bar,'同类备用数量',self.set_quota)
         self.probe_button = self.button(bar, '读一张盘', self.start_probe)
@@ -304,6 +308,9 @@ class ManagerInterface(BaseInterface):
         self.cfg=config(self.root); self.rules=read(self.root/'rules.json',{}); self.report=read(self.root/'preview.json',{})
         self.config_hash = digest(self.cfg)
         inventory = read(self.root/'inventory.json', {})
+        wiki = read(wiki_path(), {})
+        from .roster import preview_bindings
+        self.preview_bindings = preview_bindings(self.cfg['profiles'], wiki)
         changed_inputs = []
         if self.report:
             if self.report.get('managerVersion') != PLUGIN_VERSION:
@@ -314,6 +321,8 @@ class ManagerInterface(BaseInterface):
                 changed_inputs.append('订阅规则')
             if not inventory or self.report.get('inventory') != digest(inventory):
                 changed_inputs.append('库存')
+            if self.report.get('previewBindings', {}) != self.preview_bindings:
+                changed_inputs.append('配队角色对应关系')
         self.preview_stale = bool(changed_inputs)
         self.editor_account = self.root
         self.editor_base, text = self.editor_drafts.get(self.root, (deepcopy(self.cfg), pretty(self.cfg)))
@@ -331,7 +340,6 @@ class ManagerInterface(BaseInterface):
         self.coverage = {tuple(group[k] for k in SELECTORS):group for group in self.report.get('reserveCoverage',[])}
         conflicts=self.conflicts=current_conflicts(self.rules,self.cfg['overrides']); fields=self.rules.get('fields',{})
         self.keys=sorted((set(fields)|set(self.cfg['overrides']))-{k for k in fields if k.endswith('/known')},key=lambda k:(k not in conflicts,k))
-        wiki = read(wiki_path(), {})
         self.refresh_roster(wiki, inventory)
         self.set_names = equipment_names(wiki) | self.cfg.get('aliases', {})
         self.inventory_filter.present(self.rows, self.set_names, self.root, self.fill)
@@ -447,8 +455,12 @@ class ManagerInterface(BaseInterface):
         self.profile_menu.setEnabled(bool(selected) and not self.equip_busy)
         self.refresh_target_button.setEnabled(bool(selected.get('sourceId')) and not self.equip_busy)
         ready = not self.preview_stale and selected.get('enabled',True) and self.report.get('assignments',{}).get(selected.get('name'),{}).get('ids')
-        self.apply_button.setEnabled(bool(ready) and not self.equip_busy and self.preview_job is None)
-        self.apply_button.setToolTip('查看本次要穿戴的盘' if ready else '用当前配置和完整库存计算所选配队后可用')
+        from .loadout import fielded_profiles
+        lineup = fielded_profiles(self.cfg, selected['name']) if selected and selected.get('enabled', True) else []
+        unbound = [p['name'] for p in lineup if not p.get('agentKey') or p['agentKey'] != self.preview_bindings.get(p['name'])]
+        self.apply_button.setEnabled(bool(ready) and not unbound and not self.equip_busy and self.preview_job is None)
+        binding_note = '请更新配队的角色绑定 · ' + '、'.join(unbound) if unbound else ''
+        self.apply_button.setToolTip(binding_note or ('查看本次要穿戴的盘' if ready else '用当前配置和完整库存计算所选配队后可用'))
         self.fill(self.slots,[])
         self.fill(self.panel_stats,[])
         self.panel_note.setText('选择已计算的支援、击破、异常或防护等职业方案，可查看目标与装备差值。')
@@ -464,6 +476,8 @@ class ManagerInterface(BaseInterface):
                                '、'.join(r['reasons'])) for r in rows])
         self.slots.resizeColumnsToContents()
         details = [profile['name']]
+        if binding_note:
+            details.append(binding_note)
         if result.get('panelRows'):
             def value(v, signed=False):
                 if v is None: return '—'
@@ -872,21 +886,36 @@ class ManagerInterface(BaseInterface):
 
     def show_preview_job(self, error=''):
         busy = self.preview_job is not None
-        for button in [self.import_button, *self.calculate_buttons]:
+        for button in [self.scan_button, self.import_button, *self.calculate_buttons]:
             button.setEnabled(not busy)
         message = error
         if busy:
-            message = f'正在计算账号 {self.preview_job.name} 的仓库预览…'
+            message = (f'正在读取账号 {self.preview_job.name} 的游戏仓库并计算预览…' if self.scanning_game
+                       else f'正在计算账号 {self.preview_job.name} 的仓库预览…')
         self.preview_note.setText(message)
         self.preview_note.setVisible(bool(message))
 
-    def start_preview(self, *, import_path=None, reuse_allocations=False):
+    def start_game_scan(self):
+        from .scanner_status import scanner_status
+        account = self.ctx.current_instance_idx
+        self.check_account(self.root)
+        if self.preview_job is not None:
+            return
+        if self.equip_busy or not self.ctx.run_context.is_context_stop:
+            raise ValueError('请在一条龙空闲时扫描仓库')
+        ready, reason = scanner_status(self.ctx, account)
+        if not ready:
+            raise ValueError(reason)
+        self.start_preview(from_game=True)
+
+    def start_preview(self, *, import_path=None, reuse_allocations=False, from_game=False):
         account = self.root
         self.check_account(account)
         if self.preview_job is not None:
             return
         wiki = wiki_path()
         self.preview_job = account
+        self.scanning_game = from_game
         self.preview_refresh_accounts.discard(account)
         self.show_preview_job()
         self.apply_button.setEnabled(False)
@@ -894,7 +923,11 @@ class ManagerInterface(BaseInterface):
         def worker():
             error = ''
             try:
-                self.build_preview(account, wiki, import_path, reuse_allocations)
+                if from_game:
+                    from .manual_equip import run_scan_preview
+                    run_scan_preview(self.ctx, int(account.name))
+                else:
+                    self.build_preview(account, wiki, import_path, reuse_allocations)
             except Exception as exc:
                 error = str(exc) or type(exc).__name__
             try:
@@ -908,6 +941,7 @@ class ManagerInterface(BaseInterface):
         if self.preview_job != account:
             return
         self.preview_job = None
+        self.scanning_game = False
         if self.root.name != str(self.ctx.current_instance_idx):
             self.on_interface_shown()
         current = self.root == account

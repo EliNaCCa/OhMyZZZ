@@ -57,7 +57,8 @@ def smoke():
         available = {d['id'] for d in pool}
         return [c for c in choices if available.issuperset(c['ids'])]
     def calculate():
-        return plan(z,cfg,rules,{'SwingJazz':'摇摆爵士'},shortlist)
+        wiki = {'character':{key:dict(code=key, EN=key) for key in ('Alpha','Beta')}}
+        return plan(z,cfg,rules,{'SwingJazz':'摇摆爵士'},shortlist,wiki=wiki)
     def check(expected_a, expected_b):
         report = calculate()
         result = report['assignments']

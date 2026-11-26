@@ -5,7 +5,7 @@ from zzz_od.application.zzz_application import ZApplication
 from .drive_disc_manager_const import APP_ID, APP_NAME
 from .service import preview, rule_snapshot
 from .store import import_inventory, read
-from .manual_equip import MANUAL_GROUP, checked_scan, manual_request, verify_selection
+from .manual_equip import MANUAL_GROUP, SCAN_GROUP, checked_scan, manual_request, verify_selection
 
 
 def wiki_path():
@@ -20,7 +20,7 @@ class ManagerApp(ZApplication):
         self.group = group_id
         self.root = ctx.get_plugin_data_dir(APP_ID)/str(instance_idx)
         super().__init__(ctx,APP_ID,op_name=APP_NAME,need_check_game_win=False)
-        if group_id == MANUAL_GROUP:
+        if group_id in (MANUAL_GROUP, SCAN_GROUP):
             self.run_record = None
 
     @operation_node(name='驱动盘管理', is_start_node=True, screenshot_before_round=False)
@@ -32,7 +32,7 @@ class ManagerApp(ZApplication):
         except Deferred as exc:
             return self.round_fail(str(exc))
         except Exception as exc:
-            if self.group == MANUAL_GROUP:
+            if self.group in (MANUAL_GROUP, SCAN_GROUP):
                 return self.round_fail(str(exc))
             raise
 
@@ -41,8 +41,10 @@ class ManagerApp(ZApplication):
             if self.ctx.current_instance_idx != self.account:
                 return self.round_fail('当前账号已改变')
             request = None
-            if self.group == MANUAL_GROUP:
-                request, guard = manual_request(self.account)
+            scan_only = self.group == SCAN_GROUP
+            interactive = self.group in (MANUAL_GROUP, SCAN_GROUP)
+            if interactive:
+                request, guard = manual_request(self.account, self.group)
                 interruption = None
                 def check_session():
                     nonlocal interruption
@@ -50,26 +52,26 @@ class ManagerApp(ZApplication):
                         raise ValueError(interruption)
                     try:
                         if self.ctx.current_instance_idx != self.account or not self.ctx.run_context.is_context_running:
-                            raise ValueError('换装已停止或当前账号已变化')
+                            raise ValueError('操作已停止或当前账号已变化')
                         guard()
                     except Exception as exc:
                         interruption = str(exc) or '游戏状态已变化'
                         raise
                 self.guard_game = check_session
                 self.guard_game()
-            pinned = rule_snapshot(self.root, refresh=request is None)
+            pinned = rule_snapshot(self.root, refresh=not interactive)
             cfg = pinned[0]
-            if request:
+            if self.group == MANUAL_GROUP:
                 from .store import digest
                 if digest(cfg) != request['configuration']:
                     return self.round_fail('配队配置已变化，请重新预览')
-            field = request['name'] if request else cfg.get('fieldProfile')
+            field = None if scan_only else (request['name'] if request else cfg.get('fieldProfile'))
             if field:
                 from .loadout import verify_bindings
                 verify_bindings(cfg, field, read(wiki_path(), {}))
-            mark = request is None and cfg.get('applyMarkers')
+            mark = not interactive and cfg.get('applyMarkers')
             scanner = None
-            if request or cfg['run_scanner']:
+            if interactive or cfg['run_scanner']:
                 from time import time
                 from .scanner_status import scanner_status
                 ready, reason = scanner_status(self.ctx, self.account)
@@ -78,19 +80,21 @@ class ManagerApp(ZApplication):
                 scan_started = time()
                 exports = Path(os_utils.get_work_dir())/'.debug/inventory_exports'
                 before = {p:p.stat().st_mtime_ns for p in exports.glob('inventory_*.json')}
-                scanner = self.ctx.run_context.get_application('inventory_scan',self.account,'one_dragon' if request else self.group)
+                scanner = self.ctx.run_context.get_application('inventory_scan',self.account,'one_dragon' if interactive else self.group)
                 if not scanner.config.scan_drive_disk:
                     return self.round_fail('请在仓库扫描器中启用驱动盘')
                 # Suppress the scanner's optional browser launch for this invocation only.
                 from unittest.mock import patch
                 from .scan_marks import capture_marks
                 with capture_marks(scanner), patch.object(scanner,'_open_export',lambda path: None):
-                    result = checked_scan(scanner, self.guard_game) if request else scanner.execute()
+                    result = checked_scan(scanner, self.guard_game) if interactive else scanner.execute()
                 if not result.success or self.ctx.current_instance_idx != self.account:
                     return self.round_fail('本轮扫描中断，请核对账号及库存')
                 fresh = [p for p in exports.glob('inventory_*.json') if before.get(p)!=p.stat().st_mtime_ns]
                 if len(fresh)!=1:
                     return self.round_fail('本轮扫描文件无法唯一识别')
+                if interactive:
+                    self.guard_game()
                 import_inventory(self.root,fresh[0],readings=scanner.ocr_worker.scanned_discs)
                 from .marks import reconcile_scan
                 from .salvage_audit import native_run, observe_native, reconcile
@@ -102,7 +106,9 @@ class ManagerApp(ZApplication):
                 names.update(cfg.get('aliases', {}))
                 reconcile_scan(self.root, snapshot, names)
             report = preview(self.root,wiki_path(),snapshot=pinned)
-            if request:
+            if scan_only:
+                return self.round_success(f"已扫描 {len(snapshot['discs'])} 张驱动盘 · 预览已保存")
+            if self.group == MANUAL_GROUP:
                 self.guard_game()
                 verify_selection(request, cfg, report, snapshot)
             elif report['issues']:

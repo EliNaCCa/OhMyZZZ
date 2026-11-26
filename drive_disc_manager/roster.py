@@ -57,6 +57,16 @@ def same_agent(wiki, first, second):
     return bool(key and key == scanner_agent_key(wiki, second))
 
 
+def preview_bindings(profiles, wiki):
+    """The request actor identifies whose current gear the optimizer may compare."""
+    result = {}
+    for profile in profiles:
+        if profile.get('enabled', True):
+            actor = (profile.get('request') or {}).get('characterName')
+            result[profile['name']] = scanner_agent_key(wiki, actor) if isinstance(actor, str) else ''
+    return result
+
+
 def roster_catalog(z, fields, cfg, wiki, known_owned=()):
     """A stable list for both settings and planning. Unknown identities remain visible."""
     entries = {}

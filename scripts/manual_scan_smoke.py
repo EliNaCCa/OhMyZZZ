@@ -1,0 +1,88 @@
+"""Drive the embedded scan button into the real manager with one local fixture disc."""
+import argparse
+import os
+import sys
+from contextlib import ExitStack, nullcontext
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from threading import Event
+from time import monotonic, sleep
+from types import SimpleNamespace as Obj
+from unittest.mock import patch
+
+
+def smoke(home, tmp):
+    os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+    sys.path[:0] = [str(Path(__file__).resolve().parents[1]), str(home/'src'), str(home/'plugins')]
+    from PySide6.QtWidgets import QApplication
+    from one_dragon.utils import os_utils
+    from drive_disc_manager.manager_app import ManagerApp
+    from drive_disc_manager.manual_equip import SCAN_GROUP
+    from drive_disc_manager.settings import ManagerInterface
+    from drive_disc_manager.store import config, read, save
+
+    app = QApplication([])
+    os_utils.set_work_dir(str(tmp))
+    root = tmp/'accounts'/'1'
+    cfg = dict(config(root), run_scanner=True, afterEarly=True, applyMarkers=True, fieldProfile='日常出场')
+    save(root/'config.json', cfg)
+    disc = dict(id='1', setKey='SwingJazz', slotKey='4', mainStatKey='def_', rarity='S', level=0,
+                substats=[dict(key=s, upgrades=0) for s in ('pen', 'hp', 'atk')],
+                lockState='unlocked', markState='unmarked', lock=False, trash=False)
+    snapshot = dict(format='ZOD', version=1, dbVersion=2, characters=[], wengines=[], discs=[disc],
+                    audit=dict(game_total=1, exported=1, delta=0))
+    scanner = Obj(config=Obj(scan_drive_disk=True), ocr_worker=Obj(scanned_discs=[disc]), _open_export=None)
+    run = Obj(is_context_stop=True, is_context_running=False, is_app_registered=lambda _:True,
+              get_config=lambda *_:scanner.config, get_application=lambda *_:scanner)
+    ctx = Obj(current_instance_idx=1, get_plugin_data_dir=lambda _:root.parent, ready_for_application=True,
+              run_context=run, controller=Obj(game_win=Obj(active=lambda:None)))
+    manager = Obj(group=SCAN_GROUP, ctx=ctx, account=1, root=root, round_success=lambda msg:msg,
+                  round_fail=lambda msg:(_ for _ in ()).throw(AssertionError(msg)))
+    started, release = Event(), Event()
+    def checked(stub, guard):
+        assert stub is scanner
+        guard()
+        started.set()
+        assert release.wait(5)
+        save(tmp/'.debug/inventory_exports/inventory_demo.json', snapshot)
+        return Obj(success=True)
+    def launch(app_id, account, group):
+        assert group == SCAN_GROUP and account == 1
+        run.is_context_stop, run.is_context_running = False, True
+        try:
+            assert '已扫描 1 张' in ManagerApp.manage_inventory(manager)
+        finally:
+            run.is_context_stop, run.is_context_running = True, False
+        return Obj(app_id=app_id, instance_idx=account, group_id=group, finish_reason=Obj(value='COMPLETED'))
+    run.run_application = launch
+    widget = ManagerInterface(ctx)
+    widget.on_interface_shown()
+    with ExitStack() as stack:
+        for name, value in [('drive_disc_manager.disc_probe.interactive_slot', lambda:nullcontext((3, lambda:None))),
+                            ('drive_disc_manager.disc_probe.game_guard', lambda *_:(lambda:None, 1)),
+                            ('drive_disc_manager.scan_marks.capture_marks', lambda _:nullcontext()),
+                            ('drive_disc_manager.manager_app.checked_scan', checked)]:
+            stack.enter_context(patch(name, value))
+        forbidden = [stack.enter_context(patch(name, side_effect=AssertionError(name))) for name in (
+            'drive_disc_manager.loadout.apply_loadout', 'drive_disc_manager.dismantle.handoff', 'drive_disc_manager.live.Marker')]
+        widget.scan_button.click()
+        assert started.wait(3) and not widget.scan_button.isEnabled()
+        release.set()
+        deadline = monotonic()+5
+        while widget.preview_job is not None and monotonic() < deadline:
+            app.processEvents()
+            sleep(.01)
+        assert widget.preview_job is None and widget.scan_button.isEnabled(), widget.preview_note.text()
+        assert widget.preview_note.text() == '' and len(widget.rows) == 1
+        for action in forbidden:
+            action.assert_not_called()
+    assert read(root/'inventory.json') == snapshot and config(root) == cfg
+    widget.close()
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--home', type=Path, required=True)
+    with TemporaryDirectory() as tmp:
+        smoke(parser.parse_args().home.resolve(), Path(tmp))
+    print('PASS embedded read-only scan: one fixture disc, saved preview with daily equipment and markers enabled')

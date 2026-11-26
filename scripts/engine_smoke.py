@@ -121,13 +121,15 @@ def smoke(source):
                         observedValues={'main':{'atk_':12}, 'subs':subs})
         save(root/'inventory.json', dict(format='ZOD', dbVersion=2, version=1, discs=discs,
              characters=[], wengines=[], audit=dict(game_total=6,exported=6,delta=0)))
-        report = preview(root, refresh=False)
+        wiki = root/'wiki.json'
+        save(wiki, {'character': {'1':dict(code='Ellen', EN='Ellen Joe', CHS='艾莲')}})
+        report = preview(root, wiki, refresh=False)
         result = report['assignments']['演示队']
         assert len(set(result.get('ids', ()))) == 6 and result['outputScore'] > 0, (result, report['issues'])
         cfg['reserve_rules'] = [dict(set='FeatheredFate', purpose='备用精通', stats=['anomProf'], count=2)]
         save(root/'config.json', cfg)
         with patch('drive_disc_manager.engine.managed', side_effect=AssertionError('unexpected optimizer launch')) as launch:
-            adjusted = preview(root, refresh=False, reuse_allocations=True)
+            adjusted = preview(root, wiki, refresh=False, reuse_allocations=True)
             launch.assert_not_called()
         assert adjusted['reusedAssignments'] and adjusted['assignments'] == report['assignments']
         assert adjusted['configuration'] != report['configuration']
@@ -136,7 +138,7 @@ def smoke(source):
         # The same six IDs under a different team tolerance still need a new allocation.
         cfg['profiles'][0]['tolerancePct'] = 0
         save(root/'config.json', cfg)
-        updated = preview(root, refresh=False, reuse_allocations=True)
+        updated = preview(root, wiki, refresh=False, reuse_allocations=True)
         assert not updated['reusedAssignments'] and updated['allocationKey'] != adjusted['allocationKey'] and not updated['issues']
         print('PASS saved target survived restart; preview allocated six demo slots; managed processes exited')
 

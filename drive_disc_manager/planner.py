@@ -6,7 +6,7 @@ from .drive_disc_manager_const import PLUGIN_VERSION
 from .store import digest, equipment_keys, fingerprint, inventory, roll_base
 from .subscriptions import effective, current_conflicts, SLOT_MAIN
 from .reserve_policy import apply_reserves, assess_growth, normalized_rule
-from .roster import compile_roster, explain, parse_main, roster_catalog
+from .roster import compile_roster, explain, parse_main, preview_bindings, roster_catalog
 from .stat_reading import checked_values
 
 
@@ -83,18 +83,28 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     used_by = defaultdict(list)
     if len({p['name'] for p in enabled}) != len(enabled):
         raise ValueError('配队方案名称重复')
+    bindings = preview_bindings(enabled, wiki or {})
+    binding_errors = {}
     for p in enabled:
         name = p['name']
+        owner = bindings[name]
+        if p.get('agentKey') and p['agentKey'] != owner:
+            binding_errors[name] = f'「{name}」的角色绑定与当前扫描器字典不一致，请更新所选配队'
+        elif p.get('simultaneous') and not owner:
+            binding_errors[name] = f'「{name}」的同场角色身份待核对，请更新扫描器字典与配队目标'
         # Unnamed (mutually exclusive) profiles cannot collide with a named group.
         group = ('group',p['simultaneous']) if p.get('simultaneous') else ('solo',name)
-        current = {f for f,d in by_fp.items() if d.get('location') and d['location']==p.get('agentKey')}
-        groups[group].append((p,current))
+        current = {f for f,d in by_fp.items() if owner and d.get('location') == owner}
+        groups[group].append((dict(p, agentKey=owner), current))
     pool = [disc for disc in inputs.values() if disc and not disc['discarded']]
     inventory_hash = digest(z)
-    allocation_key = digest([PLUGIN_VERSION, inventory_hash, enabled, optimizer_names, cfg['optimizer_url']]) if enabled else None
+    allocation_key = digest([PLUGIN_VERSION, inventory_hash, enabled, bindings, optimizer_names, cfg['optimizer_url']]) if enabled else None
     saved = reusable_assignments(previous_preview, allocation_key, groups, pool)
     for (_,group_name), members in groups.items():
         try:
+            errors = [binding_errors[p['name']] for p, _ in members if p['name'] in binding_errors]
+            if errors:
+                raise ValueError(' / '.join(errors))
             conflict = group_conflict(p for p, _ in members)
             if conflict:
                 raise ValueError(conflict)
@@ -199,7 +209,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     teams = {p['name']:dict(agent=(p.get('request') or {}).get('characterName') or p.get('agentKey'),
                             group=p.get('simultaneous') or '') for p in enabled}
     return dict(managerVersion=PLUGIN_VERSION, inventory=inventory_hash, rules=rules.get('version'), configuration=digest(cfg), assignments=assignments,
-                allocationKey=allocation_key, reusedAssignments=saved is not None,
+                previewBindings=bindings, allocationKey=allocation_key, reusedAssignments=saved is not None,
                 traceRules=evidence, traceTeams=teams,
                 issues=issues, roster=[a for a in catalog if a['selected']], reserveCoverage=coverage,
                 counts=dict(Counter(r['decision'] for r in rows)), discs=rows)
