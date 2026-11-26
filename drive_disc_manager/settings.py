@@ -1285,8 +1285,10 @@ class ManagerInterface(BaseInterface):
         for use in group['purposes']:
             cap = '不限' if use['count'] is None else str(use['count'])
             parts.append(f"{use['purpose']} {use['covered']}/{cap}")
+        if group.get('fixedExtra'):
+            parts.append(f"另有 {group['fixedExtra']} 张旧备用保持锁定")
         self.reserve_info.show()
-        self.reserve_info.setText(f"同类 {group['eligible']} 张 · 留作备用 {group['kept']} 张　｜　"+'　'.join(parts))
+        self.reserve_info.setText(f"参与备用筛选 {group['eligible']} 张 · 留作备用 {group['kept']} 张　｜　"+'　'.join(parts))
 
     def clear_manual_exception(self):
         from .marks import clear_manual_exception

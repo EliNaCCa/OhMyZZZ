@@ -72,8 +72,36 @@ def smoke(home):
         assert owns_spare(m.history[old_id], old['observedValues'])
         original = deepcopy(m.history)
         m = scan(inventory(old, fresh, manual))
-        assert m.rows[old_id]['reasons'] == ['插件备用锁'] and m.rows[new_id]['decision'] == '保留'
+        assert m.rows[old_id]['reasons'] == ['备用 · 通用'] and m.rows[new_id]['decision'] == '弃置候选'
+        group = m.report['reserveCoverage'][0]
+        assert group['eligible'] == 2 and group['kept'] == group['purposes'][0]['covered'] == 1
+        assert m.rows[manual_id]['reasons'] == ['游戏内已锁定']
+        from drive_disc_manager.reserve_policy import quota_impact
+        impact = quota_impact(m.report, {'set':'SwingJazz'}, dict(cfg,reserve=0), {})
+        assert impact['after'] == 2 and impact['spares'] == 1 and impact['newCandidates'] == 0
+        cfg['reserve'] = 0
+        capped = scan(inventory(old, fresh, manual))
+        zero = capped.report['reserveCoverage'][0]
+        assert zero['kept'] == zero['fixedExtra'] == 1 and zero['purposes'][0]['covered'] == 0
+        assert capped.rows[old_id]['decision'] == '保留'
+        cfg['reserve'] = 1
         cfg['rotateSpareLocks'] = True
+        tie = disc('tie', {'crit_':2.4, 'pen':9, 'def':15})
+        # This pair reverses its raw fingerprint order when its set name is translated.
+        def picked(rows):
+            return [r['id'] for r in rows if r['decision'] == '保留']
+        unlocked = dict(old, lock=False, lockState='unlocked')
+        def preview_pair(pair): return plan(inventory(*pair), cfg, rules, names)['discs']
+        base_pair = [unlocked, tie]
+        assert picked(preview_pair(base_pair)) == picked(preview_pair([dict(d, setKey='摇摆爵士') for d in reversed(base_pair)]))
+        equal = scan(inventory(tie, old))
+        assert picked(equal.report['discs']) == [old['id']] and not equal.phase_targets('release')
+        # A single double-crit disc can fill both extra purposes outside the team's gear.
+        special = [dict(purpose='偏暴击', count=1, stats=['crit_']),dict(purpose='偏暴伤', count=1, stats=['crit_dmg_'])]
+        multi_cfg = dict(cfg, reserve=0, reserve_rules=special)
+        overlap = plan(inventory(fresh,dict(old,location='Nicole'),manual),multi_cfg,rules,names)
+        uses = overlap['reserveCoverage'][0]
+        assert uses['kept'] == uses['eligible'] == 1 and [p['covered'] for p in uses['purposes']] == [0,1,1]
         for extra, pins in [({'location':'TestAgent'}, []), ({}, [old_id])]:
             cfg['pins'] = pins
             m = scan(inventory(dict(old, **extra), fresh, manual))
@@ -82,7 +110,6 @@ def smoke(home):
         m = scan(inventory(old, fresh, manual))
         assert m.rows[old_id]['decision'] == '弃置候选' and m.rows[new_id]['reasons'] == ['备用 · 通用']
         assert m.rows[manual_id]['reasons'] == ['游戏内已锁定']
-        from drive_disc_manager.reserve_policy import quota_impact
         original_report = deepcopy(m.report)
         impact = quota_impact(m.report, {'set':'SwingJazz'}, dict(cfg,reserve=0), {})
         assert impact == dict(total=3,before=2,after=1,newCandidates=1,spares=0,groups=1)
@@ -157,7 +184,7 @@ def smoke(home):
         assert scan(z).rows[old_id]['reasons'] == ['备用 · 通用']
         cfg['reserve'] = 0
         assert scan(z).rows[old_id]['decision'] == '弃置候选' and len(clicked) == 4
-    print('PASS three-disc spare rotation, manual and legacy protection, identity loss and interrupted release')
+    print('PASS spare quotas across scans, purpose overlap, stable ties, rotation and manual protection')
 
 
 if __name__ == '__main__':

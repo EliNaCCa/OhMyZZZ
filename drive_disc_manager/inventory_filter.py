@@ -63,7 +63,7 @@ class InventoryFilter(QWidget):
             kinds = {row['decision']}
             if row['marked']: kinds.add('已标记弃置')
             if any(reason.startswith('配队 · ') for reason in reasons): kinds.add('配队用盘')
-            if any(reason.startswith('备用 · ') for reason in reasons): kinds.add('额外备用')
+            if '插件备用锁' in reasons or any(reason.startswith('备用 · ') for reason in reasons): kinds.add('额外备用')
             keywords = ' '.join((suit, row['set'], slot, main, row['main'], owner_label(row), notes, *kinds))
             self.index.append((keywords.casefold().replace(' ',''), kinds))
         self.table.blockSignals(True)

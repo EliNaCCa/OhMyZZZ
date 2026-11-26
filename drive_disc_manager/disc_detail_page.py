@@ -122,6 +122,8 @@ class DiscDetails(QWidget):
                 count = '不限' if use['count'] is None else str(use['count'])
                 picked = ' · 这张已入选' if '备用 · '+use['purpose'] in reasons else ''
                 lines.append(f"{use['purpose']} 名额 {count}，同类入选 {use['covered']} 张{picked}")
+            if coverage.get('fixedExtra'):
+                lines.append(f"另有 {coverage['fixedExtra']} 张旧备用保持锁定")
         if not teams and not probe:
             lines.append('暂无配队使用')
         if probe:

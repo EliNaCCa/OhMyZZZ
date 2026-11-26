@@ -56,9 +56,9 @@ def smoke():
                    else [b_options[0], b_options[2]] if len(pool)==13 else b_options)
         available = {d['id'] for d in pool}
         return [c for c in choices if available.issuperset(c['ids'])]
-    def calculate():
+    def calculate(previous=None):
         wiki = {'character':{key:dict(code=key, EN=key) for key in ('Alpha','Beta')}}
-        return plan(z,cfg,rules,{'SwingJazz':'摇摆爵士'},shortlist,wiki=wiki)
+        return plan(z,cfg,rules,{'SwingJazz':'摇摆爵士'},shortlist,wiki=wiki,previous_preview=previous)
     def check(expected_a, expected_b):
         report = calculate()
         result = report['assignments']
@@ -70,6 +70,14 @@ def smoke():
         assert all(r['decision']=='保留' for r in report['discs'] if r['fp'] in expected)
         return result
     result = check(a_options[0],b_options[1])
+    baseline = calculate()
+    cfg['reserve'] = 2
+    edited = calculate(previous=baseline)
+    assert edited['reusedAssignments'] and all(group['kept'] == 0 for group in edited['reserveCoverage'])
+    for name in (a['name'], burst['name'], b['name']):
+        recovered = target_loadout(cfg, edited, z, name)
+        assert [t['fp'] for t in recovered if t['profile'] == name] == result[name]['ids']
+    cfg['reserve'] = 0
     assert result[b['name']]['relativeLossPct']==0.1 and 'A 常态 占用 1 号位' in result[b['name']]['reason']
     assert result[b['name']]['rawAvailableBestOutput'] == '99.9' and result[b['name']]['availableLossPct'] == 0
     # Equal priority-C scores: choose the physical copy that leaves the strongest

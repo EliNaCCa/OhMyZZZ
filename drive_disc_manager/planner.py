@@ -137,8 +137,8 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         entry = history.get(fp, {})
         managed = (counts[fp] == 1 and owns_spare(entry, values) and d.get('lockState') == 'locked'
                    and d.get('lock') is True and d.get('markState') == 'unmarked' and d.get('trash') is False)
-        if d.get('lock') is True and not (managed and cfg.get('rotateSpareLocks') is True):
-            why.append('插件备用锁' if managed else '游戏内已锁定')
+        if d.get('lock') is True and not managed:
+            why.append('游戏内已锁定')
         manual_unlock = entry.get('state') == 'manual-unlock'
         if manual_unlock:
             why.append('手动解锁后保留')
