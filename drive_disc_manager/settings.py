@@ -1347,7 +1347,16 @@ class ManagerInterface(BaseInterface):
                 self.present_detail(None)
                 self.detail.tabs.setCurrentIndex(tab)
                 return
-            if not probe and not previous.get('ambiguous'):
+            if not probe and previous.get('exportUid'):
+                match = next(((i, r) for i, r in enumerate(self.rows) if r.get('exportUid') == previous['exportUid']), None)
+                if match:
+                    index, row = match
+                    if not self.table.isRowHidden(index):
+                        self.table.selectRow(index)
+                    self.present_detail(row)
+                    self.detail.tabs.setCurrentIndex(tab)
+                    return
+            elif not probe and not previous.get('ambiguous'):
                 matches = [(i, row) for i, row in enumerate(self.rows) if row['fp'] == previous['fp']]
                 if len(matches) == 1:
                     index, row = matches[0]

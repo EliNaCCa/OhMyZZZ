@@ -49,7 +49,7 @@ def fingerprint(d):
 def roll_base(z):
     # inventory_scan v1.4.7 writes the initial roll as 1. Keep raw fields
     # intact so upgrading this calculation preserves pins and marker history.
-    return 1 if z.get('source') == 'Zenless Optimizer' or z.get('networkPreview') is True else 0
+    return 1 if z.get('source') in ('Zenless Optimizer', 'OhMyZZZ CN') or z.get('networkPreview') is True else 0
 
 
 def equipment_names(wiki):
@@ -188,12 +188,15 @@ def known_agents(root):
     return set(read(root/'owned-agents.json', [])) | network_agents(root) | set(declared) | observed_agents(cn) | set(shown)
 
 
-def import_inventory(root, path, *, readings=None):
+def import_inventory(root, path, *, readings=None, cn_export=None, names=None):
     path = Path(path)
     if 'partial' in path.name.lower():
         raise ValueError('部分扫描文件')
     z = read(path)
-    if readings is not None:
+    if cn_export is not None:
+        from .inventory_comparison import verify_cn_inventory
+        z = verify_cn_inventory(cn_export, z, readings, names or {})
+    elif readings is not None:
         from .scan_copies import with_copies
         z = with_copies(z, readings)
     inventory(z)

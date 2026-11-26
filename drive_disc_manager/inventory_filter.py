@@ -33,7 +33,11 @@ class InventoryFilter(QWidget):
         index = self.table.currentRow()
         if 0 <= index < len(self.rows) and not self.table.isRowHidden(index):
             row = self.rows[index]
-            return row['id'], row['fp']
+            return self.identity(row)
+
+    @staticmethod
+    def identity(row):
+        return ('cn-uid', row['exportUid']) if row.get('exportUid') else (row['id'], row['fp'])
 
     def present(self, rows, names, account, fill):
         same_account = account == getattr(self, 'account', None)
@@ -89,7 +93,7 @@ class InventoryFilter(QWidget):
                 self.table.setRowHidden(i, not show)
                 if show: visible.append(i)
             if visible:
-                match = next((i for i in visible if (self.rows[i]['id'], self.rows[i]['fp']) == selected), visible[0])
+                match = next((i for i in visible if self.identity(self.rows[i]) == selected), visible[0])
                 self.table.selectRow(match)
             else:
                 self.table.setCurrentCell(-1,-1)

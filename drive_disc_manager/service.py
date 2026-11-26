@@ -23,7 +23,7 @@ def rule_snapshot(root, refresh=True):
         return config(root), read(root/'rules.json',{}), warnings
 
 
-def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=False, verified_game=False):
+def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=False, verified_game=False, cn_plan=None, field=None):
     cfg, rules, warnings = snapshot if snapshot is not None else rule_snapshot(root, refresh)
     warnings = list(warnings)
     inputs = dict(cfg, inventorySource='ocr') if verified_game else cfg
@@ -56,10 +56,16 @@ def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=F
             if not endpoint:
                 endpoint = stack.enter_context(managed(root))
             return candidate_pool(endpoint, profile, discs, current)
-        report = plan(z,cfg,rules,names,candidates,
+        inspection_cfg = dict(cfg, profiles=[], reserve=0, reserve_rules=[]) if cn_plan is not None else cfg
+        report = plan(z,inspection_cfg,rules,names,candidates,
                       wiki=dictionary, known_owned=known_agents(root), history=history, comparison=comparison,
                       previous_preview=read(preview_path(root, inputs), {}) if reuse_allocations else None)
     report['configuration'] = digest(cfg)
+    if cn_plan is not None:
+        from .inventory_comparison import execution_plan
+        from .loadout import fielded_profiles
+        fielded = [p['name'] for p in fielded_profiles(cfg, field)] if field else []
+        report = execution_plan(cn_plan, report, z, fielded=fielded)
     if game_stamp is not None:
         report['gameStamp'] = game_stamp
     if comparison is not None:

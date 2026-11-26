@@ -72,6 +72,7 @@ class ManagerApp(ZApplication):
             mark = not interactive and cfg.get('applyMarkers')
             source = cfg['inventorySource']
             network = source in ('cn_export', 'network')
+            cn_inventory = cn_plan = None
             if network and cfg['run_scanner'] and not interactive:
                 def same_account():
                     if self.ctx.current_instance_idx != self.account or not self.ctx.run_context.is_context_running:
@@ -83,7 +84,12 @@ class ManagerApp(ZApplication):
                     from .network_reader import capture
                     capture(self.root, same_account)
                 if mark or field:
-                    preview(self.root, wiki_path(), snapshot=pinned)
+                    network_plan = preview(self.root, wiki_path(), snapshot=pinned)
+                    if network_plan['issues']:
+                        return self.round_fail('配装待复核 · '+' / '.join(network_plan['issues']))
+                    if source == 'cn_export':
+                        cn_inventory = read(self.root/'cn-inventory.json')
+                        cn_plan = network_plan
             scanner = None
             if interactive or (cfg['run_scanner'] and (not network or mark or field)):
                 from time import time
@@ -97,6 +103,13 @@ class ManagerApp(ZApplication):
                 scanner = self.ctx.run_context.get_application('inventory_scan',self.account,'one_dragon' if interactive else self.group)
                 if not scanner.config.scan_drive_disk:
                     return self.round_fail('请在仓库扫描器中启用驱动盘')
+                if cn_inventory is None and (mark or field) and any(str(key).startswith('cn-uid/') for key in cfg['pins']):
+                    from .cn_export import FILE, refresh
+                    def current_account():
+                        if self.ctx.current_instance_idx != self.account or not self.ctx.run_context.is_context_running:
+                            raise ValueError('账号已切换或任务已停止')
+                    refresh(self.root, current_account, showcase_uid=cfg.get('showcaseUid', ''), wiki=read(wiki_path(), {}))
+                    cn_inventory = read(self.root/FILE)
                 # Suppress the scanner's optional browser launch for this invocation only.
                 from unittest.mock import patch
                 from .scan_marks import capture_marks
@@ -112,19 +125,19 @@ class ManagerApp(ZApplication):
                 from .marks import reconcile_scan
                 from .salvage_audit import native_run, observe_native, reconcile
                 observe_native(self.root, self.account, native_run(Path(os_utils.get_work_dir()), self.account), scan_started)
-                import_inventory(self.root,fresh[0],readings=scanner.ocr_worker.scanned_discs)
+                from .store import equipment_names
+                names = equipment_names(read(wiki_path(), {}))
+                names.update(cfg.get('aliases', {}))
+                import_inventory(self.root, fresh[0], readings=scanner.ocr_worker.scanned_discs, cn_export=cn_inventory, names=names)
                 if text_cache is not None:
                     text_cache.finish()
                 snapshot = read(self.root/'inventory.json')
                 reconcile(self.root,snapshot)
-                from .store import equipment_names
-                names = equipment_names(read(wiki_path(), {}))
-                names.update(cfg.get('aliases', {}))
                 reconcile_scan(self.root, snapshot, names)
             from .store import snapshot_path
             if scanner is None and not snapshot_path(self.root, cfg).is_file():
                 return self.round_fail('请先在仓库页读取库存')
-            report = preview(self.root,wiki_path(),snapshot=pinned, verified_game=scanner is not None)
+            report = preview(self.root,wiki_path(),snapshot=pinned, verified_game=scanner is not None, cn_plan=cn_plan, field=field)
             if scan_only:
                 resumed = f' · 复用 {text_cache.reused} 次词条识别' if text_cache and text_cache.reused else ''
                 return self.round_success(f"已扫描 {len(snapshot['discs'])} 张驱动盘{resumed} · 预览已保存")

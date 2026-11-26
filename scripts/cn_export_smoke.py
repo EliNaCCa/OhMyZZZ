@@ -104,6 +104,37 @@ def smoke(home, sample, temp):
     assert keep['counts'] == {'保留': 1, '待复核': 1}, keep['counts']
     copies = quota_impact(keep, {}, dict(options, reserve=2), {})
     assert copies['spares'] == copies['after'] == 2 and copies['newCandidates'] == 0
+    from drive_disc_manager.store import toggle_pin, is_pinned, import_inventory
+    one_pin = toggle_pin(keep['discs'][0], [])
+    assert one_pin == ['cn-uid/1001'] and not is_pinned(keep['discs'][1], one_pin)
+    options = dict(options, pins=one_pin, reserve=0, inventorySource='cn_export')
+    split = normalize(dict(exported, discs=[dict(d, lock=False) for d in [*pair, records[1]]]))
+    # Two export UIDs share one OCR signature. The physical count is three even
+    # when the scanner folds the two equal ones into a single on-screen record.
+    game = dict(scanned, discs=[dict(d, observedGrade=d['rarity'], lock=d['lockState']=='locked',
+                                     trash=d['markState']=='marked') for d in scanned['discs'][:2]],
+                audit=dict(game_total=3, exported=2, delta=-1))
+    small = temp/'cn-execution'/'1'
+    save(small/'config.json', options); save(small/'cn-inventory.json', split); save(small/'rules.json', rules)
+    save(small/'scan.json', game)
+    import_inventory(small, small/'scan.json', readings=game['discs'], cn_export=split, names=equipment_names({}))
+    bridged = read(small/'inventory.json'); assert len(bridged['discs']) == 3
+    assert sum(d['ownerState']=='unknown' for d in bridged['discs']) == 2
+    cn_report = preview(small, refresh=False)
+    actions = preview(small, refresh=False, verified_game=True, cn_plan=cn_report)
+    by_uid = {r['exportUid']:r for r in actions['discs']}
+    assert '手动保护' in by_uid['1001']['reasons'] and '手动保护' not in by_uid['9999']['reasons']
+    assert by_uid['1001']['ambiguous'] and by_uid['9999']['ambiguous']
+    assert by_uid['1002']['observedValues'] == original[1]['observedValues']
+    assert by_uid['1002']['decision'] == ('保留' if original[1]['lockState']=='locked' else '弃置候选')
+    save(small/'scan.json', dict(game, audit=dict(game_total=4, exported=2, delta=-2)))
+    try:
+        import_inventory(small, small/'scan.json', readings=game['discs'], cn_export=split, names=equipment_names({}))
+    except ValueError as error:
+        assert '国服导出 3 张' in str(error)
+    else:
+        raise AssertionError('used an out-of-date export')
+    assert read(small/'inventory.json') == bridged
     # Replay one simulated enhancement on one test ID. The real game was not changed.
     changed = deepcopy(exported)
     changed['discs'][0]['level'] = 12

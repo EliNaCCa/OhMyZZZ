@@ -118,7 +118,7 @@ class DiscDetails(QWidget):
         self.title.setText(title)
         self.pin.setText('取消个人保护' if pinned else '始终保留这张')
         self.pin.setEnabled(not row['marked'])
-        self.pin.setToolTip('按实物属性保护；完全相同的盘会一同保留。')
+        self.pin.setToolTip('按驱动盘编号保留，强化后仍然有效。' if row.get('exportUid') else '同属性的盘会一起保留。')
         from .disc_owner import preview_owner
         owner = '　穿戴 · '+preview_owner(row) if row.get('ownerState') or row.get('location') else ''
         prefix = '换算值　' if report.get('networkPreview') and row.get('observedValues') else ''

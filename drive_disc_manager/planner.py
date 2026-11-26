@@ -190,6 +190,9 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         row = dict(fp=fp, id=d['id'], set=set_key(d), slot=str(d['slotKey']), main=d['mainStatKey'],
                    level=d['level'], location=d.get('location',''), rolls={s['key']:1+s['upgrades']-base for s in d['substats']}, reasons=why, recommendations=[], explanation=[], review=[], ruleUses=[])
         row['pinKeys'] = pin_keys(d, names, reverse, fp)
+        if stats_only or z.get('source') == 'OhMyZZZ CN':
+            row['exportUid'] = d['id']
+            row['pinKeys'].insert(0, 'cn-uid/' + d['id'])
         if stats_only:
             row['buildId'] = piece
             if d.get('location'):
@@ -262,6 +265,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
             continue
         row['decision'] = '保留' if row['reasons'] else ('待复核' if row['review'] else '弃置候选')
         if stats_only and row['decision'] == '弃置候选':
+            row['checkForDiscard'] = True
             row['decision'] = '待复核'
             row['explanation'].append('超出留盘名额，穿戴和标记待游戏内核对')
         if row['managedSpareLock'] and row['decision'] == '弃置候选':
