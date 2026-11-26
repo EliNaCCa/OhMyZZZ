@@ -57,38 +57,47 @@ def smoke(home, source, temp):
     ctx = Obj(current_instance_idx=1, run_context=run)
     manager = Obj(group=MANUAL_GROUP, root=root, ctx=ctx, account=1, round_success=lambda msg:msg,
                   round_fail=lambda msg, **kwargs:(msg, kwargs.get('data')))
-    def scan(*_):
-        save(temp/'.debug/inventory_exports'/f'inventory_{scan.count}.json', dict(format='ZOD', version=1, dbVersion=2,
-             source='Zenless Optimizer', discs=readings, characters=[], wengines=[], audit=dict(game_total=7,exported=7,delta=0)))
-        scan.count += 1
-        return Obj(success=True)
-    scan.count = 0
-    def equip(_, cfg, report, snapshot, ui, *, name, names):
-        from drive_disc_manager.loadout import target_loadout
-        targets = target_loadout(cfg, report, snapshot, name, names=names)
-        assert [t['selectionFp'] for t in targets] == [t['selectionFp'] for t in wanted]
-        for num in ('4', '7'):
-            row = next(r for r in report['discs'] if r['exportUid'] == num)
-            assert row['decision'] == '保留' and row['keptBeforeReserves']
-        return dict(profile=name, verified=[t['fp'] for t in targets])
+    def observations(_, total, guard):
+        assert total == 7
+        for idx in (0,1,2,6,4,5):
+            guard()
+            yield readings[idx], lambda: dict(readings[idx], id='next-scanner-reading')
+        raise AssertionError('visited an unrelated disc after all six targets were found')
+    class UI:
+        def guard(self): pass
+        def inspect(self, target):
+            return 'equipped' if owners.get(target['selectionFp']) == target['agent'] else 'available'
+        def equip(self, target, checkpoint):
+            checkpoint()
+            owners[target['selectionFp']] = target['agent']
+            moves.append(target['selectionFp'])
+    owners = {t['selectionFp']:'Soldier 11' for t in wanted if t['slot'] != 4}
+    moves = []
     with (patch('drive_disc_manager.manager_app.manual_request', side_effect=lambda *_:(request, lambda: None)),
           patch('drive_disc_manager.manager_app.wiki_path', return_value=wiki_path),
           patch('drive_disc_manager.scanner_status.scanner_status', return_value=(True,'')),
-          patch('drive_disc_manager.manager_app.checked_scan', side_effect=scan),
-          patch('drive_disc_manager.scan_marks.capture_marks', return_value=nullcontext()),
-          patch('drive_disc_manager.equip_ui.EquipUI'), patch('drive_disc_manager.loadout.apply_loadout', side_effect=equip) as apply,
+          patch('drive_disc_manager.manager_app.checked_scan', side_effect=AssertionError('unexpected full scan')),
+          patch('drive_disc_manager.equip_targets.warehouse_observations', side_effect=observations),
+          patch('drive_disc_manager.equip_ui.EquipUI', return_value=UI()),
           patch('drive_disc_manager.optimizer.candidate_pool', side_effect=AssertionError('unexpected second optimizer run'))):
         first = ManagerApp.manage_inventory(manager)
-        assert first == '爆发 · 已复读 6 个号位', first
+        assert first == '爆发 · 已复读 6 个号位' and moves == ['cn-uid/7'], first
+        assert [t['selectionFp'] for t in read(root/'equip-result.json')['targets']] == [t['selectionFp'] for t in wanted]
+        assert not (root/'inventory.json').exists()
         readings[-1] = dict(spare, location='Lycaon', ownerState='worn')
+        owners['cn-uid/7'] = 'Lycaon'
         msg, change = ManagerApp.manage_inventory(manager)
-        assert '变化' in msg and change['targets'][3]['location'] == 'Lycaon' and apply.call_count == 1
+        assert '变化' in msg and change['targets'][3]['location'] == 'Lycaon' and len(moves) == 1
         assert any(r[0].endswith('4 号位') and r[1:] == ('装备者','穿戴者待复核','莱卡恩')
                    for r in changed_slots(wanted, change['targets'], names, {'Lycaon':'莱卡恩'}))
         request = change['revised']
-        assert ManagerApp.manage_inventory(manager) == '爆发 · 已复读 6 个号位' and apply.call_count == 2
-    from drive_disc_manager.inventory_comparison import compare_game_scan
-    checked = read(root/'inventory.json')
+        assert ManagerApp.manage_inventory(manager) == '爆发 · 已复读 6 个号位' and len(moves) == 2
+        readings[-1] = dict(spare, markState='marked', trash=True)
+        msg, detail = ManagerApp.manage_inventory(manager)
+        assert '已标记弃置' in msg and detail is None and len(moves) == 2
+    readings[-1] = dict(spare, location='Lycaon', ownerState='worn')
+    from drive_disc_manager.inventory_comparison import compare_game_scan, verify_cn_inventory
+    checked = verify_cn_inventory(cn, dict(source='Zenless Optimizer', audit=dict(game_total=7)), readings, names)
     replacement = dict(cn, discs=[dict(d, id='101') if d['id']=='1' else d for d in cn['discs']])
     history = compare_game_scan(replacement, checked, names)
     assert history['matched'] == 6 and '101' not in history['lastWorn'] and history['lastWorn']['7'] == 'Lycaon'
@@ -101,4 +110,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
     with TemporaryDirectory() as folder:
         smoke(args.home, args.scan, Path(folder))
-    print('PASS two builds, seven recorded discs, three simulated manual equip runs')
+    print('PASS two builds, seven recorded discs: early stop, donor change, marked target, original CN IDs')

@@ -79,6 +79,10 @@ def target_loadout(cfg, report, snapshot, name, *, preview_only=False, names=Non
 def apply_loadout(root, cfg, report, snapshot, ui, *, name=None, names=None):
     name = name or cfg['fieldProfile']
     targets = target_loadout(cfg, report, snapshot, name, names=names)
+    return apply_checked_targets(root, report, name, targets, ui)
+
+
+def apply_checked_targets(root, report, name, targets, ui):
     receipt = dict(profile=name,configuration=report['configuration'],inventory=report['inventory'],
                    started=time(),status='checking',targets=targets,actions=[],verified=[])
     path = root/'equip-result.json'

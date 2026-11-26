@@ -906,7 +906,8 @@ class ManagerInterface(BaseInterface):
         table.resizeColumnsToContents(); panel.addWidget(table)
         actions = QHBoxLayout(); panel.addLayout(actions); actions.addStretch()
         back = self.button(actions,'返回原预览' if review else '返回',dialog.reject); back.setDefault(True)
-        self.button(actions,'重扫并换装',dialog.accept).setAutoDefault(False)
+        action_label = '核对并换装' if current_cfg['inventorySource'] == 'cn_export' else '重扫并换装'
+        self.button(actions,action_label,dialog.accept).setAutoDefault(False)
         if not dialog.exec():
             if review:
                 self.equip_review = None

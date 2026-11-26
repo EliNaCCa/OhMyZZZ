@@ -1,5 +1,6 @@
 """One confirmed lineup, confined to the calling thread and the host application run."""
 from contextvars import ContextVar
+from contextlib import contextmanager
 
 from .loadout import target_loadout
 from .store import digest
@@ -36,9 +37,13 @@ def selection_digest(targets, unknown_owners=()):
 
 def confirmation(account, name, cfg, report, snapshot, *, preview_only=False, names=None):
     targets = target_loadout(cfg, report, snapshot, name, preview_only=preview_only, names=names)
+    return target_confirmation(account, name, cfg, report, targets), targets
+
+
+def target_confirmation(account, name, cfg, report, targets):
     unknown = [t['selectionFp'] for t in targets if t['selectionFp'].startswith('cn-uid/') and t['ownerState'] == 'unknown']
     return dict(account=account, name=name, configuration=digest(cfg), rules=report.get('rules'),
-                selection=selection_digest(targets), unknownOwners=unknown), targets
+                selection=selection_digest(targets), unknownOwners=unknown)
 
 
 def run_confirmed(ctx, request):
@@ -88,17 +93,20 @@ def verify_selection(request, cfg, report, snapshot, *, names=None):
     if request['configuration'] != digest(cfg) or request['rules'] != report.get('rules'):
         raise ValueError('配队配置或规则已更新，请重新计算')
     current, targets = confirmation(request['account'], request['name'], cfg, report, snapshot, names=names)
+    verify_targets(request, current, targets)
+
+
+def verify_targets(request, current, targets):
     # Reading an unassigned disc in the bag or already on its recipient needs
     # no new decision. Borrowing from a different agent still changes the plan.
     if selection_digest(targets, request.get('unknownOwners', ())) != request['selection']:
         raise SelectionChanged(request, current, targets)
 
 
-def checked_scan(scanner, guard):
-    """Bind navigation and the disc grid to the already validated foreground client."""
+@contextmanager
+def guarded_grid(grid, guard):
+    """Check the current game session before grid navigation or input."""
     from unittest.mock import patch
-    from .warehouse import enter_warehouse
-    grid = scanner.drive_disk_scanner
     ctx = grid.ctx
 
     class GridController:
@@ -112,6 +120,14 @@ def checked_scan(scanner, guard):
         def __getattr__(self, key):
             return getattr(ctx, key)
 
+    with (patch.object(grid, 'ctx', GridContext()), patch.object(grid, 'need_check_game_win', False),
+          patch.object(grid, 'run_record', None)):
+        yield grid
+
+
+def checked_scan(scanner, guard):
+    from .warehouse import enter_warehouse
+    grid = scanner.drive_disk_scanner
     guard()
     scanner._ensure_screen_areas()
     scanner._disc_game_total = enter_warehouse(scanner, guard)
@@ -119,8 +135,7 @@ def checked_scan(scanner, guard):
     scanner.ocr_worker.reset()
     scanner.ocr_worker.start()
     try:
-        with (patch.object(grid, 'ctx', GridContext()), patch.object(grid, 'need_check_game_win', False),
-              patch.object(grid, 'run_record', None)):
+        with guarded_grid(grid, guard):
             result = grid.execute()
         if not result.success:
             return result

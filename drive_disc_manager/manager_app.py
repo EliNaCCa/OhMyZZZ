@@ -106,12 +106,18 @@ class ManagerApp(ZApplication):
                 ready, reason = scanner_status(self.ctx, self.account)
                 if not ready:
                     return self.round_fail(reason)
-                scan_started = time()
-                exports = Path(os_utils.get_work_dir())/'.debug/inventory_exports'
-                before = {p:p.stat().st_mtime_ns for p in exports.glob('inventory_*.json')}
                 scanner = self.ctx.run_context.get_application('inventory_scan',self.account,'one_dragon' if interactive else self.group)
                 if not scanner.config.scan_drive_disk:
                     return self.round_fail('请在仓库扫描器中启用驱动盘')
+                if field and cn_plan is not None and not mark:
+                    from .equip_targets import equip_cn_targets
+                    from .store import equipment_names
+                    wiki = wiki_path()
+                    names = equipment_names(read(wiki, {})) | cfg.get('aliases', {})
+                    return equip_cn_targets(self, scanner, cfg, cn_plan, cn_inventory, field, names, wiki, request)
+                scan_started = time()
+                exports = Path(os_utils.get_work_dir())/'.debug/inventory_exports'
+                before = {p:p.stat().st_mtime_ns for p in exports.glob('inventory_*.json')}
                 if cn_inventory is None and (mark or field) and any(str(key).startswith('cn-uid/') for key in cfg['pins']):
                     from .cn_export import FILE, refresh
                     def current_account():
