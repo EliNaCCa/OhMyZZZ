@@ -4,7 +4,7 @@ from csv import Error as CSVError
 from pathlib import Path
 from .planner import plan
 from .maintenance import Deferred, exclusive
-from .store import config, digest, equipment_names, read, save, snapshot_path, preview_path
+from .store import config, digest, equipment_names, known_agents, read, save, snapshot_path, preview_path
 from .subscriptions import sync
 
 
@@ -41,7 +41,7 @@ def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=F
                 endpoint = stack.enter_context(managed(root))
             return candidate_pool(endpoint, profile, discs, current)
         report = plan(z,cfg,rules,names,candidates,
-                      wiki=dictionary, known_owned=read(root/'owned-agents.json', []), history=history,
+                      wiki=dictionary, known_owned=known_agents(root), history=history,
                       previous_preview=read(preview_path(root, inputs), {}) if reuse_allocations else None)
     report['configuration'] = digest(cfg)
     report.update(warnings=warnings,generated=time.time(), mode='preview')

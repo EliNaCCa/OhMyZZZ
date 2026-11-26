@@ -168,6 +168,18 @@ def observed_agents(snapshot):
     return {key.strip() for key in keys if isinstance(key, str) and key.strip()}
 
 
+def network_agents(root):
+    path = root/'network-owned-agents.json'
+    if path.is_file():
+        return set(read(path))
+    # Earlier releases saved the account's network inventory without a roster index.
+    return observed_agents(read(root/'network-inventory.json', {}))
+
+
+def known_agents(root):
+    return set(read(root/'owned-agents.json', [])) | network_agents(root)
+
+
 def import_inventory(root, path, *, readings=None):
     path = Path(path)
     if 'partial' in path.name.lower():

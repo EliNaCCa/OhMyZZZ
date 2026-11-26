@@ -60,6 +60,7 @@ def smoke(home, tmp):
     try: inventory(network)
     except ValueError: pass
     else: raise AssertionError('network preview accepted as a game scan')
+    check_verified_roster(tmp/'roster', network, exported)
     ctx = SimpleNamespace(get_plugin_data_dir=lambda _:root.parent, game_account_config=SimpleNamespace(game_refresh_hour_offset=0))
     from drive_disc_manager.manager_app import ManagerApp
     ctx.current_instance_idx = 1
@@ -82,6 +83,42 @@ def smoke(home, tmp):
     with patch.object(record,'get_current_dt',return_value='20261130'):
         record.check_and_update_status(); assert not record.is_done
     print('PASS loopback inventory preview, separate game scan, daily/weekly limits and Monday reset')
+
+
+def check_verified_roster(root, network, exported):
+    from drive_disc_manager.network_reader import capture
+    from drive_disc_manager.service import preview
+    from drive_disc_manager.store import defaults, import_inventory, read, save
+
+    account = root/'1'
+    cfg = dict(defaults(), inventorySource='network', auto_sync=False, reserve=0)
+    rules = dict(fields={'build/Nicole/sets4':['SwingJazz'], 'build/Nicole/slot4':['ATK%'],
+                         'matrix/SwingJazz/4':[], 'matrix/SwingJazz/4/known':['atk_']})
+    pinned = cfg, rules, []
+    # A saved preview from before cross-reader roster tracking. Nicole wears no disc.
+    save(account/'network-inventory.json', network)
+    snapshot = dict(network, networkPreview=False, source='Zenless Optimizer', characters=[],
+                    audit=dict(game_total=1, exported=1, delta=0))
+    path = root/'disc-only.json'
+    save(path, snapshot)
+    def decide(selected=account, options=pinned):
+        return preview(selected, snapshot=options, verified_game=True)['discs'][0]
+    import_inventory(account, path)
+    assert decide()['decision'] == '保留', 'verified disc-only OCR lost an owned agent from the network preview'
+    # A later reader export brings an additional agent into the same account.
+    with patch('drive_disc_manager.network_reader.fetch_export', return_value=('next', dict(exported, characters=[dict(key='Ellen')]))):
+        capture(account, lambda:None)
+    result = preview(account, snapshot=pinned, verified_game=True)
+    assert {a['name'] for a in result['roster']} == {'Nicole','Ellen'}
+    assert any('Nicole' in reason for reason in result['discs'][0]['reasons'])
+    # A known Ellen without build rules would itself require review. For exclusion
+    # compare a decision without either owned agent in the player's keep list.
+    for options in (dict(cfg, includeOwned=False), dict(cfg, excludedAgents=['nicole','ellen'])):
+        assert decide(options=(options,rules,[]))['decision'] == '弃置候选'
+    other = root/'2'
+    import_inventory(other, path)
+    assert decide(other)['decision'] == '弃置候选'
+    assert read(account/'inventory.json')['characters'] == []
 
 
 def check_reader_identity(cfg, disc, exported):
@@ -124,6 +161,20 @@ def check_reader_identity(cfg, disc, exported):
 
     request, original = confirmation(1, profile, cfg, selection(network), network, preview_only=True)
     verify_selection(request, cfg, selection(ocr), ocr)
+    # The reader uses the English name; inventory_scan returns the portrait's code.
+    wiki = {'character':{'1311':dict(EN='Astra Yao', CHS='耀嘉音', code='Astra')}}
+    party = dict(cfg, profiles=[dict(name=profile, agentKey='Astra', request=dict(characterName='耀嘉音'))])
+    net_worn = dict(network, discs=[dict(d, location='AstraYao', ownerState='worn') for d in network['discs']])
+    ocr_worn = dict(ocr, discs=[dict(d, location='Astra', ownerState='worn') for d in samples])
+    def six(_url, _profile, pool, current):
+        ids = [d['id'] for d in sorted(pool, key=lambda d:d['slot'])]
+        assert len(ids) == 6 and set(ids) == current and all(d['equippedBy'] == 'Astra' for d in pool)
+        return [dict(ids=ids, outputScore=100, critRate=100)]
+    previews = [plan(stock, party, {}, names, six, wiki=wiki) for stock in (net_worn, ocr_worn)]
+    assert all(not preview['issues'] for preview in previews)
+    same_owner, _ = confirmation(1, profile, party, previews[0], net_worn, preview_only=True)
+    verify_selection(same_owner, party, previews[1], ocr_worn)
+    assert all(d['location'] == 'AstraYao' for d in net_worn['discs'])
     for changed, difference in [(dict(samples[0], location='Other', ownerState='worn'), ('装备者', '背包', '朱鸢')),
                     (dict(samples[0], observedValues=dict(samples[0]['observedValues'], main={'hp':549.0})), ('主属性', '生命值 550', '生命值 549')),
                     (dict(samples[0], setKey='OtherSet'), ('套装', zh, 'OtherSet'))]:

@@ -6,7 +6,7 @@ from one_dragon_qt.widgets.base_interface import BaseInterface
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QWidget,
     QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView)
 from .store import read,save,config,import_inventory,digest,equipment_names,equipment_keys,snapshot_path,preview_path
-from .store import is_pinned, toggle_pin
+from .store import is_pinned, known_agents, toggle_pin
 from .service import preview
 from .subscriptions import sync, current_conflicts, can_merge, effective, field_tabs, resolve_conflict, save_config, save_config_draft, save_field_override
 from qfluentwidgets import (PushButton, PrimaryPushButton, DropDownPushButton, RoundMenu,
@@ -392,6 +392,7 @@ class ManagerInterface(BaseInterface):
         wiki = read(wiki_path(), {})
         from .roster import preview_bindings
         self.preview_bindings = preview_bindings(self.cfg['profiles'], wiki)
+        self.refresh_roster(wiki, inventory)
         changed_inputs = []
         if self.report:
             if self.report.get('managerVersion') != PLUGIN_VERSION:
@@ -404,6 +405,9 @@ class ManagerInterface(BaseInterface):
                 changed_inputs.append('库存')
             if self.report.get('previewBindings', {}) != self.preview_bindings:
                 changed_inputs.append('配队角色对应关系')
+            selected = {a['key'] for a in self.agents if a['selected']}
+            if selected != {a['key'] for a in self.report.get('roster', [])}:
+                changed_inputs.append('角色留盘名单')
         self.preview_stale = bool(changed_inputs)
         self.editor_account = self.root
         self.editor_base, text = self.editor_drafts.get(self.root, (deepcopy(self.cfg), pretty(self.cfg)))
@@ -421,7 +425,6 @@ class ManagerInterface(BaseInterface):
         self.coverage = {tuple(group[k] for k in SELECTORS):group for group in self.report.get('reserveCoverage',[])}
         conflicts=self.conflicts=current_conflicts(self.rules,self.cfg['overrides']); fields=self.rules.get('fields',{})
         self.keys=sorted((set(fields)|set(self.cfg['overrides']))-{k for k in fields if k.endswith('/known')},key=lambda k:(k not in conflicts,k))
-        self.refresh_roster(wiki, inventory)
         self.set_names = equipment_names(wiki) | self.cfg.get('aliases', {})
         self.inventory_filter.present(self.rows, self.set_names, self.root, self.fill)
         self.reserve_presets.present(self.cfg, self.set_names, fields, self.root)
@@ -468,8 +471,7 @@ class ManagerInterface(BaseInterface):
     def refresh_roster(self, wiki, inventory):
         self.owned_toggle.setChecked(self.cfg['includeOwned'])
         fields = self.rules.get('fields', {})
-        self.agents = roster_catalog(inventory, fields, self.cfg, wiki,
-                                     read(self.root/'owned-agents.json', []))
+        self.agents = roster_catalog(inventory, fields, self.cfg, wiki, known_agents(self.root))
         def display(agent):
             selected = '已选' if agent['future'] else ('自动' if agent['selected'] else '不留盘')
             return (agent['label'], '已拥有' if agent['owned'] else '未扫描到', selected,
@@ -1205,7 +1207,7 @@ class ManagerInterface(BaseInterface):
         report = self.report
         if probe:
             wiki = read(wiki_path(), {})
-            row, report = probe_trace(self.probe_record,self.cfg,self.rules,wiki,read(self.root/'owned-agents.json', []))
+            row, report = probe_trace(self.probe_record,self.cfg,self.rules,wiki,known_agents(self.root))
             self.detail_observation = digest(self.probe_record)
         self.detail_selection = (self.root, row, probe)
         self.detail.present(row, report, set_name=self.set_names.get(row['set'],row['set']), probe=probe, pinned=is_pinned(row, self.cfg['pins']),

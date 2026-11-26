@@ -6,7 +6,7 @@ from .drive_disc_manager_const import PLUGIN_VERSION
 from .store import digest, equipment_keys, fingerprint, inventory, is_pinned, pin_keys, roll_base
 from .subscriptions import effective, current_conflicts, SLOT_MAIN
 from .reserve_policy import apply_reserves, assess_growth, normalized_rule
-from .roster import compile_roster, explain, parse_main, preview_bindings, roster_catalog
+from .roster import compile_roster, explain, parse_main, preview_bindings, roster_catalog, scanner_agent_key
 from .stat_reading import checked_values
 
 
@@ -61,6 +61,13 @@ def assess_rules(row, cfg, fields, reverse, by_set, unresolved, excluded):
 
 def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_owned=(),history=None,previous_preview=None):
     ds, _ = inventory(z, preview_only=True)
+    reader_owners = {}
+    if z.get('networkPreview') is True and wiki:
+        for raw in {d['location'] for d in ds if d.get('location')}:
+            key = scanner_agent_key(wiki, raw)
+            if key and key != raw:
+                reader_owners[raw] = key
+        ds = [dict(d, location=reader_owners[d['location']]) if d.get('location') in reader_owners else d for d in ds]
     from .marks import owns_spare, scanned_identities
     history = history or {}
     keys, counts = scanned_identities(ds, names)
@@ -98,7 +105,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         groups[group].append((dict(p, agentKey=owner), current))
     pool = [disc for disc in inputs.values() if disc and not disc['discarded']]
     inventory_hash = digest(z)
-    allocation_key = digest([PLUGIN_VERSION, inventory_hash, enabled, bindings, optimizer_names, cfg['optimizer_url']]) if enabled else None
+    allocation_key = digest([PLUGIN_VERSION, inventory_hash, enabled, bindings, optimizer_names, reader_owners, cfg['optimizer_url']]) if enabled else None
     saved = reusable_assignments(previous_preview, allocation_key, groups, pool)
     for (_,group_name), members in groups.items():
         try:
@@ -210,7 +217,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     evidence = rule_book(rows, rules, cfg['overrides'], current_conflicts(rules, cfg['overrides']))
     teams = {p['name']:dict(agent=(p.get('request') or {}).get('characterName') or p.get('agentKey'),
                             group=p.get('simultaneous') or '') for p in enabled}
-    return dict(managerVersion=PLUGIN_VERSION, networkPreview=z.get('networkPreview') is True,
+    return dict(managerVersion=PLUGIN_VERSION, networkPreview=z.get('networkPreview') is True, readerOwners=reader_owners,
                 inventory=inventory_hash, rules=rules.get('version'), configuration=digest(cfg), assignments=assignments,
                 previewBindings=bindings, allocationKey=allocation_key, reusedAssignments=saved is not None,
                 traceRules=evidence, traceTeams=teams,

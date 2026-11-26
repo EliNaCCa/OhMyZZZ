@@ -32,6 +32,7 @@ def target_loadout(cfg, report, snapshot, name, *, preview_only=False, names=Non
         names = equipment_names({}) | cfg.get('aliases', {})
     keys, counts = scanned_identities(discs, names)
     by_fp = {fingerprint(d):d for d in discs}
+    reader_owners = report.get('readerOwners', {}) if snapshot.get('networkPreview') is True else {}
     agents, claimed, targets = set(), set(), []
     for profile in lineup:
         agent = profile.get('agentKey')
@@ -56,9 +57,10 @@ def target_loadout(cfg, report, snapshot, name, *, preview_only=False, names=Non
             if not observed:
                 raise ValueError(f'{agent} 的 {slot} 号盘缺少实测词条数值，请用 OhMyZZZ 重新扫描')
             claimed.add(fp)
+            location = disc.get('location', '')
             targets.append(dict(profile=profile['name'],agent=agent,slot=slot,fp=fp,
                                 selectionFp=fingerprint(dict(disc, setKey=keys[disc['setKey']])),
-                                location=disc.get('location',''),ownerState=disc.get('ownerState','legacy'),
+                                location=reader_owners.get(location, location),ownerState=disc.get('ownerState','legacy'),
                                 set=disc['setKey'],main=disc['mainStatKey'],level=disc['level'],rarity=disc['rarity'],
                                 observedValues=observed))
     return targets

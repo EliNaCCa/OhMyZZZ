@@ -3,7 +3,7 @@ import json
 import socket
 from contextlib import closing
 
-from .store import inventory, save
+from .store import inventory, network_agents, observed_agents, save
 
 
 def reader_process(conn):
@@ -86,5 +86,7 @@ def capture(root, check_account):
     if old.get('reader') == identity and old.get('account') != root.name:
         raise ValueError('切换账号后，请重新打开读取器并登录当前游戏账号')
     save(binding, dict(reader=identity, account=root.name))
+    agents = network_agents(root) | observed_agents(snapshot)
+    save(root/'network-owned-agents.json', sorted(agents))
     save(root/'network-inventory.json', snapshot)
     return snapshot
