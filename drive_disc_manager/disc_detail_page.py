@@ -121,6 +121,8 @@ class DiscDetails(QWidget):
         self.pin.setToolTip('按实物属性保护；完全相同的盘会一同保留。')
         from .disc_owner import owner_label
         owner = '　穿戴 · '+owner_label(row) if row.get('ownerState') or row.get('location') else ''
+        if row.get('lastScanOwner'):
+            owner = '　上次扫描穿戴者 · ' + row.get('lastScanOwnerLabel', row['lastScanOwner'])
         prefix = '换算值　' if report.get('networkPreview') and row.get('observedValues') else ''
         self.stats.setText(prefix+display_values(row.get('observedValues'))+owner)
         # Keep recommendation evidence distinct from the final quota decision.

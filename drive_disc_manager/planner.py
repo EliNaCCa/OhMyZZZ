@@ -60,7 +60,7 @@ def assess_rules(row, cfg, fields, reverse, by_set, unresolved, excluded):
         row['review'].append('缺少明确规则')
 
 
-def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_owned=(),history=None,previous_preview=None):
+def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_owned=(),history=None,previous_preview=None,comparison=None):
     ds, _ = inventory(z, preview_only=True)
     reader_owners = {}
     if z.get('networkPreview') is True and wiki:
@@ -84,6 +84,9 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     catalog = roster_catalog(z, fields, cfg, wiki or {}, known_owned)
     by_set, unresolved, excluded = compile_roster(catalog, fields, cfg['overrides'], reverse)
     stats_only = z.get('networkPreview') is True and z.get('source') == 'zzz-drive-exporter'
+    last_worn = comparison['lastWorn'] if stats_only and comparison else {}
+    last_owner_labels = {agent.get('code') or (agent.get('EN') or '').replace(' ', ''): agent['CHS']
+                         for agent in (wiki or {}).get('character', {}).values() if last_worn and agent.get('CHS')}
     by_piece = {}
     inputs = {}
     for d in ds:
@@ -113,10 +116,14 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         # Unnamed (mutually exclusive) profiles cannot collide with a named group.
         group = ('group',p['simultaneous']) if p.get('simultaneous') else ('solo',name)
         current = {piece for piece, d in by_piece.items() if owner and d.get('location') == owner}
+        if stats_only:
+            current = {piece for piece, actor in last_worn.items() if owner and actor == owner}
+            if len(current) != 6 or {str(by_piece[piece]['slotKey']) for piece in current} != set('123456'):
+                current = set()
         groups[group].append((dict(p, agentKey=owner), current))
     pool = [disc for disc in inputs.values() if disc and not disc['discarded']]
     inventory_hash = digest(z)
-    allocation_key = digest([PLUGIN_VERSION, 'full-crit-shortlist-v2', inventory_hash, enabled, bindings, optimizer_names, reader_owners, cfg['optimizer_url']]) if enabled else None
+    allocation_key = digest([PLUGIN_VERSION, 'full-crit-shortlist-v2', inventory_hash, enabled, bindings, optimizer_names, reader_owners, last_worn, cfg['optimizer_url']]) if enabled else None
     saved = reusable_assignments(previous_preview, allocation_key, groups, pool)
     for (_,group_name), members in groups.items():
         try:
@@ -163,13 +170,16 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         row['pinKeys'] = pin_keys(d, names, reverse, fp)
         if stats_only:
             row['buildId'] = piece
+            if piece in last_worn:
+                row['lastScanOwner'] = last_worn[piece]
+                row['lastScanOwnerLabel'] = last_owner_labels.get(last_worn[piece], last_worn[piece])
         if is_pinned(row, pins):
             why.append('手动保护')
         row['marked'] = d.get('trash') is True
         if 'ownerState' in d:
             row['ownerState'] = d['ownerState']
-            if d['ownerState'] == 'unknown':
-                row['review'].append('穿戴者待核对' if stats_only else '穿戴者头像待复核')
+            if d['ownerState'] == 'unknown' and not stats_only:
+                row['review'].append('穿戴者头像待复核')
         row['observedValues'] = values
         row['scannedLock'] = d.get('lockState', 'unknown')
         row['managedSpareLock'] = managed
@@ -188,14 +198,14 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
                 row['review'].append('配装器缺少主属性数值，请重新扫描')
             else:
                 row['review'].append('主副词条无法用于配装搜索')
-        if d.get('markState')=='unknown':
+        if not stats_only and d.get('markState')=='unknown':
             row['review'].append('现场弃置状态待核')
-        if d.get('lockState')=='unknown':
+        if not stats_only and d.get('lockState')=='unknown':
             row['review'].append('现场锁定状态待核')
         row['ambiguous'] = counts[fp] > 1
         if row['ambiguous'] and 'scanCell' in d:
             row['explanation'].append(f'本轮有 {counts[fp]} 张同属性实物盘，整组跳过换装和标记')
-        if row['ambiguous'] or d.get('setKey')=='Unknown' or d['rarity']!='S' or not 3<=len(row['rolls'])<=4:
+        if (row['ambiguous'] and not stats_only) or d.get('setKey')=='Unknown' or d['rarity']!='S' or not 3<=len(row['rolls'])<=4:
             row['review'].append('身份、品级或副词条待核')
         unknown = [stat for stat in row['rolls'] if stat not in STATS or STATS[stat][1] is None]
         if unknown:
@@ -225,6 +235,9 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         if row['marked']:
             continue
         row['decision'] = '保留' if row['reasons'] else ('待复核' if row['review'] else '弃置候选')
+        if stats_only and row['decision'] == '弃置候选':
+            row['decision'] = '待复核'
+            row['explanation'].append('超出留盘名额，穿戴和标记待游戏内核对')
         if row['managedSpareLock'] and row['decision'] == '弃置候选':
             row['explanation'].append('新保留盘锁定后，解除本插件的旧备用锁')
     from .disc_trace import rule_book

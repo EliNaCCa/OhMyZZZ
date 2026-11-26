@@ -79,6 +79,7 @@ class ManagerInterface(BaseInterface):
         self.table.setWordWrap(False)
         self.warehouse_summary = StrongBodyLabel()
         box.addWidget(self.warehouse_summary)
+        self.scan_comparison = BodyLabel(); self.scan_comparison.hide(); box.addWidget(self.scan_comparison)
         from .inventory_filter import InventoryFilter
         self.inventory_filter = InventoryFilter(self.table)
         box.addWidget(self.inventory_filter); box.addWidget(self.table, 1)
@@ -439,6 +440,11 @@ class ManagerInterface(BaseInterface):
                              for row in wiki.get('character', {}).values() if row.get('CHS')}
         changed_inputs = []
         if self.report:
+            if cn_export:
+                scan = self.root / 'inventory.json'
+                stamp = scan.stat().st_mtime_ns if scan.is_file() else None
+                if stamp != self.report.get('gameStamp'):
+                    changed_inputs.append('游戏扫描记录')
             if self.report.get('managerVersion') != PLUGIN_VERSION:
                 changed_inputs.append('插件版本')
             if self.report.get('configuration') != self.config_hash:
@@ -483,6 +489,12 @@ class ManagerInterface(BaseInterface):
         totals.extend(f'{name} {counts[name]}' for name in ('保留','弃置候选','已弃置','待复核') if counts.get(name))
         self.warehouse_summary.setText('    ·    '.join(totals))
         self.warehouse_summary.setVisible(bool(self.rows))
+        comparison = self.report.get('gameComparison') if cn_export and not self.preview_stale else None
+        self.scan_comparison.setVisible(bool(comparison))
+        if comparison:
+            day = datetime.fromtimestamp(comparison['gameStamp'] / 1e9).strftime('%m-%d %H:%M')
+            self.scan_comparison.setText(f"对照 {day} 保存的扫描 · 当时 {comparison['gameTotal']} 张，套装和词条对上 {comparison['matched']} 张")
+            self.scan_comparison.setToolTip(f"按套装、号位、等级、品级和词条档数比对。逐张核实主副词条数值 {comparison['measured']} 张。")
         summary = ''
         if self.preview_stale:
             summary = '、'.join(changed_inputs)+'已更新，请重新计算预览'
@@ -596,6 +608,9 @@ class ManagerInterface(BaseInterface):
         lineup = fielded_profiles(self.cfg, selected['name']) if selected and selected.get('enabled', True) else []
         unbound = [p['name'] for p in lineup if not p.get('agentKey') or p['agentKey'] != self.preview_bindings.get(p['name'])]
         stats_only = self.cfg['inventorySource'] == 'cn_export'
+        self.panel_stats.horizontalHeaderItem(3).setText('上次扫描' if stats_only else '当前装备')
+        self.panel_stats.horizontalHeaderItem(5).setText('相比上次' if stats_only else '相比当前')
+        self.slots.horizontalHeaderItem(4).setText('上次扫描穿戴者' if stats_only else '当前装备者')
         self.apply_button.setEnabled(bool(ready or reviewing) and not stats_only and not unbound and not self.equip_busy and self.preview_job is None)
         binding_note = '请同步角色目标 · ' + '、'.join(unbound) if unbound else ''
         hint = '查看要换的盘' if ready else '先计算配装'
@@ -622,7 +637,8 @@ class ManagerInterface(BaseInterface):
         pieces = {r.get('buildId', r['fp']): r for r in self.rows}
         rows = [pieces[piece] for piece in result['ids'] if piece in pieces]
         from .reserve_presets import STAT_NAMES
-        self.fill(self.slots,[(r['slot'],self.set_names.get(r['set'],r['set']),STAT_NAMES.get(r['main'],r['main']),r['level'],owner_label(r),
+        self.fill(self.slots,[(r['slot'],self.set_names.get(r['set'],r['set']),STAT_NAMES.get(r['main'],r['main']),r['level'],
+                               r.get('lastScanOwnerLabel', '—') if stats_only else owner_label(r),
                                '、'.join(r['reasons'])) for r in rows])
         self.slots.resizeColumnsToContents()
         details = [profile['name']]
@@ -638,7 +654,7 @@ class ManagerInterface(BaseInterface):
             self.panel_note.hide()
             details.append(result.get('panelMode','职业面板'))
             if not result.get('currentPanel'):
-                details.append('当前穿戴六盘未核实')
+                details.append('上次扫描的六张穿戴盘未对齐' if stats_only else '当前穿戴六盘未核实')
         if 'outputScore' in result:
             details += [f"所选输出 {result.get('rawOutput', result['outputScore'])}", f"候选最高 {result.get('rawBestOutput', result['bestOutput'])}"]
             if profile.get('simultaneous') and 'rawAvailableBestOutput' in result:
@@ -647,9 +663,10 @@ class ManagerInterface(BaseInterface):
             worn = result.get('wornOutput')
             if worn is not None and number(worn) > 0:
                 change = (number(result.get('rawOutput',result['outputScore'])) / number(worn) - 1) * 100
-                details.append(f'当前六盘输出 {worn} · 换装后 {float(change):+.6g}%')
+                baseline = '上次扫描配装' if stats_only else '当前六盘'
+                details.append(f'{baseline}输出 {worn} · 方案变化 {float(change):+.6g}%')
             else:
-                details.append('当前六盘输出待核')
+                details.append('上次扫描的六张穿戴盘未对齐' if stats_only else '当前六盘输出待核')
             if result.get('metric'):
                 details.append(self.crit_summary(result))
                 details.append(f"实战{result['metric']} {result['metricValue']:g} · 暴伤 {result['critDamage']:g}% · 增伤 {result['damageBonus']:g}%")

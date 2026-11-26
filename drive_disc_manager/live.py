@@ -25,6 +25,8 @@ class Marker:
     batch = None
 
     def __init__(self, app, scanner, report):
+        if report.get('networkPreview'):
+            raise ValueError('请先用游戏画面核对本轮标记清单')
         self.app = app
         self.scanner = scanner
         self.grid = scanner.drive_disk_scanner

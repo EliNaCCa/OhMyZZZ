@@ -181,7 +181,8 @@ def network_agents(root):
 
 
 def known_agents(root):
-    return set(read(root/'owned-agents.json', [])) | network_agents(root)
+    declared = read(root/'challenge-preferences.json', {}).get('agents', {})
+    return set(read(root/'owned-agents.json', [])) | network_agents(root) | set(declared)
 
 
 def import_inventory(root, path, *, readings=None):

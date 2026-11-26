@@ -88,7 +88,7 @@ def apply_reserves(rows, cfg):
             if not row['reasons'] and not row['review']:
                 eligible.append(row)
                 if keep_lock:
-                    fixed.add(row['fp'])
+                    fixed.add(row.get('buildId', row['fp']))
             elif keep_lock and not row['reasons']:
                 row['reasons'].append('插件备用锁')
         by_purpose = []
@@ -106,7 +106,7 @@ def apply_reserves(rows, cfg):
                 # Use the same tie break for translated and original set names.
                 stable_key = (row.get('pinKeys') or [row['fp']])[0]
                 base_rank = (rolls, growth, hits, bool(row.get('managedSpareLock')), stable_key)
-                fixed_first = row['fp'] in fixed
+                fixed_first = row.get('buildId', row['fp']) in fixed
                 if purpose == '通用' and stats is DEFAULT_STATS:
                     best_role = max(((score, row['development']['upgrades'] * row['roleHits'][agent])
                                      for agent, score in row.get('roleRolls', {}).items()), default=(rolls, growth))
@@ -116,13 +116,13 @@ def apply_reserves(rows, cfg):
             picks = sorted(matching, key=rank, reverse=True)[:count]
             for row in picks:
                 row['reasons'].append('备用 · ' + purpose)
-                selected[row['fp']] += 1
+                selected[row.get('buildId', row['fp'])] += 1
             by_purpose.append(dict(purpose=purpose, count=count, covered=len(picks)))
         fixed_extra = fixed.difference(selected)
         for row in eligible:
-            if row['fp'] in fixed_extra:
+            if row.get('buildId', row['fp']) in fixed_extra:
                 row['reasons'].append('插件备用锁')
-            elif row['fp'] not in selected:
+            elif row.get('buildId', row['fp']) not in selected:
                 row['explanation'].append('超出同类备用名额')
         report.append(dict(**criteria, trimRecommended=trim, eligible=len(eligible),
                            kept=len(selected) + len(fixed_extra), fixedExtra=len(fixed_extra), purposes=by_purpose,
@@ -147,7 +147,7 @@ def quota_impact(report, scope, cfg, reverse):
     coverage = apply_reserves(prepared, dict(cfg,reserve_rules=normalized))
     before = sum(row['decision'] == '保留' for row in rows)
     after = sum(bool(row['reasons']) for row in prepared)
-    new_candidates = sum(old['decision'] != '弃置候选' and not new['reasons'] and not new['review']
+    new_candidates = sum('buildId' not in old and old['decision'] != '弃置候选' and not new['reasons'] and not new['review']
                          for old,new in zip(rows, prepared, strict=True))
     by_purpose = defaultdict(int)
     for group in coverage:

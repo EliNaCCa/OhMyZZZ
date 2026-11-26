@@ -66,6 +66,20 @@ def smoke(home, sample, temp):
     assert '预览' in ManagerApp.manage_inventory(manager)
     assert read(snap_path) == snapshot and not (account / 'inventory.json').exists()
     assert read(account / 'network-inventory.json') == legacy
+    # The OCR sample and the CN-format input are separate files in this temporary account.
+    from drive_disc_manager.service import preview
+    scanned = dict(format='ZOD', version=1, dbVersion=2, source='Zenless Optimizer',
+                   discs=[dict(d, id=f'ocr-{i}') for i, d in enumerate(original)], characters=[], wengines=[],
+                   audit=dict(game_total=5, exported=5, delta=0))
+    save(account / 'inventory.json', scanned)
+    widget.reload()
+    assert widget.preview_stale
+    assert '预览' in ManagerApp.manage_inventory(manager)
+    widget.reload()
+    assert not widget.preview_stale and '套装和词条对上 5 张' in widget.scan_comparison.text()
+    row = widget.rows[0]
+    assert row['ownerState'] == 'unknown' and row['lastScanOwner'] == original[0]['location'] == 'Anton'
+    assert widget.report['gameComparison']['measured'] == 5
     from drive_disc_manager.cn_export import normalize
     from drive_disc_manager.planner import plan
     from drive_disc_manager.store import equipment_names
@@ -76,15 +90,28 @@ def smoke(home, sample, temp):
         seen.extend(d['id'] for d in pool)
         return []  # A pair of 1-slot pieces cannot form a six-slot build.
     fixture = normalize(dict(exported, discs=pair))
+    from drive_disc_manager.inventory_comparison import compare_game_scan
+    duplicate = compare_game_scan(fixture, scanned, equipment_names({}))
+    assert duplicate['matched'] == 1 and not duplicate['lastWorn']
     cfg = dict(config(account), profiles=[dict(name='样盘', request=dict(characterName='安东'))])
     plan(fixture, cfg, {}, equipment_names({}), observe_pool)
     assert seen == ['1001', '9999']
+    from drive_disc_manager.reserve_policy import quota_impact
+    unlocked = normalize(dict(exported, discs=[dict(raw, lock=False) for raw in pair]))
+    options = dict(config(account), reserve=1, profiles=[], protect15=False, trimRecommended=True)
+    rules = dict(fields={'matrix/TheSkyAblaze/4':['crit_']})
+    keep = plan(unlocked, options, rules, equipment_names({}))
+    assert keep['counts'] == {'保留': 1, '待复核': 1}, keep['counts']
+    copies = quota_impact(keep, {}, dict(options, reserve=2), {})
+    assert copies['spares'] == copies['after'] == 2 and copies['newCandidates'] == 0
     # Replay one simulated enhancement on one test ID. The real game was not changed.
     changed = deepcopy(exported)
     changed['discs'][0]['level'] = 12
     changed['discs'][0]['substats'][2]['upgrades'] -= 1
     save(file, changed)
     assert refresh(account, lambda: None) == '属性变化 1 张'
+    report = preview(account, refresh=False)
+    assert report['gameComparison']['matched'] == 4 and 'lastScanOwner' not in report['discs'][0]
     save(file, exported)
     assert refresh(account, lambda: None) == '属性变化 1 张'
     assert refresh(account, lambda: None) == '驱动盘没有变化'
