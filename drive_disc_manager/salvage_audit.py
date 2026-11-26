@@ -9,6 +9,7 @@ from .store import digest, fingerprint, inventory, read, roll_base, save
 
 
 GRADE_FILTERS = {'B': {'B'}, 'A及以下': {'A', 'B'}}
+GRADE_SOURCES = {'内置低品级范围', '低品级可能入选', '按品级可能入选'}
 
 
 def needs_review(receipt):
@@ -35,9 +36,12 @@ def uid_item(disc):
                 level=disc['level'], rarity=disc['rarity'], rolls={s['key']:s['upgrades'] for s in disc['substats']})
 
 
-def prepare_batch(z, report, observed, grade, *, include_marked=True, before_marking=False):
+def prepare_batch(z, report, observed, grade, *, include_marked=True, before_marking=False, existing_only=False):
     discs, counts = inventory(z)
-    if report['inventory'] != digest(z) or grade not in GRADE_FILTERS:
+    # A read-only preview records even a player's explicit S-grade selection.
+    # Marking retains its original narrower selection policy.
+    ranks = {'S', 'A', 'B'} if existing_only and grade == 'S及以下' else GRADE_FILTERS.get(grade)
+    if report['inventory'] != digest(z) or not ranks:
         raise ValueError('拆解品级或库存已变化，需重新预览')
     entries = []
     unresolved_grades = 0
@@ -53,16 +57,19 @@ def prepare_batch(z, report, observed, grade, *, include_marked=True, before_mar
     for disc in discs:
         fp = fingerprint(disc)
         mark = observed.get(fp, disc.get('markState')) if counts[fp]==1 else disc.get('markState')
+        if existing_only and ((disc.get('lockState') == 'locked' and disc.get('lock') is True)
+                              or (disc.get('ownerState') == 'worn' and disc.get('location'))):
+            continue
         if include_marked and mark not in ('marked','unmarked'):
-            if not before_marking:
+            if not (before_marking or existing_only):
                 raise ValueError('存在未读清的弃置标记，已停在可逆标记阶段')
             unread_marks += 1
         rank = disc.get('observedGrade')
         if include_marked and mark == 'marked':
             source = '游戏原有弃置' if disc.get('markState') == 'marked' else '本轮观察到弃置'
-        elif rank in GRADE_FILTERS[grade]:
+        elif rank in ranks:
             # Scanner lock/location fields cannot establish the native selection.
-            source = '低品级可能入选'
+            source = '按品级可能入选' if grade == 'S及以下' else '低品级可能入选'
         else:
             unresolved_grades += int(rank not in ('S','A','B'))
             if fp not in planned or counts[fp] != 1:
@@ -82,6 +89,8 @@ def prepare_batch(z, report, observed, grade, *, include_marked=True, before_mar
                 unresolvedGrades=unresolved_grades, status='not_submitted')
     if before_marking:
         receipt.update(markCandidates=candidates, unreadMarks=unread_marks)
+    if existing_only:
+        receipt.update(existingOnly=True, unreadMarks=unread_marks)
     if cn:
         receipt.update(beforeUids={d['id']:uid_item(d) for d in discs}, exportFile=z['exportFile'], exportWrittenNs=z['exportWrittenNs'])
     return receipt
@@ -108,7 +117,7 @@ def native_run(home, account):
     state = data.get('run_status')
     if type(stamp) not in (int, float) or not math.isfinite(stamp) or stamp <= 0 or type(state) is not int:
         return None
-    return dict(account=account, updated=stamp, status=state)
+    return dict(account=account, updated=stamp, status=state, day=str(data.get('dt', '')))
 
 
 def observe_native(root, account, native, scan_started):
@@ -121,6 +130,8 @@ def observe_native(root, account, native, scan_started):
     last = read(root/'dismantle-result.json', {})
     if (before.get('account') != account or before.get('status') != 'not_submitted'
             or before['batch'] == last.get('batch') or needs_review(last)):
+        return
+    if before.get('nativeDay') and before['nativeDay'] != native.get('day'):
         return
     baseline = before.get('nativeAtPreview') or {}
     if native['updated'] <= max(before['started'], baseline.get('updated', 0)):
@@ -139,7 +150,7 @@ def observe_native(root, account, native, scan_started):
             else:
                 continue
             before['entries'].append(dict(candidates[fp], source=source))
-    if not (before.get('entries') or before.get('unresolvedGrades') or before.get('unreadMarks')):
+    if not (before.get('entries') or before.get('unresolvedGrades') or before.get('unreadMarks') or before.get('existingOnly')):
         return
     record(root, dict(before, status='pending', independentNative=native))
 
@@ -261,14 +272,16 @@ def reconcile_uids(root, receipt, fresh):
             state = '已不在库存'
         elif not game:
             state = '仍在仓库'
-        elif disc.get('markState') == 'unmarked' and entry['source'] not in ('低品级可能入选', '内置低品级范围'):
+        elif disc.get('markState') == 'unmarked' and entry['source'] not in GRADE_SOURCES:
             state = '在库且未标弃置'
         else:
             state = '仍在仓库'
         entry['after'] = state
         states[state] += 1
         issues |= state == '仍在仓库' or entry['source'] == '弃置标记待核'
-    resolved = bool(batch) and not issues and (native['status'] == 1 or batch <= gone)
+    all_gone = bool(batch) and batch <= gone
+    checked_run = native['status'] == 1 and (bool(batch) or receipt.get('existingOnly') is True)
+    resolved = not issues and (checked_run or all_gone)
     if not game and states['仍在仓库']:
         receipt['firstUidObservation'] = observation
     else:
@@ -313,7 +326,7 @@ def reconcile(root, fresh):
         else:
             mark = by_fp[fp][0].get('markState')
             state = {'marked':'仍标弃置','unmarked':'在库且未标弃置'}.get(mark,'标记待核')
-            if state == '在库且未标弃置' and entry['source'] in ('内置低品级范围', '低品级可能入选'):
+            if state == '在库且未标弃置' and entry['source'] in GRADE_SOURCES:
                 state = '仍在低品级范围'
         entry['after'] = state
         states[state] += 1

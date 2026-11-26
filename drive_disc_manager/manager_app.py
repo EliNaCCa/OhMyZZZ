@@ -157,6 +157,10 @@ class ManagerApp(ZApplication):
                 snapshot = read(self.root/'inventory.json')
                 reconcile(self.root,snapshot)
                 reconcile_scan(self.root, snapshot, names)
+                # The host advances to the next task even if planning or marking fails.
+                if not interactive:
+                    from .dismantle import note_existing_marks
+                    note_existing_marks(self, snapshot, scan_started)
             from .store import snapshot_path
             if scanner is None and not snapshot_path(self.root, cfg).is_file():
                 return self.round_fail('请先在仓库页读取库存')

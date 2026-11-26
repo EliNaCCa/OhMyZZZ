@@ -140,8 +140,12 @@ def smoke(home, tmp):
     fp = fingerprint(disc)
     save(fresh/'config.json', dict(config(fresh), auto_sync=False, applyMarkers=True, fieldProfile='出场'))
     native = Obj(dismantle_level='A及以下', dismantle_abandon=True)
-    group = Obj(app_list=[Obj(app_id='drive_disc_dismantle', enabled=True)])
+    group = Obj(app_list=[Obj(app_id='drive_disc_manager', enabled=True), Obj(app_id='drive_disc_dismantle', enabled=True)])
     ctx.app_group_manager = Obj(get_one_dragon_group_config=lambda account:group)
+    run.current_application = Obj(app_id='one_dragon')
+    run.current_app_id, run.current_group_id = 'drive_disc_manager', 'one_dragon'
+    record = Obj(run_status_under_now=0, STATUS_SUCCESS=1, get_current_dt=lambda:'20261126')
+    run.get_run_record = lambda **_:record
     run.get_config = lambda app_id,*_:native if app_id == 'drive_disc_dismantle' else scanner.config
     def stop_at_equip(*args, **kwargs):
         receipt = read(fresh/'dismantle-preview.json')
@@ -157,6 +161,44 @@ def smoke(home, tmp):
           patch('drive_disc_manager.equip_ui.EquipUI'), patch('drive_disc_manager.loadout.apply_loadout', stop_at_equip)):
         marker.return_value.run.side_effect = observed_mark
         assert ManagerApp.manage_inventory(manager) == ('failed','模拟换装中断')
+
+    # Ordinary daily run with markers off. The host's already marked disc is the only candidate.
+    from drive_disc_manager.salvage_audit import observe_native, reconcile
+    snapshot['discs'][0].update(markState='marked', trash=True, observedGrade='S', ownerState='bag')
+    save(fresh/'config.json', dict(config(fresh), auto_sync=False, applyMarkers=False, fieldProfile=''))
+    with (patch('drive_disc_manager.scan_marks.capture_marks', lambda *_:nullcontext()),
+          patch('drive_disc_manager.live.Marker') as marker):
+        assert '预览' in ManagerApp.manage_inventory(manager)
+        marker.assert_not_called()
+    receipt = read(fresh/'dismantle-preview.json')
+    assert receipt.get('existingOnly') and receipt['nativeDay'] == '20261126'
+    assert [(e['fp'], e['source']) for e in receipt['entries']] == [(fp, '游戏原有弃置')]
+    assert not receipt.get('markCandidates')
+    stamp = receipt['started'] + 1
+    native_result = dict(account=2, status=1, updated=stamp, day='20261126')
+    observe_native(fresh, 2, dict(native_result, day='20261127'), stamp+1)
+    assert not (fresh/'dismantle-result.json').exists()
+    observe_native(fresh, 2, native_result, stamp+1)
+    reconcile(fresh, dict(snapshot, discs=[], audit=dict(game_total=0, exported=0, delta=0)))
+    result = read(fresh/'dismantle-result.json')
+    assert result['status'] == 'reconciled' and result['observations'] == {'已不在库存':1}
+    from drive_disc_manager.task_order import following_native
+    record.run_status_under_now = 1
+    assert following_native(ctx, 2, 'one_dragon') is None
+    record.run_status_under_now = 0
+    group.app_list.reverse()
+    assert following_native(ctx, 2, 'one_dragon') is None
+    # Read the same disc as a manually locked piece, with the native all-grade filter.
+    from drive_disc_manager.salvage_audit import prepare_batch
+    scan = dict(snapshot, discs=[dict(disc, lock=True, lockState='locked', markState='unmarked', trash=False)])
+    intent = dict(inventory=digest(scan), configuration='fixture')
+    empty = prepare_batch(scan, intent, {}, 'S及以下', existing_only=True)
+    assert not empty['entries'] and not empty['unreadMarks']
+    save(fresh/'dismantle-preview.json', dict(empty, started=stamp+2, account=2, nativeDay='20261126'))
+    observe_native(fresh, 2, dict(native_result, updated=stamp+3), stamp+4)
+    reconcile(fresh, dict(scan, discs=[], audit=dict(game_total=0, exported=0, delta=0)))
+    assert read(fresh/'dismantle-result.json')['stockChanges'][0]['after'] == '清单外少盘'
+    assert read(fresh/'dismantle-result.json')['status'] == 'needs_review'
     widget.close()
 
 
@@ -165,4 +207,4 @@ if __name__ == '__main__':
     parser.add_argument('--home', type=Path, required=True)
     with TemporaryDirectory() as tmp:
         smoke(parser.parse_args().home.resolve(), Path(tmp))
-    print('PASS embedded read-only scan: one fixture disc, saved preview with daily equipment and markers enabled')
+    print('PASS one-disc scan, existing mark audit and off-list loss in a temporary account')
