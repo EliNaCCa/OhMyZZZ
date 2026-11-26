@@ -144,30 +144,25 @@ def number(v):
     return n
 
 
-NEAR_CRIT_GAP = Decimal('2.4')
+OPTIMIZER_PANEL_MARGIN = Decimal('2.4')
 
 
 def effective_crit_rate(candidate):
     return min(Decimal(100), number(candidate.get('rawCritRate', candidate['critRate'])))
 
 
-def prefer(candidates, crit_gap, current):
+def prefer(candidates, current):
     candidates = tuple(candidates)
-    minimum = 100 - number(crit_gap)
-    if not 0 <= minimum <= 100:
-        raise ValueError('允许少的暴击率应为 0 到 100 个百分点')
     def key(c):
         return number(c.get('rawOutput', c['outputScore'])), sum(i in current for i in c['ids']), tuple(c['ids'])
     best = max(candidates, key=key)
     if key(best)[0] <= 0:
         raise ValueError('缺少正的预期输出')
     full = max((c for c in candidates if effective_crit_rate(c) == 100), key=key, default=None)
-    near = max((c for c in candidates if effective_crit_rate(c) >= minimum), key=key, default=None)
-    chosen = near or best
-    reason = '暴击达标，预期输出最高' if near else '暴击未达标，选预期输出最高的一套'
+    chosen = full or best
+    reason = '满暴方案中输出最高' if full else '本轮没有满暴方案，选输出最高的一套'
     return dict(chosen, bestOutput=best['outputScore'], rawBestOutput=str(key(best)[0]), relativeLossPct=float(100*(key(best)[0]-key(chosen)[0])/key(best)[0]),
                 reason=reason, effectiveCritRate=float(effective_crit_rate(chosen)),
-                bestNearFullOutput=near['outputScore'] if near else None,
                 bestFullOutput=full['outputScore'] if full else None)
 
 
@@ -297,13 +292,12 @@ def _window_pool(url, profile, discs, current, request, exact=False, *, check_fu
                 results[ids] = dict(ids=list(ids), panelCritRate=r.get('panelCritRate'), **score)
     for inputs, goal in searches:
         collect(inputs, goal)
-    crit_gap = number(profile.get('critGapPoints', NEAR_CRIT_GAP))
-    if (check_full_crit and not exact and combinations > limit and clipped and number(full_target) > crit_gap
-            and not any(effective_crit_rate(row) >= 100 - crit_gap for row in results.values())):
+    if (check_full_crit and not exact and combinations > limit and clipped and number(full_target) > 0
+            and not any(effective_crit_rate(row) == 100 for row in results.values())):
         # In v2.3.31.1 the panel target accepts ±2.4 points. Shift its lower
         # edge to the desired rate so near misses cannot fill the shortlist.
         # Keep open-search results and judge every build by actual combat crit.
-        shifted_goal = float(number(full_target) - crit_gap + NEAR_CRIT_GAP)
+        shifted_goal = float(number(full_target) + OPTIMIZER_PANEL_MARGIN)
         if shifted_goal not in goals:
             collect(args, shifted_goal)
     if not results:
@@ -394,7 +388,7 @@ def _profile_candidates(url, profile, discs, current, request):
 
 def select_candidate(pool, profile, current):
     if 'outputScore' in pool[0]:
-        return prefer(pool, profile.get('critGapPoints', NEAR_CRIT_GAP), current)
+        return prefer(pool, current)
     if 'roleOrder' in pool[0]:
         from .role_panel import compare_order
         best = pool[0]

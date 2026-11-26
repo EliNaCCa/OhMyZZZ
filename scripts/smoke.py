@@ -118,20 +118,15 @@ with TemporaryDirectory() as tmp:
     coverage = plan(three,dict(empty_quota,reserve_rules=uses),rules,{})['reserveCoverage'][0]
     assert coverage['purposes'][-1]['covered']==1 and coverage['kept']==1
     cases=[dict(ids=['a'],critRate=97.59,outputScore=100),dict(ids=['b'],critRate=97.6,outputScore=99.5)]
-    assert prefer(cases,2.4,set())['ids']==['b']
-    assert prefer(cases,0,set())['ids']==['a']
+    assert prefer(cases,set())['ids']==['a']
     overflow=dict(ids=['c'],critRate=104.8,outputScore=100.01)
-    selected=prefer(cases+[overflow],0.5,set())
+    selected=prefer(cases+[overflow],set())
     assert selected['ids']==['c'] and selected['effectiveCritRate']==100
-    assert prefer([dict(cases[0],critRate=98),cases[1]],0.5,set())['ids']==['a']
     best=dict(ids=['98crit'],critRate=98,outputScore=100)
     full=dict(ids=['full'],critRate=100,outputScore=99.5)
-    for output in (99.8, 99.5, 98.0):
-        assert prefer([best,dict(full,outputScore=output)],2.4,set())['ids']==best['ids']
-    assert prefer([best, dict(full,rawOutput='100.000000001')],2.4,set())['ids']==full['ids']
-    assert prefer([best, dict(full,rawCritRate='99.999999999')],0,set())['ids']==best['ids']
-    assert prefer([best, full],0,set())['ids']==full['ids']
-    assert prefer([best, dict(full,outputScore=100)],0,set(best['ids']))['ids']==full['ids']
+    assert prefer([best,full],set())['ids']==full['ids']
+    assert prefer([best,dict(full,rawCritRate='99.999999999')],set())['ids']==best['ids']
+    assert prefer([full, dict(overflow,outputScore=99.5)],set(full['ids']))['ids']==full['ids']
     # A build missing from the other window's shortlist must still be rescored
     # with exactly the same six ids. The imported bonus is active only in burst.
     from drive_disc_manager.optimizer import candidate_pool

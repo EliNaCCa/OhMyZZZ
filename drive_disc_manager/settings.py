@@ -154,7 +154,6 @@ class ManagerInterface(BaseInterface):
         self.menu_action(menu,'队伍成员',self.edit_squad)
         self.refresh_target_button = self.menu_action(menu,'同步角色目标',self.refresh_profile)
         self.menu_action(menu,'分组与优先级',self.edit_allocation)
-        self.menu_action(menu,'满暴偏好',self.edit_tolerance)
         self.menu_action(menu,'输出窗口',self.edit_windows)
         self.menu_action(menu,'启用 / 停用',self.toggle_profile)
         self.menu_action(menu,'设为出场 / 取消',self.set_field_profile)
@@ -164,7 +163,7 @@ class ManagerInterface(BaseInterface):
         self.equip_busy = False
         self.equip_review = None
         self.equip_finished.connect(self.finish_equip, Qt.ConnectionType.QueuedConnection)
-        self.teams = self.grid(['方案','同时出场组','暴击率下限','实战暴击率','输出差距','选择原因'])
+        self.teams = self.grid(['方案','同时出场组','实战暴击率','输出差距','选择原因'])
         self.teams.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         box.addWidget(self.teams)
         self.team_score = BodyLabel(); self.team_score.setWordWrap(True); box.addWidget(self.team_score)
@@ -462,6 +461,8 @@ class ManagerInterface(BaseInterface):
                     changed_inputs.append('游戏扫描记录')
             if self.report.get('managerVersion') != PLUGIN_VERSION:
                 changed_inputs.append('插件版本')
+            if self.report.get('assignments') and not self.report.get('fullCritPriority'):
+                changed_inputs.append('配装排序')
             if self.report.get('configuration') != self.config_hash:
                 changed_inputs.append('配置')
             if self.report.get('rules') != self.rules.get('version'):
@@ -610,10 +611,7 @@ class ManagerInterface(BaseInterface):
             title = ('出场 · ' if p['name']==self.cfg.get('fieldProfile') else '')+p['name']
             group = p.get('simultaneous')
             label = f"{group} · 第 {group_indices(profiles, index).index(index)+1} 位" if group else '可借盘'
-            role = (p.get('request') or {}).get('roleSystem','').upper()
-            tolerance = pct(100 - float(p.get('critGapPoints',2.4))) if role in ('ATTACK','STRONG','RUPTURE') else '—'
-            return (title,label,tolerance,
-                    crit_rate_text(result),pct(result.get('relativeLossPct')),reason)
+            return (title,label,crit_rate_text(result),pct(result.get('relativeLossPct')),reason)
         self.fill(self.teams,[row(i,p) for i,p in enumerate(profiles)])
         self.teams.resizeColumnsToContents()
         visible_rows = min(4, max(1, len(profiles)))
@@ -844,16 +842,6 @@ class ManagerInterface(BaseInterface):
         editor = WindowEditor(profile,self)
         if editor.exec():
             self.edit_profile_fields(token, index, editor.changes)
-
-    def edit_tolerance(self):
-        index = self.teams.currentRow()
-        if index < 0: return
-        token = self.edit_token()
-        profile = self.cfg['profiles'][index]
-        value, ok = QInputDialog.getDouble(self,profile['name'],'距离满暴最多可少几个百分点？（一条暴击率 = 2.4）',
-                                            float(profile.get('critGapPoints',2.4)),0,100,4)
-        if ok:
-            self.edit_profile_fields(token, index, {'critGapPoints':value})
 
     def toggle_profile(self):
         index = self.teams.currentRow()
@@ -1106,7 +1094,7 @@ class ManagerInterface(BaseInterface):
         simultaneous,ok=QInputDialog.getText(self,'同时出场','同时上场的角色填写相同分组，互斥配队可留空')
         if not ok: return
         profile = dict(name=name.strip(),agentKey=agent_key,request=source['request'],
-                       simultaneous=simultaneous.strip(),critGapPoints=2.4,sourceId=source['sourceId'])
+                       simultaneous=simultaneous.strip(),sourceId=source['sourceId'])
         from .allocation import group_conflict
         peers = [p for p in token[2]['profiles'] if p.get('simultaneous') == profile['simultaneous']]
         conflict = group_conflict([*peers, profile])

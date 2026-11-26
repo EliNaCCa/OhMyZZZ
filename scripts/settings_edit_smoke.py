@@ -179,18 +179,16 @@ def smoke(home, tmp):
     cfg['profiles'] = [dict(name='临时队',request=dict(roleSystem='ATTACK',characterName='艾莲'))]
     save(account/'config.json', cfg)
     widget.on_interface_shown()
-    def edit_other_setting(*args):
-        save(account/'config.json', dict(config(account), reserve=8))
-        widget.on_interface_shown()
-        return 0.25, True
-    with patch.object(QInputDialog, 'getDouble', side_effect=edit_other_setting):
-        try:
-            widget.edit_tolerance()
-        except ValueError as exc:
-            assert '配置已更新' in str(exc)
-        else:
-            raise AssertionError('stale team edit replaced a newer configuration')
-    assert config(account)['reserve'] == 8 and 'critGapPoints' not in config(account)['profiles'][0]
+    token = widget.edit_token()
+    save(account/'config.json', dict(config(account), reserve=8))
+    widget.on_interface_shown()
+    try:
+        widget.edit_profile_fields(token, 0, {'simultaneous':'第一队'})
+    except ValueError as exc:
+        assert '配置已更新' in str(exc)
+    else:
+        raise AssertionError('stale team edit replaced a newer configuration')
+    assert config(account)['reserve'] == 8 and 'simultaneous' not in config(account)['profiles'][0]
     newer = dict(config(account),reserve=7)
     widget.editor.setPlainText(json.dumps(dict(config(account),reserve=6)))
     save(account/'config.json',newer)

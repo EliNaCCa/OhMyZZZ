@@ -88,7 +88,7 @@ def smoke():
     # Below the floor, the alternative cannot win an otherwise exact tie.
     a_options[1-scarce]['critRate'] = 97.59999
     check(a_options[scarce],b_options[1-scarce])
-    a_options[1-scarce]['critRate'] = 97.6
+    a_options[1-scarce]['critRate'] = 100
     shared = check(a_options[1-scarce],b_options[scarce])
     assert '同分' in shared[a['name']]['reason']
     # An already worn piece wins an exact tie. A genuine priority-C gain wins too.

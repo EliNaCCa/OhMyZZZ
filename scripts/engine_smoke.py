@@ -116,7 +116,7 @@ def smoke(source):
             assert winner['optimizerScope']==dict(submitted=7, calls=2, evaluated=4, atReturnLimit=False)
             threshold = dict(request=dict(target,baseCritRate=97.59999), tolerancePct=.5)
             chosen = select_candidate(candidate_pool(endpoint,threshold,pieces,set()),threshold,set())
-            assert chosen['bestNearFullOutput'] is None and chosen['critRate']==97.59999
+            assert chosen['bestFullOutput'] is None and chosen['critRate']==97.59999
             capped = dict(request=dict(target,baseCritRate=100), tolerancePct=.5)
             over = dict(pieces[2], id='over', subStats=[dict(type='CRIT_RATE',value=9.6)])
             tied = select_candidate(candidate_pool(endpoint,capped,pieces+[over],current),capped,current)
@@ -170,8 +170,8 @@ def smoke(source):
         assert adjusted['configuration'] != report['configuration']
         assert all(row['decision'] == '保留' and not any(r.startswith('备用 · ') for r in row['reasons'])
                    for row in adjusted['discs'])
-        # The same six IDs under a different team tolerance still need a new allocation.
-        cfg['profiles'][0]['critGapPoints'] = 0
+        # The same six IDs under a different team buff still need a new allocation.
+        cfg['profiles'][0]['request']['combatExtraStats'] = {'CRIT_RATE': 15}
         save(root/'config.json', cfg)
         updated = preview(root, wiki, refresh=False, reuse_allocations=True)
         assert not updated['reusedAssignments'] and updated['allocationKey'] != adjusted['allocationKey'] and not updated['issues']

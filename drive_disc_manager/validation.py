@@ -1,7 +1,6 @@
 from .reserve_policy import quota, SELECTORS
 from .optimizer import STATS
 from .store import defaults
-from .optimizer import number
 
 
 def validate(value):
@@ -39,7 +38,6 @@ def validate(value):
         names.add(p['name'])
         from .combat_windows import window_requests
         window_requests(p)
-        if not 0<=number(p.get('critGapPoints',2.4))<=100: raise ValueError('配队暴击率容差无效')
     field = cfg['fieldProfile']
     if not isinstance(field,str) or (field and not any(p['name']==field and p.get('enabled',True) for p in cfg['profiles'])):
         raise ValueError('选择一个已启用的出场方案，或清空 fieldProfile 停用换装')

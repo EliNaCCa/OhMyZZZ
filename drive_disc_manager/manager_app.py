@@ -89,7 +89,7 @@ class ManagerApp(ZApplication):
                         from .store import preview_path
                         cn_inventory = read(self.root/'cn-inventory.json')
                         saved = read(preview_path(self.root, cfg), {})
-                        if (saved.get('networkPreview') and saved.get('inventory') == digest(cn_inventory)
+                        if (saved.get('fullCritPriority') and saved.get('networkPreview') and saved.get('inventory') == digest(cn_inventory)
                                 and saved.get('configuration') == request['configuration'] and saved.get('rules') == request['rules']):
                             cn_plan = saved
                     network_plan = cn_plan or preview(self.root, wiki_path(), snapshot=pinned, reuse_allocations=manual_cn)
