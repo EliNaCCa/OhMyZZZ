@@ -12,6 +12,7 @@ from .subscriptions import SLOT_MAIN
 
 SOURCE = 'zzz-drive-exporter'
 FILE = 'cn-inventory.json'
+EXPORT_NAME = 'zzz-drives-zood-v1.json'
 LEVEL_CAP = {'S': 15, 'A': 12, 'B': 9}
 STAT_KEYS = {'impact_': 'impact', 'enerRegen_': 'energyRegen_'}
 SET_KEYS = {'BranchBladeSong': 'Branch&BladeSong', 'PhaethonsMelody': "Phaethon'sMelody",
@@ -110,14 +111,14 @@ def refresh(root, check_account, path=None, *, showcase_uid='', wiki=None):
     started = time.time()
     bound = previous.get('exportFile', '')
     manual = path is not None
-    if not manual and not bound:
-        raise ValueError('先到仓库选择本账号的国服导出文件')
-    path = Path(path if manual else bound).resolve()
+    path = Path(path if manual else bound or root/'exports'/EXPORT_NAME).resolve()
     if not path.is_file():
+        if not manual and not bound:
+            raise ValueError('尚未收到本账号的国服仓库导出')
         raise ValueError('找不到导出文件，请在仓库重新选择')
     if path.suffix.lower() != '.json':
         raise ValueError('请选择 ZOOD 的 JSON 文件')
-    if manual:
+    if manual or not bound:
         for other in root.parent.iterdir():
             if other.name.isdecimal() and other != root:
                 other_file = read(other / FILE, {}).get('exportFile')

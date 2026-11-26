@@ -91,6 +91,9 @@ class ManagerInterface(BaseInterface):
         for label in (self.empty_title, self.empty_hint):
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             empty_layout.addWidget(label)
+        self.last_seen = self.grid(['套装', '号位', '等级', '主属性', '副属性', '装备者'])
+        self.last_seen.hide()
+        empty_layout.addWidget(self.last_seen, 1)
         box.addWidget(self.empty, 1)
         self.stat_info = BodyLabel(); self.stat_info.setWordWrap(True); box.addWidget(self.stat_info)
         self.reserve_info = BodyLabel(); self.reserve_info.setWordWrap(True); box.addWidget(self.reserve_info)
@@ -428,10 +431,8 @@ class ManagerInterface(BaseInterface):
         cn_export = source == 'cn_export'
         self.showcase_button.setVisible(cn_export)
         self.showcase_button.setText('更改展柜 UID' if self.cfg.get('showcaseUid') else '绑定角色展柜')
-        bound = cn_export and snapshot_path(self.root, self.cfg).is_file()
-        self.scan_button.setText(('刷新导出文件' if bound else '选择国服导出文件') if cn_export
-                                 else ('读取仓库' if source == 'network' else '扫描仓库'))
-        self.import_button.setText('更换导出文件' if cn_export else '导入扫描文件')
+        self.scan_button.setText('读取仓库' if source in ('cn_export', 'network') else '扫描仓库')
+        self.import_button.setText('选择其他导出文件' if cn_export else '导入扫描文件')
         self.import_button.setEnabled(source != 'network' and self.preview_job is None)
         for key, spin in self.limits.items():
             with QSignalBlocker(spin): spin.setValue(self.cfg[key])
@@ -474,6 +475,8 @@ class ManagerInterface(BaseInterface):
         self.show_probe(read(self.root/'single-disc.json', {}))
         if text != self.editor.toPlainText(): self.editor.setPlainText(text)
         self.rows=self.report.get('discs',[])
+        from .scan_observations import show_observations
+        self.last_seen_title = show_observations(self.last_seen, self.fill, self.root, not self.rows and not self.report, self.agent_labels)
         for key,toggle in self.flags.items(): toggle.setValue(bool(self.cfg.get(key)), emit_signal=False)
         self.auto_sync.setChecked(self.cfg['auto_sync'])
         from datetime import datetime
@@ -1180,9 +1183,6 @@ class ManagerInterface(BaseInterface):
         self.check_account(self.root)
         if self.preview_job is not None:
             return
-        if self.cfg['inventorySource'] == 'cn_export' and not snapshot_path(self.root, self.cfg).is_file():
-            self.load_inventory()
-            return
         if self.equip_busy or not self.ctx.run_context.is_context_stop:
             raise ValueError('请在一条龙空闲时扫描仓库')
         if self.cfg['inventorySource'] == 'ocr':
@@ -1435,8 +1435,11 @@ class ManagerInterface(BaseInterface):
             self.empty_title.setText('没有匹配的驱动盘' if has_rows else ('仓库里没有驱动盘' if self.report else '还没有仓库预览'))
             hint = '扫描游戏仓库，或从「更多」导入扫描文件'
             if self.cfg['inventorySource'] == 'cn_export':
-                hint = '选择国服读取器生成的 zzz-drives-zood-v1.json'
+                hint = '等待读取器生成仓库文件'
             self.empty_hint.setText('换个筛选条件试试' if has_rows else ('下次读取会更新库存' if self.report else hint))
+            if not has_rows and getattr(self, 'last_seen_title', ''):
+                self.empty_title.setText(self.last_seen_title)
+                self.empty_hint.setText('上次扫描的记录，仅供查看')
         self.pin_button.setEnabled(selected and not self.rows[index]['marked'])
         self.quota_button.setEnabled(selected)
         self.detail_button.setEnabled(selected or self.probe_record.get('status')=='verified')

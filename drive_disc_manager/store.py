@@ -193,13 +193,19 @@ def import_inventory(root, path, *, readings=None, cn_export=None, names=None):
     if 'partial' in path.name.lower():
         raise ValueError('部分扫描文件')
     z = read(path)
-    if cn_export is not None:
-        from .inventory_comparison import verify_cn_inventory
-        z = verify_cn_inventory(cn_export, z, readings, names or {})
-    elif readings is not None:
-        from .scan_copies import with_copies
-        z = with_copies(z, readings)
-    inventory(z)
+    try:
+        if cn_export is not None:
+            from .inventory_comparison import verify_cn_inventory
+            z = verify_cn_inventory(cn_export, z, readings, names or {})
+        elif readings is not None:
+            from .scan_copies import with_copies
+            z = with_copies(z, readings)
+        inventory(z)
+    except ValueError:
+        if readings is not None and isinstance(z, dict):
+            from .scan_observations import save_observations
+            save_observations(root, z, path.stat().st_mtime)
+        raise
     # An account keeps unlocked agents. A later disc-only export has an empty
     # characters array and should not retire agents seen in earlier full scans.
     keys = set(read(root/'owned-agents.json', []))

@@ -23,7 +23,7 @@ def smoke(home, sample, temp):
     app = QApplication([])
     os_utils.set_work_dir(str(temp))
     account = temp / 'accounts' / '1'
-    file = temp / 'export.json'
+    file = account / 'exports' / 'zzz-drives-zood-v1.json'
     original = read(sample)['discs'][:5]
     records = []
     for i, observed in enumerate(original):
@@ -41,8 +41,8 @@ def smoke(home, sample, temp):
     widget = ManagerInterface(ctx)
     widget.on_interface_shown()
     widget.reader.setCurrentIndex(widget.reader.findData('cn_export'))
-    assert '选择国服' in widget.scan_button.text()
-    with patch.object(QFileDialog, 'getOpenFileName', return_value=(str(file), '')):
+    assert widget.scan_button.text() == '读取仓库'
+    with patch.object(QFileDialog, 'getOpenFileName', side_effect=AssertionError('unexpected file chooser')):
         widget.scan_button.click()
     end = monotonic() + 12
     while widget.preview_job is not None and monotonic() < end:
@@ -51,7 +51,7 @@ def smoke(home, sample, temp):
     assert len(widget.rows) == len(original) == 5, widget.preview_note.text()
     snap_path = account / 'cn-inventory.json'
     snapshot = read(snap_path)
-    assert '刷新导出文件' == widget.scan_button.text()
+    assert '读取仓库' == widget.scan_button.text()
     for record, source in zip(snapshot['discs'], original):
         assert record['observedValues'] == source['observedValues']
         assert record['ownerState'] == record['markState'] == 'unknown'
