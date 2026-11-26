@@ -65,7 +65,7 @@ def smoke(home, tmp):
     with ExitStack() as stack:
         for name, value in [('drive_disc_manager.disc_probe.interactive_slot', lambda:nullcontext((3, lambda:None))),
                             ('drive_disc_manager.disc_probe.game_guard', lambda *_:(lambda:None, 1)),
-                            ('drive_disc_manager.scan_marks.capture_marks', lambda _:nullcontext()),
+                            ('drive_disc_manager.scan_marks.capture_marks', lambda *_:nullcontext()),
                             ('drive_disc_manager.manager_app.checked_scan', checked)]:
             stack.enter_context(patch(name, value))
         forbidden = [stack.enter_context(patch(name, side_effect=AssertionError(name))) for name in (
@@ -89,7 +89,7 @@ def smoke(home, tmp):
     run.is_context_stop, run.is_context_running = False, True
     scanner.execute = lambda: (save(tmp/'.debug/inventory_exports/inventory_daily.json', snapshot) or Obj(success=True))
     save(root/'config.json', dict(cfg, auto_sync=False, fieldProfile=''))
-    with patch('drive_disc_manager.scan_marks.capture_marks', lambda _:nullcontext()), \
+    with patch('drive_disc_manager.scan_marks.capture_marks', lambda *_:nullcontext()), \
          patch('drive_disc_manager.live.Marker') as marker:
         status, reason = ManagerApp.manage_inventory(manager)
         assert status == 'failed' and '库存记录' in reason
@@ -105,7 +105,7 @@ def smoke(home, tmp):
     manager.root = fresh
     save(fresh/'rules.json', dict(updated=time(), fields={}, version='fixture'))
     assert not (fresh/'config.json').exists()
-    with patch('drive_disc_manager.scan_marks.capture_marks', lambda _:nullcontext()), \
+    with patch('drive_disc_manager.scan_marks.capture_marks', lambda *_:nullcontext()), \
          patch('drive_disc_manager.live.Marker') as marker, \
          patch('drive_disc_manager.loadout.apply_loadout') as equip, \
          patch('drive_disc_manager.dismantle.handoff') as dismantle:
@@ -130,7 +130,7 @@ def smoke(home, tmp):
         initial = read(fresh/'dismantle-preview.json')
         assert 'markCandidates' in initial and not initial['entries']
         return {fp:'marked'}
-    with (patch('drive_disc_manager.scan_marks.capture_marks', lambda _:nullcontext()),
+    with (patch('drive_disc_manager.scan_marks.capture_marks', lambda *_:nullcontext()),
           patch('drive_disc_manager.live.Marker') as marker, patch('drive_disc_manager.loadout.verify_bindings'),
           patch('drive_disc_manager.equip_ui.EquipUI'), patch('drive_disc_manager.loadout.apply_loadout', stop_at_equip)):
         marker.return_value.run.side_effect = observed_mark

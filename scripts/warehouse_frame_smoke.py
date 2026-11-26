@@ -23,6 +23,7 @@ def smoke(home):
     from drive_disc_manager.planner import plan
     from drive_disc_manager.optimizer import as_disc
     from drive_disc_manager.scan_marks import MarkReader, observed_header
+    from drive_disc_manager.scan_resume import ScanTextCache
     from drive_disc_manager.scan_copies import selected_position, viewport_stamp
     from drive_disc_manager.stat_reading import measure
     from drive_disc_manager.disc_probe import read_selected
@@ -114,6 +115,21 @@ def smoke(home):
                      for text,matches in ocr.run_ocr(part).items() for m in matches]
             scanned = MarkReader(parser, ocr, frame[985:1070,1050:1920]).parse_ocr_result(items,part)
             assert scanned['observedValues'] == values and fingerprint(scanned) == fp and scanned['markState'] == state
+            cache = ScanTextCache(root, ocr)
+            if name == 'mark_before':
+                first_frame = cache.frame(part)
+                MarkReader(parser, ocr, frame[985:1070,1050:1920], text_cache=cache).parse_ocr_result(items, first_frame)
+                previous_pixels = part.copy()
+            else:
+                # Reopen the interrupted scan with identical detail pixels and this frame's new footer.
+                repeated = cache.frame(previous_pixels)
+                with patch.object(ocr, 'run_ocr', side_effect=AssertionError('repeated detail OCR')):
+                    cached = cache.run_ocr(repeated)
+                cached_items = [dict(text=text,confidence=m.confidence,position=(m.x,m.y,m.x+m.w,m.y+m.h))
+                                for text,matches in cached.items() for m in matches]
+                reread = MarkReader(parser, ocr, frame[985:1070,1050:1920], text_cache=cache).parse_ocr_result(cached_items,repeated)
+                assert cache.reused == 1 and reread['observedValues'] == values and reread['markState'] == 'marked'
+                cache.finish()
             if name == 'mark_before':
                 # Same frame, with the label and fraction delivered out of order as two OCR boxes.
                 label = next(i for i in items if '等级' in i['text'])

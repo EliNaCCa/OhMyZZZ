@@ -95,10 +95,10 @@ class ManagerApp(ZApplication):
                 # Suppress the scanner's optional browser launch for this invocation only.
                 from unittest.mock import patch
                 from .scan_marks import capture_marks
-                with capture_marks(scanner), patch.object(scanner,'_open_export',lambda path: None):
+                with capture_marks(scanner, self.root) as text_cache, patch.object(scanner,'_open_export',lambda path: None):
                     result = checked_scan(scanner, self.guard_game) if interactive else scanner.execute()
                 if not result.success or self.ctx.current_instance_idx != self.account:
-                    return self.round_fail('本轮扫描中断，请核对账号及库存')
+                    return self.round_fail('扫描中断，下次读取仓库会重新核对')
                 fresh = [p for p in exports.glob('inventory_*.json') if before.get(p)!=p.stat().st_mtime_ns]
                 if len(fresh)!=1:
                     return self.round_fail('本轮扫描文件无法唯一识别')
@@ -108,6 +108,8 @@ class ManagerApp(ZApplication):
                 from .salvage_audit import native_run, observe_native, reconcile
                 observe_native(self.root, self.account, native_run(Path(os_utils.get_work_dir()), self.account), scan_started)
                 import_inventory(self.root,fresh[0],readings=scanner.ocr_worker.scanned_discs)
+                if text_cache is not None:
+                    text_cache.finish()
                 snapshot = read(self.root/'inventory.json')
                 reconcile(self.root,snapshot)
                 from .store import equipment_names
@@ -119,7 +121,8 @@ class ManagerApp(ZApplication):
                 return self.round_fail('请先在仓库页读取库存')
             report = preview(self.root,wiki_path(),snapshot=pinned, verified_game=scanner is not None)
             if scan_only:
-                return self.round_success(f"已扫描 {len(snapshot['discs'])} 张驱动盘 · 预览已保存")
+                resumed = f' · 复用 {text_cache.reused} 次词条识别' if text_cache and text_cache.reused else ''
+                return self.round_success(f"已扫描 {len(snapshot['discs'])} 张驱动盘{resumed} · 预览已保存")
             if mark:
                 from .salvage_audit import needs_review
                 if needs_review(read(self.root/'dismantle-result.json', {})):

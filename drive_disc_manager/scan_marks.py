@@ -33,11 +33,12 @@ def observed_grade(items):
 
 
 class MarkReader:
-    def __init__(self, parser, ocr, footer, cell=None):
+    def __init__(self, parser, ocr, footer, cell=None, text_cache=None):
         self.parser = parser
         self.ocr = ocr
         self.footer = footer
         self.cell = cell
+        self.text_cache = text_cache
 
     def parse_ocr_result(self, items, image):
         # The host's spelling dictionary mutates its input. Preserve raw value tokens.
@@ -55,6 +56,10 @@ class MarkReader:
             result.update(rarity=grade, level=level)
         from .stat_reading import measure
         result['observedValues'] = measure(items, result, self.parser) if grade and slot == str(result['slotKey']) else None
+        if self.text_cache and result['observedValues']:
+            from .stat_reading import checked_values
+            if checked_values(result, 1):
+                self.text_cache.remember(image, items)
         if self.cell is not None:
             result['scanCell'] = self.cell
         return result
@@ -79,7 +84,7 @@ def mark_hint(ocr, footer):
 
 
 @contextmanager
-def capture_marks(scanner):
+def capture_marks(scanner, root=None):
     from threading import local
     grid = scanner.drive_disk_scanner
     worker = scanner.ocr_worker
@@ -88,6 +93,19 @@ def capture_marks(scanner):
     unique = cache.save_unique
     witnessed = set()
     pending = local()
+    text_cache = None
+    worker_ctx = worker.ctx
+    if root is not None:
+        from .scan_resume import ScanTextCache
+        text_cache = ScanTextCache(root, worker_ctx.ocr)
+
+        class WorkerContext:
+            ocr = text_cache
+
+            def __getattr__(self, name):
+                return getattr(worker_ctx, name)
+
+        worker.ctx = WorkerContext()
 
     def capture(row, col, image):
         from .scan_copies import selected_position, viewport_stamp
@@ -120,15 +138,18 @@ def capture_marks(scanner):
     def enqueue(kind, image, parser):
         footer = getattr(pending, 'footer', None)
         if kind == 'disc' and footer is not None:
-            parser = MarkReader(parser, scanner.ctx.ocr, footer, pending.cell)
+            if text_cache is not None:
+                image = text_cache.frame(image)
+            parser = MarkReader(parser, scanner.ctx.ocr, footer, pending.cell, text_cache)
         return submit(kind, image, parser)
 
     grid._save_screenshot = capture
     worker.submit = enqueue
     cache.save_unique = sample
     try:
-        yield
+        yield text_cache
     finally:
         grid._save_screenshot = save_image
         worker.submit = submit
         cache.save_unique = unique
+        worker.ctx = worker_ctx
