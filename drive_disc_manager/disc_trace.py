@@ -39,7 +39,7 @@ def probe_trace(record, cfg, rules, wiki, known_owned):
     if disc['lockState'] == 'locked':
         reasons.append('读取时游戏内已锁定')
     if cfg['protect15'] and disc['level'] == 15:
-        reasons.append('已满级')
+        reasons.append('满级盘（+15）')
     rolls = {}
     if disc['rarity'] == 'S':
         for key, quantity in values['subs'].items():

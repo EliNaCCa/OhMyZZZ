@@ -127,7 +127,6 @@ class ManagerInterface(BaseInterface):
         box.addWidget(self.agent_table)
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'我的配队')
         engine_bar = QHBoxLayout(); box.addLayout(engine_bar)
-        self.button(engine_bar,'打开配装器',self.open_optimizer)
         self.button(engine_bar,'导入方案',self.import_profile)
         self.profile_menu = DropDownPushButton('管理方案'); engine_bar.addWidget(self.profile_menu)
         menu = RoundMenu(parent=self.profile_menu); self.profile_menu.setMenu(menu)
@@ -177,13 +176,14 @@ class ManagerInterface(BaseInterface):
         bar.addStretch()
         self.flags = {}
         for key, icon, title, hint in [
-            ('run_scanner', FluentIcon.SEARCH, '每次运行时扫描仓库', '关闭后用上次库存计算，同时关闭自动标记和自动换装。'),
-            ('applyMarkers', FluentIcon.FILTER, '自动锁盘和标记弃置', '锁定要留的盘，给淘汰的盘打上弃置标记。'),
-            ('protect15', FluentIcon.ACCEPT, '保留所有 +15 盘', None),
-            ('protectNaturalCrit', FluentIcon.TILES, '保留初始四词条双暴盘', '掉落时就有四条副属性，其中包含暴击率和暴击伤害。'),
-            ('rotateSpareLocks', FluentIcon.SYNC, '自动替换备用盘', '先锁新备用，再解开插件加的旧备用锁。手动锁定的盘会保留。'),
+            ('run_scanner', FluentIcon.SEARCH, '整理前刷新驱动仓库', '关闭后按上次的库存配装，日常任务也会关闭标记和换装。'),
+            ('applyMarkers', FluentIcon.FILTER, '自动标记驱动盘', '要留的锁定，要拆的标记为弃置。'),
+            ('protect15', FluentIcon.ACCEPT, '保留满级盘（+15）', None),
+            ('protectNaturalCrit', FluentIcon.TILES, '保留四词条双暴胚子', '掉落时就有四条副属性，同时带暴击率和暴击伤害。强化后也保留。'),
+            ('rotateSpareLocks', FluentIcon.SYNC, '优先留更好的备用盘', '同类盘按你的备用规则比较。先锁新盘，再解开旧备用盘。你手动锁的盘会保留。'),
         ]:
             toggle = SwitchSettingCard(icon=icon, title=title)
+            toggle.btn.setAccessibleName(title)
             if hint:
                 toggle.setToolTip(hint)
                 toggle.btn.setAccessibleDescription(hint)
@@ -232,6 +232,13 @@ class ManagerInterface(BaseInterface):
         tabs.addTab(self.salvage_page, '库存记录')
         self.salvage_page.acknowledge.connect(lambda root, batch, inv:self.invoke(lambda:self.acknowledge_salvage(root, batch, inv)))
         self.tabs.currentChanged.connect(self.refresh_salvage)
+        from .optimizer_page import OptimizerPage
+        self.optimizer_page = OptimizerPage()
+        tabs.addTab(self.optimizer_page, '配装器')
+        self.optimizer_page.import_requested.connect(lambda:self.invoke(self.import_profile))
+        self.optimizer_page.retry.connect(lambda:self.invoke(self.open_optimizer))
+        self.optimizer_page.back.connect(lambda:tabs.open('我的配队'))
+        self.tabs.currentChanged.connect(self.optimizer_tab_changed)
 
     def on_interface_shown(self):
         # OneDragon caches embedded pages by navigation stack, not by account.
@@ -556,7 +563,7 @@ class ManagerInterface(BaseInterface):
         self.build_tabs.setVisible(bool(selected))
         self.equip_status.setVisible(bool(profiles) and bool(self.equip_status.text()))
         self.team_score.show()
-        self.team_score.setText('打开配装器保存角色目标，然后导入第一套方案。')
+        self.team_score.setText('在「配装器」里保存角色目标，再点「导入方案」。')
         if index < 0 or index >= len(self.cfg['profiles']): return
         profile = self.cfg['profiles'][index]
         result = self.report.get('assignments',{}).get(profile['name'],{})
@@ -907,27 +914,30 @@ class ManagerInterface(BaseInterface):
         return nullcontext(self.cfg['optimizer_url']) if self.cfg['optimizer_url'] else managed(self.root)
 
     def open_optimizer(self):
-        from PySide6.QtCore import QUrl
-        from PySide6.QtGui import QDesktopServices
-        from .engine import Endpoint
-        from .optimizer import loopback_json
-        with self.optimizer_session() as endpoint:
-            if isinstance(endpoint, Endpoint):
-                url = endpoint.url
-            else:
-                loopback_json(endpoint, '/api/state')
-                url = endpoint
-            if not QDesktopServices.openUrl(QUrl(url)):
-                raise ValueError('无法打开默认浏览器')
-            if isinstance(endpoint, Endpoint):
-                QMessageBox.information(self, '编辑配装器目标',
-                    '在配装器保存目标后，回到这里点「确定」，再点「导入方案」。')
+        self.check_account(self.root)
+        self.optimizer_page.start(self.root, self.optimizer_session())
+
+    def optimizer_tab_changed(self, *_):
+        if self.tabs.currentWidget() is self.optimizer_page:
+            self.invoke(self.open_optimizer)
+        else:
+            self.optimizer_page.stop()
+
+    def on_interface_hidden(self):
+        if self.tabs.currentWidget() is self.optimizer_page:
+            self.navigation.open('我的配队')
 
     def import_profile(self):
         from .optimizer import saved_targets
         token = self.edit_token()
-        with self.optimizer_session() as endpoint:
-            choices = saved_targets(endpoint)
+        embedded = self.tabs.currentWidget() is self.optimizer_page
+        if embedded:
+            if self.optimizer_page.account != self.root or self.optimizer_page.endpoint is None:
+                raise ValueError('请先打开当前账号的配装器')
+            choices = saved_targets(self.optimizer_page.endpoint)
+        else:
+            with self.optimizer_session() as endpoint:
+                choices = saved_targets(endpoint)
         if not choices:
             raise ValueError('请先在配装器保存角色的多角色目标')
         labels=[f"{i+1}. {p['agent']}" for i,p in enumerate(choices)]
@@ -954,6 +964,8 @@ class ManagerInterface(BaseInterface):
         peers = [p for p in token[2]['profiles'] if p.get('simultaneous') == profile['simultaneous']]
         conflict = group_conflict([*peers, profile])
         if conflict: raise ValueError(conflict)
+        if embedded:
+            self.navigation.open('我的配队')
         self.finish_edit(token, dict(token[2], profiles=[*token[2]['profiles'],profile]))
         self.refresh_teams(profile['name'])
 

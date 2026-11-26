@@ -145,7 +145,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         if entry.get('state') == 'manual-keep':
             why.append('手动撤销弃置后保留')
         if cfg['protect15'] and d['level']==15:
-            why.append('已满级')
+            why.append('满级盘（+15）')
         row = dict(fp=fp, id=d['id'], set=set_key(d), slot=str(d['slotKey']), main=d['mainStatKey'],
                    level=d['level'], location=d.get('location',''), rolls={s['key']:1+s['upgrades']-base for s in d['substats']}, reasons=why, recommendations=[], explanation=[], review=[], ruleUses=[])
         row['pinKeys'] = pin_keys(d, names, reverse, fp)

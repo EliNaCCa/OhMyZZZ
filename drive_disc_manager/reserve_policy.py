@@ -24,7 +24,7 @@ def assess_growth(row, cfg):
     row['development'] = growth
     row['explanation'].append(f"初始 {growth['initial']} 词条 · 剩余 {growth['remaining']} 次强化机会")
     if cfg.get('protectNaturalCrit', True) and growth['initial'] == 4 and {'crit_', 'crit_dmg_'} <= row['rolls'].keys():
-        row['reasons'].append('原生四词条双暴保护')
+        row['reasons'].append('四词条双暴胚子')
 
 
 def quota(value):

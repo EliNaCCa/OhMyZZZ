@@ -30,6 +30,12 @@ _NAMES = {
 }
 ALIASES = {identifier(alias): identifier(name) for name, aliases in _NAMES.items() for alias in aliases}
 
+# The pinned optimizer's /data/characters.json supplies both names for these agents.
+_FULL_NAMES = {'菲欧妮·蕾法爱菈':'菲欧妮', '洛克茜·伊芙莉塔·普莱斯':'洛克茜',
+               '希格莉德·德拉叙尔':'希格莉德', '蕾米埃尔·丹':'蕾米埃尔', '维琳娜·艾嘉德':'维琳娜',
+               '诺姆·霍洛维尔':'诺姆', '本·比格':'本', '克拉蕾·弗林特':'克拉蕾'}
+ALIASES.update({identifier(full):identifier(short) for full, short in _FULL_NAMES.items()})
+
 
 def agent_id(name):
     key = identifier(name)
@@ -51,7 +57,7 @@ def scanner_agent_key(wiki, name):
 
 
 def same_agent(wiki, first, second):
-    if first == second:
+    if _FULL_NAMES.get(first, first) == _FULL_NAMES.get(second, second):
         return True
     key = scanner_agent_key(wiki, first)
     return bool(key and key == scanner_agent_key(wiki, second))
