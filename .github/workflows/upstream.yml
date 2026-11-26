@@ -24,13 +24,28 @@ jobs:
           if [ "$(gh pr list --state all --head "$branch" --json number --jq 'length')" != '0' ]; then exit 0; fi
           git switch -c "$branch"
           git show HEAD:vendor/upstream_cleanup/disc_cleanup_rules.py > "$RUNNER_TEMP/before.py"
+          git worktree add --quiet --detach "$RUNNER_TEMP/manager-base" HEAD
           git rm -r --quiet -- vendor/upstream_cleanup
           mkdir -p vendor/upstream_cleanup
           git archive "$new" disc_cleanup | tar -x --strip-components=1 -C vendor/upstream_cleanup
+          git show "$new:README.md" > vendor/upstream_cleanup/README.upstream.md
+          for name in release validate; do
+            if git cat-file -e "$new:.github/workflows/$name.yml"; then
+              git show "$new:.github/workflows/$name.yml" > "vendor/upstream_cleanup/$name.yml.example"
+            fi
+          done
           python scripts/upstream_rule_delta.py "$RUNNER_TEMP/before.py" vendor/upstream_cleanup/disc_cleanup_rules.py > "$RUNNER_TEMP/review.md"
+          echo >> "$RUNNER_TEMP/review.md"
+          python scripts/manager_rule_delta.py "$RUNNER_TEMP/manager-base" . >> "$RUNNER_TEMP/review.md"
+          cat "$RUNNER_TEMP/review.md" >> "$GITHUB_STEP_SUMMARY"
           echo "$new" > upstream-revision.txt
           git add vendor/upstream_cleanup upstream-revision.txt
           git -c user.name=github-actions -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m 'Review upstream cleanup changes'
           python scripts/smoke.py
-          if ! git ls-remote --exit-code --heads origin "$branch" >/dev/null; then git push origin "$branch"; fi
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            git fetch --depth=1 origin "refs/heads/$branch"
+            git diff --exit-code HEAD FETCH_HEAD
+          else
+            git push origin "$branch"
+          fi
           gh pr create --base "$GITHUB_REF_NAME" --head "$branch" --title '审核上游清理插件变更' --body-file "$RUNNER_TEMP/review.md"

@@ -13,3 +13,11 @@ jobs:
           python-version: '3.11'
       - run: python scripts/smoke.py
       - run: python scripts/maintenance_smoke.py
+      - name: Compare the manager's decisions on six sample discs
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --depth=1 origin "$BASE_SHA"
+          git worktree add --quiet --detach "$RUNNER_TEMP/manager-base" "$BASE_SHA"
+          python scripts/manager_rule_delta.py "$RUNNER_TEMP/manager-base" . >> "$GITHUB_STEP_SUMMARY"
