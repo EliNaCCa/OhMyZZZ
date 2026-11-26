@@ -304,7 +304,8 @@ class ManagerInterface(BaseInterface):
 
     def refresh_salvage(self, *_):
         if hasattr(self, 'root') and self.tabs.currentWidget() is self.salvage_page:
-            self.salvage_page.present(self.root, self.set_names, read(self.root/'dismantle-result.json', {}))
+            from .salvage_page import latest_batch
+            self.salvage_page.present(self.root, self.set_names, latest_batch(self.root))
 
     def set_limit(self, key, value):
         self.check_account(self.root)
@@ -432,6 +433,7 @@ class ManagerInterface(BaseInterface):
         self.showcase_button.setVisible(cn_export)
         self.showcase_button.setText('更改展柜 UID' if self.cfg.get('showcaseUid') else '绑定角色展柜')
         self.scan_button.setText('读取仓库' if source in ('cn_export', 'network') else '扫描仓库')
+        self.import_button.setVisible(source != 'network')
         self.import_button.setText('选择其他导出文件' if cn_export else '导入扫描文件')
         self.import_button.setEnabled(source != 'network' and self.preview_job is None)
         for key, spin in self.limits.items():
@@ -1162,7 +1164,7 @@ class ManagerInterface(BaseInterface):
         self.calculate_buttons[0].setEnabled(can_calculate)
         self.calculate_buttons[1].setEnabled(bool(can_calculate and getattr(self, 'cfg', {}).get('profiles')))
         for button in self.calculate_buttons:
-            button.setToolTip('' if has_inventory else '先扫描仓库或导入扫描文件')
+            button.setToolTip('' if has_inventory else f'请先在「仓库」点「{self.scan_button.text()}」')
 
     def show_preview_job(self, error=''):
         busy = self.preview_job is not None
@@ -1172,7 +1174,7 @@ class ManagerInterface(BaseInterface):
         self.update_calculate_buttons()
         message = error
         if busy:
-            message = (f'正在读取账号 {self.preview_job.name} 的游戏仓库并计算预览…' if self.scanning_game
+            message = (f'正在扫描账号 {self.preview_job.name} 的游戏仓库…' if self.scanning_game
                        else f'正在计算账号 {self.preview_job.name} 的仓库预览…')
         self.preview_note.setText(message)
         self.preview_note.setVisible(bool(message))
@@ -1201,7 +1203,7 @@ class ManagerInterface(BaseInterface):
         network = from_game and source == 'network'
         cn_import = source == 'cn_export' and (from_game or import_path is not None)
         self.preview_job = account
-        self.scanning_game = from_game
+        self.scanning_game = from_game and source == 'ocr'
         self.preview_refresh_accounts.discard(account)
         self.show_preview_job()
         self.apply_button.setEnabled(False)
@@ -1436,6 +1438,8 @@ class ManagerInterface(BaseInterface):
             hint = '扫描游戏仓库，或从「更多」导入扫描文件'
             if self.cfg['inventorySource'] == 'cn_export':
                 hint = '等待读取器生成仓库文件'
+            elif self.cfg['inventorySource'] == 'network':
+                hint = '连接国际服读取器后，点「读取仓库」'
             self.empty_hint.setText('换个筛选条件试试' if has_rows else ('下次读取会更新库存' if self.report else hint))
             if not has_rows and getattr(self, 'last_seen_title', ''):
                 self.empty_title.setText(self.last_seen_title)

@@ -34,16 +34,17 @@ def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=F
     comparison = None
     game_stamp = None
     game_file = root / 'inventory.json'
-    if inputs.get('inventorySource') == 'cn_export' and game_file.is_file():
+    if inputs.get('inventorySource') == 'cn_export':
         from .inventory_comparison import compare_game_scan
-        with game_file.open(encoding='utf-8-sig') as game:
-            game_stamp = os.fstat(game.fileno()).st_mtime_ns
-            try:
+        try:
+            with game_file.open(encoding='utf-8-sig') as game:
+                game_stamp = os.fstat(game.fileno()).st_mtime_ns
                 comparison = compare_game_scan(z, json.load(game), names)
-            except ValueError:
-                warnings.append('上次游戏扫描不完整，暂时只能按导出文件配装')
-            else:
-                comparison['gameStamp'] = game_stamp
+            comparison['gameStamp'] = game_stamp
+        except FileNotFoundError:
+            pass  # The export alone is enough to plan a build.
+        except (ValueError, TypeError, KeyError, AttributeError, OSError):
+            warnings.append('已按国服库存计算，上次扫描的穿戴记录不可用')
     history = read(root/'markers.json', {})
     from .optimizer import candidate_pool, NoBuildCandidates
     from .engine import managed

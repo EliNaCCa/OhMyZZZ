@@ -42,6 +42,7 @@ def smoke(home, sample, temp):
     widget.on_interface_shown()
     widget.reader.setCurrentIndex(widget.reader.findData('cn_export'))
     assert widget.scan_button.text() == '读取仓库'
+    assert '读取仓库' in widget.calculate_buttons[0].toolTip()
     with patch.object(QFileDialog, 'getOpenFileName', side_effect=AssertionError('unexpected file chooser')):
         widget.scan_button.click()
     end = monotonic() + 12
@@ -71,6 +72,10 @@ def smoke(home, sample, temp):
     scanned = dict(format='ZOD', version=1, dbVersion=2, source='Zenless Optimizer',
                    discs=[dict(d, id=f'ocr-{i}') for i, d in enumerate(original)], characters=[], wengines=[],
                    audit=dict(game_total=5, exported=5, delta=0))
+    save(account / 'inventory.json', dict(scanned, audit=['unreadable']))
+    alone = preview(account, refresh=False)
+    assert [d['exportUid'] for d in alone['discs']] == [d['id'] for d in records]
+    assert 'gameComparison' not in alone and all('lastScanOwner' not in d for d in alone['discs'])
     save(account / 'inventory.json', scanned)
     widget.reload()
     assert widget.preview_stale
@@ -168,6 +173,10 @@ def smoke(home, sample, temp):
     refresh(small, lambda: None)
     pending = read(small/'dismantle-result.json')
     assert pending['status'] == 'pending' and 'afterInventory' not in pending
+    from drive_disc_manager.salvage_page import latest_batch
+    widget.salvage_page.present(small, {}, latest_batch(small))
+    assert widget.salvage_page.title.text() == '等待国服库存更新'
+    assert widget.salvage_page.grid.item(0, 4).text() == '此前已弃置'
     # Same bytes, newer export. The native record is observed by ordinary refresh.
     write_export(revised, stamp+2)
     refresh(small, lambda: None)
@@ -176,6 +185,10 @@ def smoke(home, sample, temp):
     assert {(d['uid'], d['after']) for d in audit['stockChanges']}=={('1001','强化 +12 → +15'),('2002','新入库')}
     refresh(small, lambda: None)
     assert read(small/'dismantle-result.json') == audit
+    save(small/'dismantle-preview.json', dict(batch, batch='later', started=stamp+5))
+    widget.salvage_page.present(small, {}, latest_batch(small))
+    assert widget.salvage_page.title.text() == '本轮拆解预览'
+    assert '1002' in widget.salvage_page.grid.item(0, 0).toolTip()
     # A lookalike replacing an unmarked disc must be reported as an unexpected loss.
     other = temp/'alternate'/'1'
     save(other/'cn-inventory.json', before)

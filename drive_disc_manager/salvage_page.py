@@ -8,6 +8,18 @@ from qfluentwidgets import BodyLabel, CheckBox, PushButton, SubtitleLabel
 from .disc_detail_page import table
 from .reserve_presets import STAT_NAMES
 from .salvage_audit import needs_review
+from .store import read
+
+
+def latest_batch(account):
+    last = read(account/'dismantle-result.json', {})
+    if needs_review(last):
+        return last
+    planned = read(account/'dismantle-preview.json', {})
+    if (planned.get('batch') and planned.get('account') == int(account.name)
+            and planned['batch'] != last.get('batch') and planned.get('started', 0) > last.get('started', 0)):
+        return planned
+    return last
 
 
 class SalvagePage(QWidget):
@@ -32,7 +44,7 @@ class SalvagePage(QWidget):
 
     def present(self, account, names, last):
         batch = last.get('batch')
-        if (account, batch) != (self.account, getattr(self, 'batch', None)):
+        if (account, batch, last.get('status')) != (self.account, getattr(self, 'batch', None), getattr(self, 'last', {}).get('status')):
             with QSignalBlocker(self.issues):
                 self.issues.setChecked(needs_review(last))
         self.account, self.batch = account, batch
@@ -52,6 +64,8 @@ class SalvagePage(QWidget):
         rows = []
         labels = {'已不在库存':'已离库', '重复属性待核':'有同属性的盘，需核对', '仍标弃置':'仍在仓库',
                   '在库且未标弃置':'仍在仓库，已取消弃置', '仍在低品级范围':'仍在仓库', '标记待核':'弃置标记没读清'}
+        sources = {'游戏原有弃置':'此前已弃置', '本轮观察到弃置':'本轮已标弃置',
+                   '低品级可能入选':'符合品级筛选', '内置低品级范围':'符合品级筛选', '弃置标记待核':'弃置标记待核对'}
         for entry in data.get('entries', []):
             state = entry.get('after')
             if state:
@@ -60,6 +74,10 @@ class SalvagePage(QWidget):
                 if uncertain:
                     text = '标记时中断 · ' + ('仍在仓库' if state == '在库且未标弃置' else text)
                 rows.append((entry, text, uncertain or state not in ('已不在库存', '在库且未标弃置')))
+            elif not observed:
+                rows.append((entry, sources.get(entry.get('source'), '待核对'), False))
+        if data.get('status') == 'not_submitted':
+            rows.extend((entry, '计划标记弃置', False) for entry in data.get('markCandidates', {}).values())
         for item in data.get('stockChanges', []):
             state = '新入库' if item['kind'] == 'extra' and data.get('newDiscs') else item['after']
             rows.append((item, state, item.get('issue', review)))
@@ -88,14 +106,17 @@ class SalvagePage(QWidget):
             self.title.setText('还没有库存记录')
             self.note.hide()
             return
-        if review:
-            title = '有盘需要核对' if observed else '等待下次扫描'
+        if data.get('status') == 'not_submitted':
+            title = '本轮拆解预览'
+        elif review:
+            title = '有盘需要核对' if observed else ('等待国服库存更新' if data.get('beforeUids') else '等待下次扫描')
         else:
             title = '已核对' if data.get('status') == 'reviewed' else '库存已核对'
         self.title.setText(title)
         parts = []
-        if data.get('observedAt'):
-            parts.append(datetime.fromtimestamp(data['observedAt']).strftime('%m-%d %H:%M'))
+        stamp = data.get('observedAt') or data.get('started')
+        if stamp:
+            parts.append(datetime.fromtimestamp(stamp).strftime('%m-%d %H:%M'))
         if observed and 'beforeTotal' in data and 'afterTotal' in data:
             parts.append(f"库存 {data['beforeTotal']} → {data['afterTotal']} 张")
         if data.get('newDiscs'):
