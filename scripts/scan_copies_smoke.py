@@ -37,7 +37,7 @@ def smoke():
         saved = read(root/'inventory.json')
         assert [d['lock'] for d in saved['discs']] == [False, True]
         assert all(d['ambiguous'] and d['review'] for d in plan(saved, defaults(), {}, {'SwingJazz':'摇摆爵士'})['discs'])
-        for evidence in ([disc, overlap], [disc, dict(copy, scanCell=(0, 1))], [disc, dict(copy, observedValues=None)],
+        for evidence in ([disc, dict(overlap, scanCell=(1, 1))], [disc, dict(copy, scanCell=(0, 1))], [disc, dict(copy, observedValues=None)],
                          [upper, jitter], [upper, dict(lower, scanCell=(0,1,493,'b'*64))],
                          [upper, dict(lower, scanCell=(1,1,493,stamp))], [upper, dict(lower, scanCell=(0,1))]):
             try:
@@ -47,6 +47,24 @@ def smoke():
             else:
                 raise AssertionError('Unproved duplicate was counted')
         assert read(root/'inventory.json') == saved and read(source)['audit']['delta'] == -1
+        # Scrolling keeps each disc in its column. Seeing column 2 again is
+        # an overlap, while the copy in column 1 counts even on another page.
+        assert import_inventory(root, source, readings=[disc, overlap, dict(overlap, scanCell=(2, 2))]) == 2
+        saved = read(root/'inventory.json')
+        assert saved['audit']['samePageCopies'] == 0 and saved['audit']['crossPageCopies'] == 1
+        assert {d['id'] for d in saved['discs']} == {'first', 'seen-again'}
+        # Preserve proven copies for read-only inspection when another disc
+        # is missing. The previous complete inventory is still authoritative.
+        save(source, dict(export, audit=dict(game_total=3, exported=1, delta=-2)))
+        try:
+            import_inventory(root, source, readings=[disc, overlap])
+        except ValueError as exc:
+            assert '游戏内 3，导出 2' in str(exc)
+        else:
+            raise AssertionError('incomplete inventory accepted')
+        observed = read(root/'scan-observations.json')
+        assert observed['total'] == 3 and len(observed['rows']) == 2
+        assert read(root/'inventory.json') == saved
         # The host dedup key also collapses A/S pieces with matching roll counts.
         gold = dict(upper, observedGrade='S')
         silver = dict(lower, observedGrade='A', rarity='A',

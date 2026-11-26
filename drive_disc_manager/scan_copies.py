@@ -1,4 +1,4 @@
-"""Recover co-visible copies conservatively from the scanner's own OCR readings."""
+"""Count identical-looking discs from the scanner's verified grid positions."""
 from collections import Counter, defaultdict
 
 from .stat_reading import checked_values
@@ -71,8 +71,8 @@ def viewport_stamp(image, selected_col):
     return evidence.hexdigest()
 
 
-def page_copies(readings):
-    """Independent columns are disjoint. Within a column count well-separated verified rows."""
+def grid_copies(readings):
+    """A vertical scroll preserves the column. Count rows together only on one stationary page."""
     by_col = defaultdict(list)
     for d in readings:
         by_col[d['scanCell'][1]].append(d)
@@ -84,7 +84,7 @@ def page_copies(readings):
             cell = disc['scanCell']
             if (len(cell) == 4 and type(cell[2]) is int and 180 <= cell[2] <= 955 and
                     isinstance(cell[3], str) and len(cell[3]) == 64):
-                groups[cell[3]].append((cell[2], disc))
+                groups[(cell[0], cell[3])].append((cell[2], disc))
         for positions in groups.values():
             picks, last_y = [], -1000
             for y, disc in sorted(positions, key=lambda item:item[0]):
@@ -128,7 +128,7 @@ def observed_siblings(exported, cells):
 
 
 def with_copies(export, readings):
-    """Use the largest proven multiplicity on one page. Pages may overlap vertically."""
+    """Restore the visible copies before the caller checks the warehouse total."""
     audit = export.get('audit') or {}
     discs = export.get('discs', [])
     total = audit.get('game_total')
@@ -149,19 +149,25 @@ def with_copies(export, readings):
 
     # Export IDs are temporary. A fingerprint may identify a group, never an individual copy.
     counts = Counter(scanner_key(d) for d in discs)
-    rebuilt, added = [], 0
+    rebuilt, same_page, across_pages = [], 0, 0
     for disc in discs:
         key = scanner_key(disc)
-        pages = (page_copies(rows) for rows in groups.get(key, {}).values())
-        cells = max((page for page in pages if len(page) > 1 and observed_siblings(disc, page)), key=len, default=[])
+        pages = groups.get(key, {})
+        readings_by_page = (grid_copies(rows) for rows in pages.values())
+        cells = max((page for page in readings_by_page if len(page) > 1 and observed_siblings(disc, page)), key=len, default=[])
+        on_one_page = max(1, len(cells))
+        if len(pages) > 1:
+            # Different columns stay disjoint as the nine-column grid moves vertically.
+            combined = grid_copies(d for rows in pages.values() for d in rows)
+            if len(combined) > on_one_page and observed_siblings(disc, combined):
+                cells = combined
         if cells and counts[key] == 1:
             rebuilt.extend(cells)
-            added += len(cells)-1
+            same_page += on_one_page - 1
+            across_pages += len(cells) - on_one_page
         else:
             rebuilt.append(disc)
-    if not added:
+    if not (same_page or across_pages):
         return export
-    if len(rebuilt) != total:
-        raise ValueError(f'同页选中框已核实 {added} 张重复盘，仍无法对账：游戏内 {total}，已核实 {len(rebuilt)} 张')
-    return dict(export, discs=rebuilt, audit=dict(audit, exported=len(rebuilt), delta=0,
-                scannerExported=len(discs), samePageCopies=added))
+    return dict(export, discs=rebuilt, audit=dict(audit, exported=len(rebuilt), delta=len(rebuilt)-total,
+                scannerExported=len(discs), samePageCopies=same_page, crossPageCopies=across_pages))
