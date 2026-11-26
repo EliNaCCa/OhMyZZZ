@@ -13,6 +13,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Read player-facing notes for this version
+        run: python -m drive_disc_manager.release_notes "$GITHUB_REF_NAME" > "$RUNNER_TEMP/ohmyzzz-notes.md"
       - run: python scripts/smoke.py
       - run: python scripts/group_priority_smoke.py
       - run: python scripts/allocation_input_smoke.py
@@ -33,4 +35,4 @@ jobs:
           retention-days: 14
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" "dist/OhMyZZZ-${GITHUB_REF_NAME#manager-v}.zip" "dist/OhMyZZZ-${GITHUB_REF_NAME#manager-v}.zip.sha256" --title "OhMyZZZ ${GITHUB_REF_NAME#manager-v}" --verify-tag --generate-notes --prerelease
+        run: gh release create "$GITHUB_REF_NAME" "dist/OhMyZZZ-${GITHUB_REF_NAME#manager-v}.zip" "dist/OhMyZZZ-${GITHUB_REF_NAME#manager-v}.zip.sha256" --title "OhMyZZZ ${GITHUB_REF_NAME#manager-v}" --verify-tag --notes-file "$RUNNER_TEMP/ohmyzzz-notes.md" --prerelease

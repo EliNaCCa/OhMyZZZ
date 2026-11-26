@@ -48,7 +48,7 @@ def launch_after_exit(home):
 
 
 class UpdatePrompt(QObject):
-    finished=Signal(str,str)
+    finished=Signal(str,str,str)
     downloaded=Signal(object,str)
 
     def __init__(self, app, home, ctx):
@@ -160,14 +160,14 @@ class UpdatePrompt(QObject):
         self.busy=True
         def lookup():
             try:
-                version,_=maintenance.published_release()
-                self.finished.emit(version,'')
+                version,release=maintenance.published_release()
+                self.finished.emit(version,release.get('body') or '','')
             except Exception as exc:
-                try: self.finished.emit('',str(exc))
+                try: self.finished.emit('','',str(exc))
                 except RuntimeError: pass  # Main window closed while the request was in flight.
         Thread(target=lookup,name='OhMyZZZ release check',daemon=True).start()
 
-    def receive(self,version,error):
+    def receive(self,version,body,error):
         self.busy=False
         manual,self.manual=self.manual,False
         if not manual and not self.automatic(): return
@@ -184,8 +184,14 @@ class UpdatePrompt(QObject):
         box=QMessageBox(self.window)
         self.box=box
         box.setWindowTitle('OhMyZZZ 更新')
+        box.setTextFormat(Qt.TextFormat.PlainText)
         box.setText(f'驱动盘管理有新版本 {version}')
-        box.setInformativeText(f'当前版本 {PLUGIN_VERSION}。空闲时可立即安装，或选择在退出后安装。')
+        from .release_notes import plain_notes
+        notes = plain_notes(body) or '此版本暂无更新说明。'
+        if len(notes) > 430 or len(notes.splitlines()) > 8:
+            box.setDetailedText(notes)
+            notes = '\n'.join(notes.splitlines()[:8])[:430].rstrip() + '…'
+        box.setInformativeText(f'当前版本 {PLUGIN_VERSION}\n\n{notes}')
         now=box.addButton('立即更新',QMessageBox.ButtonRole.AcceptRole)
         now.setEnabled(bool(self.can_reload()))
         accept=box.addButton('退出后更新',QMessageBox.ButtonRole.AcceptRole)

@@ -165,7 +165,11 @@ class ManagerInterface(BaseInterface):
         self.button(bar,'退出后回退上一版',lambda:self.queue_maintenance('rollback'))
         self.button(bar,'取消待办',lambda:self.queue_maintenance(''))
         self.button(bar,'刷新状态',self.show_maintenance)
-        box.addStretch()
+        from .release_notes import installed_history
+        box.addWidget(QLabel('已发布的更新日志'))
+        history = QPlainTextEdit(); history.setReadOnly(True)
+        history.setPlainText(installed_history(PLUGIN_VERSION))
+        box.addWidget(history, 1)
         from .reserve_presets import ReservePresets
         self.reserve_presets = ReservePresets()
         tabs.addTab(self.reserve_presets, '备用规则')
