@@ -1,5 +1,5 @@
 """Assign complete builds to simultaneous profiles in player priority order."""
-from .optimizer import NoBuildCandidates, number, select_candidate
+from .optimizer import NEAR_CRIT_GAP, NoBuildCandidates, number, select_candidate
 
 
 def reusable_assignments(report, allocation_key, groups, pool):
@@ -62,64 +62,122 @@ def arrange_profile(profiles, index, group, rank):
     return updated
 
 
-def ranked_options(pool, profile, current):
-    remaining = list(pool)
-    while remaining:
-        chosen = select_candidate(remaining, profile, current)
-        yield chosen
-        remaining = [candidate for candidate in remaining if candidate['ids'] != chosen['ids']]
+def same_priority(left, right, current):
+    if len(current.intersection(left['ids'])) != len(current.intersection(right['ids'])):
+        return False
+    if 'outputScore' in left:
+        def priority(row):
+            return (number(row.get('rawOutput', row['outputScore'])),
+                    number(row.get('rawCritRate', row['critRate'])) >= 100 - NEAR_CRIT_GAP)
+        return priority(left) == priority(right)
+    if 'roleOrder' in left:
+        from .role_panel import compare_order
+        return compare_order(left['roleOrder'], right['roleOrder']) == 0
+    return left['ids'] == right['ids']
 
 
 def assign_group(members, pool, url, fetch, max_nodes=160):
     # Search the available inventory at each step. Multiple branches may reach
     # the same set of claimed discs and reuse the cached optimizer response.
     cache = {}
+    if not members:
+        return []
     nodes = queries = 0
+    restricted_searches = set()
+    extra_queries = 0
+    highest_seen = {}
     last_problem = ''
     limited = False
-    def search(index, claimed):
-        nonlocal nodes, queries, last_problem, limited
-        if index == len(members):
-            return []
-        if nodes >= max_nodes:
-            limited = True
-            return None
-        nodes += 1
+    def search(index, prefixes):
+        nonlocal nodes, limited
         profile, current = members[index]
         def candidates(excluded):
-            nonlocal queries, last_problem, limited
+            nonlocal queries, extra_queries, last_problem, limited
             key = index, excluded
             if key not in cache:
-                if excluded and queries >= len(members) + 16:
-                    limited = True
-                    return []
+                if excluded:
+                    # Keep one restricted lookup for each later role, even when
+                    # many tied prefixes compete for the extra search budget.
+                    if index in restricted_searches:
+                        if extra_queries >= 16:
+                            limited = True
+                            return []
+                        extra_queries += 1
+                    restricted_searches.add(index)
                 queries += 1
                 available = [disc for disc in pool if disc['id'] not in excluded]
                 try:
                     cache[key] = fetch(url, profile, available, current)
+                    if cache[key] and 'outputScore' in cache[key][0]:
+                        best = max(number(c.get('rawOutput', c['outputScore'])) for c in cache[key])
+                        highest_seen[index] = max(highest_seen.get(index, best), best)
                 except NoBuildCandidates as exc:
                     last_problem = f"{profile['name']} · {exc}"
                     cache[key] = []
             return cache[key]
         original = candidates(frozenset())
-        restricted = candidates(claimed) if claimed else []
-        # For utility agents prefer the optimizer's order for the actual remaining
-        # inventory. Direct builds compare all known feasible options by raw output.
-        choices = {}
-        for candidate in (*restricted, *original):
-            if claimed.isdisjoint(candidate['ids']):
-                choices.setdefault(tuple(candidate['ids']), candidate)
-        for choice in ranked_options(choices.values(), profile, current):
-            suffix = search(index+1, claimed.union(choice['ids']))
-            if suffix is not None:
-                choice['availableBuilds'] = len(choices)
-                return [(profile, choice)]+suffix
-            if nodes >= max_nodes:
+        options, paths = {}, {}
+        # Prefixes are tied on every higher-priority role's preferences. Compare
+        # the next role's options across those prefixes before choosing disc IDs.
+        for claimed, prefix in prefixes:
+            if nodes >= max_nodes - (len(members) - index - 1):
                 limited = True
                 break
+            nodes += 1
+            restricted = candidates(claimed) if claimed else []
+            feasible = {tuple(c['ids']):c for c in (*original, *restricted) if claimed.isdisjoint(c['ids'])}
+            outputs = (number(c.get('rawOutput', c['outputScore'])) for c in feasible.values() if 'outputScore' in c)
+            best = max(outputs, default=None)
+            for ids, candidate in feasible.items():
+                options.setdefault(ids, candidate)
+                paths.setdefault(ids, []).append((claimed, prefix, len(feasible), best))
+        backtracked = False
+        branch_limit = max(1, max_nodes - nodes - (len(members) - index - 2))
+        while options:
+            preferred = select_candidate(list(options.values()), profile, current)
+            first = tuple(preferred['ids'])
+            ties = [first, *(ids for ids, row in options.items() if ids != first and same_priority(row, preferred, current))]
+            following = {}
+            truncated = False
+            for ids in ties:
+                candidate = options.pop(ids)
+                for claimed, prefix, available, best in paths.pop(ids):
+                    # The remaining roles only depend on which physical discs are claimed.
+                    after = claimed.union(ids)
+                    if after in following:
+                        continue
+                    if len(following) >= branch_limit:
+                        limited = truncated = True
+                        break
+                    choice = dict(candidate, availableBuilds=available)
+                    if 'outputScore' in preferred:
+                        for key in ('reason','bestOutput','rawBestOutput','relativeLossPct','bestNearFullOutput','bestFullOutput'):
+                            choice[key] = preferred[key]
+                        choice['effectiveCritRate'] = min(100, candidate['critRate'])
+                        choice['rawAvailableBestOutput'] = str(best)
+                        score = number(candidate.get('rawOutput', candidate['outputScore']))
+                        choice['availableLossPct'] = float(100*(best-score)/best)
+                    if ids != first:
+                        choice['reason'] = '优先方案同分，按后续角色需求分盘 · '+choice.get('reason','')
+                    if backtracked:
+                        choice['reason'] = '为同时出场的角色凑齐六盘 · '+choice.get('reason','')
+                    lineup = prefix + [(profile, choice)]
+                    if index + 1 == len(members):
+                        return lineup
+                    following[after] = (after, lineup)
+                if truncated:
+                    break
+            result = search(index+1, following.values())
+            if result is not None:
+                return result
+            if truncated:
+                break
+            if limited and nodes >= max_nodes - (len(members) - index - 1):
+                break
+            backtracked = True
         return None
 
-    result = search(0, frozenset())
+    result = search(0, [(frozenset(), [])])
     if result is None:
         reason = '达到本轮联合分配搜索上限，配队待复核' if limited else last_problem or '在搜索范围内没有找到全员六盘不重复的组合'
         raise ValueError(reason)
@@ -139,12 +197,12 @@ def assign_group(members, pool, url, fetch, max_nodes=160):
                     choice['reason'] = '同时出场组协调让盘 · '+detail+' · '+choice.get('reason','')
                 elif index < len(result)-1:
                     choice['reason'] = '同时出场组协调让盘 · '+choice.get('reason','')
-            if 'bestOutput' in baseline:
-                best = max(number(baseline['rawBestOutput']), number(choice['rawBestOutput']))
-                choice['rawBestOutput'] = str(best)
-                choice['bestOutput'] = float(best)
-                score = number(choice.get('rawOutput', choice['outputScore']))
-                choice['relativeLossPct'] = float(100*(best-score)/best)
+        if index in highest_seen:
+            best = highest_seen[index]
+            choice['rawBestOutput'] = str(best)
+            choice['bestOutput'] = float(best)
+            score = number(choice.get('rawOutput', choice['outputScore']))
+            choice['relativeLossPct'] = float(100*(best-score)/best)
         choice['search'] = dict(candidateBuilds=len(original), availableBuilds=choice.pop('availableBuilds'),
                                 calls=queries, visited=nodes, limited=limited)
         if original and original[0].get('optimizerScope'):

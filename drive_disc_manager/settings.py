@@ -490,6 +490,8 @@ class ManagerInterface(BaseInterface):
                 details.append('当前穿戴六盘未核实')
         if 'outputScore' in result:
             details += [f"所选输出 {result.get('rawOutput', result['outputScore'])}", f"候选最高 {result.get('rawBestOutput', result['bestOutput'])}"]
+            if profile.get('simultaneous') and 'rawAvailableBestOutput' in result:
+                details.append(f"扣除前序角色用盘后最高 {result['rawAvailableBestOutput']} · 所选与其相差 {result['availableLossPct']:.6g}%")
             from .optimizer import number
             worn = result.get('wornOutput')
             if worn is not None and number(worn) > 0:

@@ -26,6 +26,43 @@ MODE_NAMES = {'UTILITY_BALANCE':'综合辅助指标', 'ANOMALY_AP':'优先异常
 DIRECT_FIELDS = ('ATK', 'CRIT_RATE', 'CRIT_DMG')
 
 
+def optimizer_order(request, result):
+    """Comparable across shortlists, following v2.3.31.1 sortResults (larger is better)."""
+    mode = (request.get('mode') or '').strip().upper()
+    fields = {
+        'UTILITY_BALANCE': ('score', 'weightedWords', 'finalAttack', 'finalHp'),
+        'ANOMALY_AP': ('ap', 'finalAttack', 'weightedWords', 'score'),
+        'ANOMALY_ATK': ('finalAttack', 'ap', 'weightedWords', 'score'),
+        'ANOMALY_WORDS': ('weightedWords', 'ap', 'finalAttack', 'score'),
+        'MAX_WORDS': ('score', 'weightedWords', 'damageIndex', '-critShortfall', '-critOverflow', 'panelCritDmg'),
+        'MAX_CD': ('panelCritDmg', 'damageIndex', '-critShortfall', '-critOverflow', 'weightedWords'),
+        'RUPTURE_SHEER': ('score', 'damageIndex', 'sheerForce', 'panelCritDmg', '-critShortfall', '-critOverflow'),
+    }
+    priority = result.get('twoSetPriority', 1)
+    order = [-priority if priority > 0 else -1]
+    if mode in ('STRICT_TARGET', 'STRICT_TARGETS'):
+        gaps = result.get('strictTargetGaps') or []
+        order.extend(-gaps[i] if i < len(gaps) else 0 for i in range(6))
+        metrics = ('weightedWords', 'score')
+    else:
+        metrics = fields.get(mode, ('score', 'critDmg', 'weightedWords', '-critShortfall', '-critOverflow'))
+    for key in metrics:
+        if key == 'ap':
+            order.append(result['stats'].get('ANOMALY_PROFICIENCY', 0))
+        else:
+            order.append(-result[key[1:]] if key.startswith('-') else result[key])
+    return order
+
+
+def compare_order(left, right):
+    # Strict target gaps are unrounded float64s. The pinned engine treats gaps
+    # less than 1e-9 apart as equal and compares the next priority level.
+    for a, b in zip(left, right, strict=True):
+        if abs(a-b) >= 1e-9:
+            return 1 if a > b else -1
+    return 0
+
+
 def target_value(request, key):
     def read(field):
         value = request.get(field)

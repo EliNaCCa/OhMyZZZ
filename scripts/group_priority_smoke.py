@@ -71,6 +71,23 @@ def smoke():
         return result
     result = check(a_options[0],b_options[1])
     assert result[b['name']]['relativeLossPct']==0.1 and 'A 常态 占用 1 号位' in result[b['name']]['reason']
+    assert result[b['name']]['rawAvailableBestOutput'] == '99.9' and result[b['name']]['availableLossPct'] == 0
+    # Equal priority-C scores: choose the physical copy that leaves the strongest
+    # complete lineup, even if fingerprint sorting happens to prefer the other.
+    a_options[1]['outputScore'] = 100
+    scarce = max((0,1), key=lambda i:a_options[i]['ids'])
+    b_options[scarce]['outputScore'] = 120
+    shared = check(a_options[1-scarce],b_options[scarce])
+    assert '同分' in shared[a['name']]['reason']
+    # An already worn piece wins an exact tie. A genuine priority-C gain wins too.
+    discs[scarce]['location'] = 'Alpha'
+    check(a_options[scarce],b_options[1-scarce])
+    discs[scarce].pop('location')
+    a_options[scarce]['rawOutput'] = '100.00000001'
+    check(a_options[scarce],b_options[1-scarce])
+    a_options[scarce].pop('rawOutput')
+    a_options[1]['outputScore'] = 98
+    b_options[scarce]['outputScore'] = (100,99.9)[scarce]
     cfg['profiles'] = arrange_profile(cfg['profiles'], 2, '同场', 1)
     assert [p['name'] for p in cfg['profiles']]==['B','A 爆发','A 常态']
     check(a_options[1],b_options[0])

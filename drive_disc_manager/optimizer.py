@@ -208,7 +208,7 @@ def current_panel(url, args, current, sources, request):
 
 
 def role_candidates(url, args, discs, current, request):
-    from .role_panel import ROLE_FIELDS, observed_panel, goal_rows
+    from .role_panel import ROLE_FIELDS, observed_panel, goal_rows, optimizer_order
     role = args['roleSystem'].strip().upper()
     sources = {d['id']:d for d in discs}
     response = request(url, args)
@@ -219,7 +219,8 @@ def role_candidates(url, args, discs, current, request):
         panel = observed_panel(args,result)
         if set(ids) == current:
             worn_panel = panel
-        builds.append(dict(ids=list(ids), panel=panel, reason=result.get('reason') or '沿用配装器排名', score=result['score']))
+        builds.append(dict(ids=list(ids), panel=panel, reason=result.get('reason') or '沿用配装器排名',
+                           score=result['score'], roleOrder=optimizer_order(args, result)))
     if not worn_panel:
         worn_panel = current_panel(url, args, current, sources, request)
     if not builds or role not in ROLE_FIELDS:
@@ -257,7 +258,7 @@ def _window_pool(url, profile, discs, current, request, exact=False):
     combinations = prod(counts[slot] for slot in range(1, 7))
     # The pinned API accepts up to 200 results. Return every eligible combination
     # for small pools, even when the optimizer's own ranking differs from ours.
-    limit = max(24, combinations) if direct and combinations <= 200 else 24
+    limit = max(24, combinations) if combinations <= 200 else 24
     args.update(discs=discs, excludeDiscarded=True, topN=limit, maxCombinations=profile.get('searchLimit',200000))
     if not direct:
         return role_candidates(url, args, discs, current, request)
@@ -382,6 +383,14 @@ def _profile_candidates(url, profile, discs, current, request):
 def select_candidate(pool, profile, current):
     if 'outputScore' in pool[0]:
         return prefer(pool, profile.get('tolerancePct', 0.5), current)
+    if 'roleOrder' in pool[0]:
+        from .role_panel import compare_order
+        best = pool[0]
+        for row in pool[1:]:
+            comparison = compare_order(row['roleOrder'], best['roleOrder'])
+            if comparison > 0 or comparison == 0 and len(current.intersection(row['ids'])) > len(current.intersection(best['ids'])):
+                best = row
+        return dict(best)
     return dict(pool[0])
 
 

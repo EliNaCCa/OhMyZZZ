@@ -43,6 +43,23 @@ def smoke_role_targets(endpoint, pieces):
     assert raw['combatStats']['ANOMALY_PROFICIENCY'] == 200
     print('PASS role targets: worn vs selected, hard vs strict, panel vs combat proficiency')
 
+    # Utility slot 6 ties for the direct attacker. Both leave the stunner a legal
+    # build under strict targets, but only one leaves enough impact.
+    from copy import deepcopy
+    ordinary = deepcopy(pieces[:5])
+    boosted = [dict(d, id='boost-'+d['id'], subStats=[dict(type='CRIT_DMG', value=4.8)]) for d in ordinary]
+    energy = dict(pieces[5], id='a-energy', mainStat=dict(type='ENERGY_REGEN', value=60))
+    impact = dict(impact, id='z-impact')
+    leader = dict(name='艾莲', request=dict(characterName='艾莲', roleSystem='ATTACK', baseATK=1250, baseCritRate=100))
+    stunner = dict(name='莱卡恩', request=dict(request, mode='STRICT_TARGETS', targetImpact=118))
+    discs = ordinary + boosted + [energy, impact]
+    worn = {d['id'] for d in ordinary} | {energy['id']}
+    (_, carry), (_, stun) = assign_group([(leader, set()), (stunner, worn)], discs, endpoint, candidate_pool)
+    assert carry['ids'][-1] == 'a-energy' and stun['ids'][-1] == 'z-impact'
+    assert set(carry['ids']).isdisjoint(stun['ids']) and '同分' in carry['reason']
+    assert stun['currentPanel']['IMPACT'] == 100 and stun['panel']['IMPACT'] == 118
+    print('PASS direct-output tie preserves 118 impact for the stunner; measured worn impact 100')
+
 
 def smoke(source):
     with TemporaryDirectory() as tmp:
