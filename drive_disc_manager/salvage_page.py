@@ -61,12 +61,13 @@ class SalvagePage(QWidget):
                     text = '标记时中断 · ' + ('仍在仓库' if state == '在库且未标弃置' else text)
                 rows.append((entry, text, uncertain or state not in ('已不在库存', '在库且未标弃置')))
         for item in data.get('stockChanges', []):
-            state = '新刷到的盘' if item['kind'] == 'extra' and data.get('newDiscs') else item['after']
-            rows.append((item, state, review))
+            state = '新入库' if item['kind'] == 'extra' and data.get('newDiscs') else item['after']
+            rows.append((item, state, item.get('issue', review)))
         can_filter = review and observed and any(row[2] for row in rows)
         self.issues.setVisible(can_filter)
         only_issues = can_filter and self.issues.isChecked()
         formatted = []
+        numbers = []
         for entry, state, issue in rows:
             if only_issues and not issue:
                 continue
@@ -76,7 +77,11 @@ class SalvagePage(QWidget):
                 name += f" ×{entry['count']}"
             formatted.append((name, entry.get('slot', '—'), STAT_NAMES.get(entry.get('main'), entry.get('main', '—')),
                               f"+{entry['level']}" if 'level' in entry else '—', state))
+            numbers.append(entry.get('uid'))
         self.fill(self.grid, formatted)
+        for row, uid in enumerate(numbers):
+            if uid:
+                self.grid.item(row, 0).setToolTip(f'驱动盘编号 {uid}')
         self.grid.setVisible(bool(formatted))
         self.close_batch.setVisible(review and observed)
         if not data:
@@ -94,7 +99,7 @@ class SalvagePage(QWidget):
         if observed and 'beforeTotal' in data and 'afterTotal' in data:
             parts.append(f"库存 {data['beforeTotal']} → {data['afterTotal']} 张")
         if data.get('newDiscs'):
-            parts.append(f"新刷到 {data['newDiscs']} 张")
+            parts.append(f"新入库 {data['newDiscs']} 张")
         if review and data.get('unresolvedGrades'):
             parts.append(f"有 {data['unresolvedGrades']} 张品级没读清")
         if review and data.get('unreadMarks'):

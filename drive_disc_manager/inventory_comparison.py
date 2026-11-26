@@ -40,7 +40,7 @@ def verify_cn_inventory(exported, game, readings, names):
         # A card can appear on overlapping pages. It can supply controls for one
         # UID only when the inventory itself says this attribute line is unique.
         for disc in group:
-            row = dict(disc, exportUid=disc['id'], location='', ownerState='unknown', lockState='unknown',
+            row = dict(disc, exportUid=disc['id'], exportSet=disc['setKey'], location='', ownerState='unknown', lockState='unknown',
                        markState='unknown', observedGrade=None, observedValues=None)
             if len(group) == 1:
                 def controls(d):
@@ -63,7 +63,8 @@ def verify_cn_inventory(exported, game, readings, names):
             results.append(row)
     snapshot = dict(format='ZOD', version=1, dbVersion=2, source='OhMyZZZ CN', discs=results,
                     characters=game.get('characters', []), wengines=game.get('wengines', []),
-                    exportInventory=digest(exported), audit=dict(game_total=audit['game_total'], exported=len(results), delta=0,
+                    exportInventory=digest(exported), exportFile=exported.get('exportFile'), exportWrittenNs=exported.get('exportWrittenNs'),
+                    audit=dict(game_total=audit['game_total'], exported=len(results), delta=0,
                         scannerExported=audit.get('exported'), uidCount=len(discs),
                         verifiedControls=sum(d['markState'] != 'unknown' for d in results)))
     inventory(snapshot)

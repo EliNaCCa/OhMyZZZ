@@ -1,6 +1,7 @@
 """Reconcile a native dismantle receipt against the next complete, live scan."""
 from collections import Counter, defaultdict
-from time import time
+from pathlib import Path
+from time import time, time_ns
 from uuid import uuid4
 
 from .stat_reading import checked_values
@@ -29,6 +30,11 @@ def disc_shape(disc):
     return digest([str(disc['slotKey']), disc['level'], disc['mainStatKey'], sorted(s['key'] for s in disc['substats'])])
 
 
+def uid_item(disc):
+    return dict(set=disc.get('exportSet', disc['setKey']), slot=str(disc['slotKey']), main=disc['mainStatKey'],
+                level=disc['level'], rarity=disc['rarity'], rolls={s['key']:s['upgrades'] for s in disc['substats']})
+
+
 def prepare_batch(z, report, observed, grade, *, include_marked=True, before_marking=False):
     discs, counts = inventory(z)
     if report['inventory'] != digest(z) or grade not in GRADE_FILTERS:
@@ -40,6 +46,10 @@ def prepare_batch(z, report, observed, grade, *, include_marked=True, before_mar
     if before_marking and include_marked:
         planned = {row['fp'] for row in report.get('discs', []) if row.get('decision') == '弃置候选'}
     candidates = {}
+    cn = (z.get('source') == 'OhMyZZZ CN' and bool(z.get('exportFile')) and
+          type(z.get('exportWrittenNs')) is int and 0 < z['exportWrittenNs'] <= time_ns())
+    if z.get('source') == 'OhMyZZZ CN' and not cn:
+        raise ValueError('请先刷新国服导出文件，再核对拆解清单')
     for disc in discs:
         fp = fingerprint(disc)
         mark = observed.get(fp, disc.get('markState')) if counts[fp]==1 else disc.get('markState')
@@ -60,6 +70,8 @@ def prepare_batch(z, report, observed, grade, *, include_marked=True, before_mar
             source = None
         entry = dict(fp=fp, set=disc['setKey'], slot=disc['slotKey'], main=disc['mainStatKey'],
                      level=disc['level'], beforeMultiplicity=counts[fp], shape=disc_shape(disc))
+        if cn:
+            entry['uid'] = disc['id']
         if source:
             entries.append(dict(entry, source=source))
         else:
@@ -70,6 +82,8 @@ def prepare_batch(z, report, observed, grade, *, include_marked=True, before_mar
                 unresolvedGrades=unresolved_grades, status='not_submitted')
     if before_marking:
         receipt.update(markCandidates=candidates, unreadMarks=unread_marks)
+    if cn:
+        receipt.update(beforeUids={d['id']:uid_item(d) for d in discs}, exportFile=z['exportFile'], exportWrittenNs=z['exportWrittenNs'])
     return receipt
 
 
@@ -115,6 +129,8 @@ def observe_native(root, account, native, scan_started):
     if candidates:
         for fp, entry in read(root/'markers.json', {}).items():
             if fp not in candidates or entry.get('batch') != before['batch'] or entry.get('inventory') != before['inventory']:
+                continue
+            if entry.get('uid') and entry['uid'] != candidates[fp].get('uid'):
                 continue
             if entry.get('state') in ('marked', 'already-discarded'):
                 source = '本轮观察到弃置'
@@ -177,12 +193,17 @@ def stock_changes(root, previous, remaining, counts, by_fp, base):
     return changes, additions.total() if verified else None
 
 
-def retire_departed_marks(root, receipt):
+def retire_departed_marks(root, receipt, surviving_shapes=()):
     path = root / 'markers.json'
     history = read(path, {})
     retired = False
     for disc in receipt['entries']:
         entry = history.get(disc['fp'], {})
+        if disc.get('uid'):
+            if entry.get('uid') and entry['uid'] != disc['uid']:
+                continue
+            if not entry.get('uid') and (disc.get('beforeMultiplicity') != 1 or disc['shape'] in surviving_shapes):
+                continue
         if (disc['after'] == '已不在库存' and entry.get('state') in ('marked', 'already-discarded')
                 and (entry.get('time', 0) <= receipt['started'] or entry.get('batch') == receipt['batch'])):
             entry.update(previousState=entry['state'], state='absent-after-rescan',
@@ -192,13 +213,84 @@ def retire_departed_marks(root, receipt):
         save(path, history)
 
 
+def reconcile_uids(root, receipt, fresh):
+    """Audit a native batch using the next export of the same account's bound file."""
+    native = receipt.get('independentNative')
+    stamp = fresh.get('exportWrittenNs')
+    baseline = receipt.get('exportWrittenNs')
+    if (not native or not root.name.isdecimal() or int(root.name) != receipt.get('account')
+            or native.get('account') != receipt['account'] or fresh.get('source') not in ('OhMyZZZ CN', 'zzz-drive-exporter')
+            or not fresh.get('exportFile') or not receipt.get('exportFile') or Path(fresh['exportFile']) != Path(receipt['exportFile'])
+            or type(stamp) is not int or type(baseline) is not int or baseline <= 0
+            or stamp <= max(baseline, int(native['updated'] * 1_000_000_000)) or stamp > time_ns()):
+        return
+    game = fresh['source'] == 'OhMyZZZ CN'
+    discs, _ = inventory(fresh, preview_only=not game)
+    old = receipt['beforeUids']
+    current = {d['id']:d for d in discs}
+    if not game and old.keys().isdisjoint(current):
+        return
+    # A live scan can clarify the first post-run export's marks only while it
+    # still describes the very same physical inventory.
+    observation = digest({uid:uid_item(disc) for uid, disc in current.items()})
+    if receipt.get('firstUidObservation') and (not game or receipt['firstUidObservation'] != observation):
+        return
+    batch = {entry['uid'] for entry in receipt['entries']}
+    gone = old.keys() - current.keys()
+    added = current.keys() - old.keys()
+    issues = bool(gone - batch or receipt.get('unreadMarks') or receipt.get('unresolvedGrades'))
+    issues |= len(old) != receipt['beforeTotal'] or not batch <= old.keys() or len(batch) != len(receipt['entries'])
+    changes = []
+    for uid in sorted(gone - batch):
+        changes.append(dict(old[uid], uid=uid, kind='missing', after='清单外少盘', issue=True))
+    for uid in sorted(added):
+        changes.append(dict(uid_item(current[uid]), uid=uid, kind='extra', after='新入库', issue=False))
+    for uid in sorted(old.keys() & current.keys()):
+        previous, item = old[uid], uid_item(current[uid])
+        if previous == item:
+            continue
+        grew = (item['level'] > previous['level'] and all(item[k] == previous[k] for k in ('set', 'slot', 'main', 'rarity'))
+                and all(item['rolls'].get(k, 0) >= v for k, v in previous['rolls'].items()))
+        issues |= not grew
+        changes.append(dict(item, uid=uid, kind='changed', issue=not grew,
+                            after=f"强化 +{previous['level']} → +{item['level']}" if grew else '同编号属性变化待核'))
+    states = Counter()
+    for entry in receipt['entries']:
+        disc = current.get(entry['uid'])
+        if disc is None:
+            state = '已不在库存'
+        elif not game:
+            state = '仍在仓库'
+        elif disc.get('markState') == 'unmarked' and entry['source'] not in ('低品级可能入选', '内置低品级范围'):
+            state = '在库且未标弃置'
+        else:
+            state = '仍在仓库'
+        entry['after'] = state
+        states[state] += 1
+        issues |= state == '仍在仓库' or entry['source'] == '弃置标记待核'
+    resolved = bool(batch) and not issues and (native['status'] == 1 or batch <= gone)
+    if not game and states['仍在仓库']:
+        receipt['firstUidObservation'] = observation
+    else:
+        receipt.pop('firstUidObservation', None)
+    receipt.update(status='reconciled' if resolved else 'needs_review', observedAt=time(), afterInventory=digest(fresh),
+                   afterTotal=len(current), observations=dict(states), stockChanges=changes, newDiscs=len(added),
+                   resolution='已按驱动盘编号核对' if resolved else '请核对这批驱动盘的去向')
+    if resolved:
+        retire_departed_marks(root, receipt, {disc_shape(disc) for disc in discs})
+    record(root, receipt)
+
+
 def reconcile(root, fresh):
     previous = read(root/'dismantle-result.json', {})
     if not needs_review(previous):
         return
-    if previous.get('independentNative') and previous.get('afterInventory'):
+    if previous.get('independentNative') and previous.get('afterInventory') and not previous.get('firstUidObservation'):
         # Keep the first observation after the independent run. A later manual
         # cleanup cannot prove what the earlier native task selected.
+        return
+    if 'beforeUids' in previous:
+        reconcile_uids(root, previous, fresh)
         return
     discs, counts = inventory(fresh)
     previous.update(observedAt=time(), afterInventory=digest(fresh), afterTotal=len(discs))

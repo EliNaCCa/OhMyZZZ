@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
-from time import monotonic, sleep
+from time import monotonic, sleep, time
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -135,10 +135,59 @@ def smoke(home, sample, temp):
     else:
         raise AssertionError('used an out-of-date export')
     assert read(small/'inventory.json') == bridged
-    # Replay one simulated enhancement on one test ID. The real game was not changed.
+    # A physical UID survives enhancement. A newly dropped copy with the same
+    # stats as a departed piece is a different UID, even with equal totals.
+    from drive_disc_manager.inventory_comparison import verify_cn_inventory
+    from drive_disc_manager.salvage_audit import prepare_batch
+    from drive_disc_manager.store import digest
     changed = deepcopy(exported)
     changed['discs'][0]['level'] = 12
     changed['discs'][0]['substats'][2]['upgrades'] -= 1
+    stamp = int(time()) - 30
+    batch_file = small / 'export.json'
+    def write_export(rows, when):
+        save(batch_file, dict(exported, discs=[dict(d, lock=False) for d in rows]))
+        os.utime(batch_file, (when, when))
+
+    write_export(changed['discs'][:3], stamp-2)
+    refresh(small, lambda: None, path=batch_file)
+    before = read(small/'cn-inventory.json')
+    # Mock game controls, keeping each normalized item's real roll values.
+    controls = [dict(d, observedGrade='S', ownerState='bag', lockState='unlocked',
+                     markState='marked' if d['id']=='1002' else 'unmarked', trash=d['id']=='1002') for d in before['discs']]
+    paired = verify_cn_inventory(before, game, controls, equipment_names({}))
+    batch = prepare_batch(paired, dict(inventory=digest(paired), configuration='test'), {}, 'B', before_marking=True)
+    assert batch['unresolvedGrades'] == batch['unreadMarks'] == 0 and len(batch['entries']) == 1
+    batch.update(account=1, started=stamp)
+    save(small/'dismantle-preview.json', batch)
+    native = temp/'config/01/app_run_record/drive_disc_dismantle.yml'
+    native.parent.mkdir(parents=True, exist_ok=True)
+    native.write_text(f'run_time_float: {stamp+1}\nrun_status: 1\n', encoding='utf-8')
+    revised = [records[0], records[2], dict(records[1], id='2002')]
+    write_export(revised, stamp)
+    refresh(small, lambda: None)
+    pending = read(small/'dismantle-result.json')
+    assert pending['status'] == 'pending' and 'afterInventory' not in pending
+    # Same bytes, newer export. The native record is observed by ordinary refresh.
+    write_export(revised, stamp+2)
+    refresh(small, lambda: None)
+    audit = read(small/'dismantle-result.json')
+    assert audit['status']=='reconciled' and audit['newDiscs']==1 and audit['entries'][0]['uid']=='1002'
+    assert {(d['uid'], d['after']) for d in audit['stockChanges']}=={('1001','强化 +12 → +15'),('2002','新入库')}
+    refresh(small, lambda: None)
+    assert read(small/'dismantle-result.json') == audit
+    # A lookalike replacing an unmarked disc must be reported as an unexpected loss.
+    other = temp/'alternate'/'1'
+    save(other/'cn-inventory.json', before)
+    save(other/'dismantle-result.json', pending)
+    write_export([records[0], records[1], dict(records[2], id='2003')], stamp+3)
+    refresh(other, lambda: None)
+    review = read(other/'dismantle-result.json')
+    assert review['status'] == 'needs_review' and review['observations'] == {'仍在仓库':1}
+    assert [(d['uid'], d['after']) for d in review['stockChanges'] if d['issue']] == [('1003', '清单外少盘')]
+    widget.salvage_page.present(other, {}, review)
+    assert widget.salvage_page.grid.rowCount() == 2 and '1003' in widget.salvage_page.grid.item(1, 0).toolTip()
+    # Replay one simulated enhancement on one test ID. The real game was not changed.
     save(file, changed)
     assert refresh(account, lambda: None) == '属性变化 1 张'
     report = preview(account, refresh=False)

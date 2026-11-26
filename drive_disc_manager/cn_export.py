@@ -1,6 +1,8 @@
 """Read the finished ZOOD file exported by zzz-drive-exporter for CN Windows."""
 import json
+import os
 import re
+import time
 from pathlib import Path
 
 from .optimizer import STATS
@@ -105,6 +107,7 @@ def compare(previous, current):
 def refresh(root, check_account, path=None, *, showcase_uid='', wiki=None):
     """Under the maintenance lock, refresh only the file selected for this account."""
     previous = read(root / FILE, {})
+    started = time.time()
     bound = previous.get('exportFile', '')
     manual = path is not None
     if not manual and not bound:
@@ -121,7 +124,10 @@ def refresh(root, check_account, path=None, *, showcase_uid='', wiki=None):
                 if other_file and Path(other_file) == path:
                     raise ValueError('这个导出文件已用于另一个一条龙账号')
     with path.open('rb') as stream:
+        written_ns = os.fstat(stream.fileno()).st_mtime_ns
         payload = stream.read(16_000_001)
+        if os.fstat(stream.fileno()).st_mtime_ns != written_ns:
+            raise ValueError('读取器正在写入库存，请稍后刷新')
     if len(payload) > 16_000_000:
         raise ValueError('导出文件过大，请选择 ZOOD 仓库文件')
     snapshot = normalize(json.loads(payload.decode('utf-8-sig')))
@@ -132,7 +138,9 @@ def refresh(root, check_account, path=None, *, showcase_uid='', wiki=None):
         from .showcase import read_showcase
         snapshot['showcase'] = read_showcase(showcase_uid, after, wiki or {}, previous.get('showcase', {}))
     check_account()
-    if bound and path == Path(bound) and before == after and previous.get('showcase') == snapshot.get('showcase'):
+    if (bound and path == Path(bound) and before == after and previous.get('exportWrittenNs') == written_ns
+            and previous.get('showcase') == snapshot.get('showcase')):
+        audit_export(root, previous, started)
         return '驱动盘没有变化'
     message = compare(before, after)
     old_show, new_show = previous.get('showcase') or {}, snapshot.get('showcase') or {}
@@ -142,6 +150,22 @@ def refresh(root, check_account, path=None, *, showcase_uid='', wiki=None):
         if moved:
             change = f'展柜换装 {moved} 张'
             message = change if message == '驱动盘没有变化' else message + '，' + change
-    snapshot.update(exportFile=str(path), lastChange=message)
+    snapshot.update(exportFile=str(path), exportWrittenNs=written_ns, lastChange=message)
     save(root / FILE, snapshot)
+    audit_export(root, snapshot, started)
     return message
+
+
+def audit_export(root, snapshot, started):
+    from .salvage_audit import native_run, needs_review, observe_native, reconcile
+    previous = read(root/'dismantle-result.json', {})
+    pending = previous if needs_review(previous) else read(root/'dismantle-preview.json', {})
+    if (not pending.get('beforeUids') or pending.get('afterInventory') or not root.name.isdecimal()
+            or pending.get('account') != int(root.name) or not pending.get('exportFile')
+            or Path(pending['exportFile']) != Path(snapshot['exportFile'])):
+        return
+    if not needs_review(previous):
+        from one_dragon.utils import os_utils
+        account = int(root.name)
+        observe_native(root, account, native_run(Path(os_utils.get_work_dir()), account), started)
+    reconcile(root, snapshot)

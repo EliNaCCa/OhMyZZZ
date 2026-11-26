@@ -1,5 +1,10 @@
 """Current game marks win over both batch history and automatic keep suggestions."""
 
+def marker_for(history, fp, uid):
+    entry = history.get(fp, {})
+    return {} if uid and entry.get('uid') and uid != entry['uid'] else entry
+
+
 def owns_spare(entry, values):
     receipt = entry.get('spareLock') if isinstance(entry, dict) else None
     return bool(values and isinstance(receipt, dict) and entry.get('state') == 'locked' and
@@ -53,7 +58,9 @@ def reconcile_scan(root, inventory, names=None):
     for disc in inventory['discs']:
         fp = fingerprint(disc)
         live = disc.get('markState', 'unknown')
-        entry = history.get(fp, {})
+        uid = disc.get('exportUid')
+        entry = marker_for(history, fp, uid)
+        identity = {'uid':uid} if uid else {}
         lock = disc.get('lockState')
         clear_controls = (lock in ('locked','unlocked') and disc.get('lock') is (lock == 'locked')
                           and live in ('marked','unmarked') and disc.get('trash') is (live == 'marked'))
@@ -82,11 +89,11 @@ def reconcile_scan(root, inventory, names=None):
             else:
                 continue
             state = 'already-discarded' if live == 'marked' else recovered
-            history[fp] = dict(state=state, time=now, values=values)
+            history[fp] = dict(state=state, time=now, values=values, **identity)
             continue
         action = mark_action(live, previous, False)
         if action in ('already-discarded','manual-keep') and action != previous:
-            history[fp] = dict(state=action,time=now)
+            history[fp] = dict(state=action,time=now, **identity)
         if action == 'manual-keep' and clear_controls and not history[fp].get('values'):
             values = checked_values(disc, base)
             if values:
@@ -103,7 +110,7 @@ def clear_manual_exception(root, row, inventory_digest, names):
         snapshot = read(root/'inventory.json')
         history = read(root/'markers.json', {})
         fp = row['fp']
-        entry = history.get(fp, {})
+        entry = marker_for(history, fp, row.get('exportUid'))
         _, counts = scanned_identities(snapshot['discs'], names)
         if digest(snapshot) != inventory_digest or counts.get(fp) != 1:
             raise ValueError('库存已变化或有重复盘，请重新计算')

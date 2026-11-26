@@ -75,7 +75,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
             if key and key != raw:
                 reader_owners[raw] = key
         ds = [dict(d, location=reader_owners[d['location']]) if d.get('location') in reader_owners else d for d in ds]
-    from .marks import owns_spare, scanned_identities
+    from .marks import marker_for, owns_spare, scanned_identities
     history = history or {}
     keys, counts = scanned_identities(ds, names)
     reverse = equipment_keys(names)
@@ -175,7 +175,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
             label = owner_labels.get(d['location'], d['location'])
             why.append(('角色展柜 · ' if d.get('ownerSource') == 'showcase' else '已装备 · ') + label)
         values = checked_values(d, base)
-        entry = history.get(fp, {})
+        entry = marker_for(history, fp, d['id'] if stats_only else d.get('exportUid'))
         managed = (counts[fp] == 1 and owns_spare(entry, values) and d.get('lockState') == 'locked'
                    and d.get('lock') is True and d.get('markState') == 'unmarked' and d.get('trash') is False)
         if d.get('lock') is True and not managed:

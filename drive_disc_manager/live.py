@@ -11,7 +11,7 @@ from one_dragon.base.geometry.point import Point
 from one_dragon.utils import cv2_utils
 from .warehouse import enter_warehouse, warehouse_header
 from .store import digest, fingerprint, read, save, config
-from .marks import mark_action, owns_spare
+from .marks import mark_action, marker_for, owns_spare
 from .scan_marks import mark_hint, observed_grade, read_controls
 from .stat_reading import measure
 from .task_order import marker_conflict
@@ -102,6 +102,8 @@ class Marker:
 
     def remember(self,fp,state,intended=None,spare=False):
         entry = dict(state=state,intended=intended,inventory=self.report['inventory'],time=time.time())
+        if self.rows[fp].get('exportUid'):
+            entry['uid'] = self.rows[fp]['exportUid']
         if self.batch:
             entry['batch'] = self.batch
         if state in ('pending', 'released', 'manual-unlock', 'manual-keep'):
@@ -129,7 +131,7 @@ class Marker:
 
     def handle_disc(self, mode, detail, row):
         fp, lock, mark, equipped = detail
-        entry = self.history.get(fp, {})
+        entry = marker_for(self.history, fp, row.get('exportUid'))
         history = entry.get('state')
         if history == 'pending':
             raise ValueError('上次确认附近中断，需要现场对账')
