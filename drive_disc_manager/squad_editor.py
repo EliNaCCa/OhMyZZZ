@@ -29,9 +29,9 @@ class SquadEditor(QWidget):
             grid.addWidget(actor, i, 1)
             grid.addWidget(rank, i, 2)
             if i > 1:
-                def change_actor(index, spin=rank):
+                def change_actor(index, spin=rank, combo=actor):
                     spin.setEnabled(index > 0)
-                    spin.setValue(0)
+                    spin.setValue(self.account_rank(combo.currentText()) if index > 0 else 0)
                 actor.currentIndexChanged.connect(change_actor)
         grid.setColumnStretch(3, 1)
         bar = QHBoxLayout()
@@ -43,19 +43,24 @@ class SquadEditor(QWidget):
         bar.addStretch(1)
         box.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-    def present(self, profile, choices, current):
+    def present(self, profile, choices, current, *, canonical, ranks):
+        self.account_rank = lambda name: ranks.get(canonical(name), 0)
         self.heading.setText(profile['name'] + ' · 队伍成员')
         self.lead.setText(current)
-        self.ranks[0].setValue(profile.get('mindscape', 0))
+        self.ranks[0].setValue(profile.get('mindscape', self.account_rank(current)))
         members = profile.get('squad', [])
-        names = sorted((set(choices) | {m['agent'] for m in members}) - {current})
+        by_agent = {canonical(name): name for name in choices}
+        # Keep saved names verbatim: window buffs refer to these labels.
+        by_agent.update((canonical(m['agent']), m['agent']) for m in members)
+        by_agent.pop(canonical(current), None)
+        names = sorted(by_agent.values())
         for index, actor in enumerate(self.actors[1:]):
             member = members[index] if index < len(members) else {}
             actor.clear()
             actor.addItem('空位')
             actor.addItems(names)
             actor.setCurrentIndex(max(0, actor.findText(member.get('agent', ''))))
-            self.ranks[index+1].setValue(member.get('mindscape', 0))
+            self.ranks[index+1].setValue(member.get('mindscape', self.account_rank(actor.currentText())))
             self.ranks[index+1].setEnabled(actor.currentIndex() > 0)
 
     def values(self):

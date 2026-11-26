@@ -11,23 +11,32 @@ def team_candidates(owned):
     return combinations(sorted(set(owned)), 3)
 
 
-def account_pool(snapshot, declared, wiki):
+def agent_labels(wiki):
+    from zzz_od.game_data.agent import AgentEnum
+    from .roster import agent_id
+    agents = [item.value for item in AgentEnum if item.value.agent_type.name != 'UNKNOWN']
+    by_name = {agent_id(key): agent.agent_name for agent in agents for key in (agent.agent_id, agent.agent_name)}
+    if agent_id('悠真') in by_name:
+        by_name[agent_id('浅羽悠真')] = by_name[agent_id('悠真')]
+    for uid, row in wiki.get('character', {}).items():
+        label = row.get('CHS')
+        if label:
+            label = by_name.get(agent_id(label), label)
+            for key in (uid, row.get('EN'), row.get('code'), label):
+                if key: by_name[agent_id(key)] = label
+    return by_name
+
+
+def account_pool(snapshot, declared, wiki, *, known=(), labels=None):
     from zzz_od.game_data.agent import AgentEnum
     from .roster import agent_id
     from .store import observed_agents
-    agents = [item.value for item in AgentEnum if item.value.agent_type.name != 'UNKNOWN']
-    by_name = {agent_id(key): agent for agent in agents for key in (agent.agent_id, agent.agent_name)}
-    for uid, row in wiki.get('character', {}).items():
-        agent = by_name.get(agent_id(row.get('CHS') or ''))
-        if agent:
-            for key in (uid, row.get('EN'), row.get('code')):
-                if key: by_name[agent_id(key)] = agent
-    if agent_id('悠真') in by_name:
-        by_name[agent_id('浅羽悠真')] = by_name[agent_id('悠真')]
+    labels = agent_labels(wiki) if labels is None else labels
+    agents = {item.value.agent_name:item.value for item in AgentEnum}
     pool = {}
-    for name in sorted(observed_agents(snapshot) | set(declared)):
-        agent = by_name.get(agent_id(name))
-        label = agent.agent_name if agent else name
+    for name in sorted(observed_agents(snapshot) | set(declared) | set(known)):
+        label = labels.get(agent_id(name), name)
+        agent = agents.get(label)
         row = pool.setdefault(label, dict(role=agent.agent_type.value if agent else '',
                                           element=agent.dmg_type.value if agent else ''))
         row.update(declared.get(name, {}))
@@ -37,8 +46,7 @@ def account_pool(snapshot, declared, wiki):
             for item in snapshot.get(field, []):
                 if not isinstance(item, dict) or not isinstance(item.get(owner), str):
                     continue
-                agent = by_name.get(agent_id(item[owner]))
-                label = agent.agent_name if agent else item[owner]
+                label = labels.get(agent_id(item[owner]), item[owner])
                 value = item.get(key)
                 if label in pool and type(value) is int and int(field == 'wengines') <= value <= maximum:
                     pool[label][stat] = value

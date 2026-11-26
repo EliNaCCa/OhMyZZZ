@@ -28,6 +28,8 @@ def smoke(host, temp):
     team = dict(name='常态队', agentKey='Lead', request=dict(characterName='配装角色', roleSystem='ATTACK'))
     save(account/'config.json', dict(config(account), profiles=[team]))
     save(account/'owned-agents.json', ['Lead', 'Support', 'Stun'])
+    save(account/'challenge-preferences.json', {'agents': {'配装角色': {'mindscape': 6}, '新队友': {'mindscape': 4}, '队友甲': {'mindscape': 3}}})
+    save(account/'network-inventory.json', dict(networkPreview=True, characters=[dict(key='Support', mindscape=0), dict(key='Stun', mindscape=2)]))
     widget = ManagerInterface(SimpleNamespace(current_instance_idx=1,get_plugin_data_dir=lambda _:account.parent))
     widget.on_interface_shown()
     widget.navigation.open('我的配队')
@@ -38,7 +40,11 @@ def smoke(host, temp):
     editor = widget.squad_editor
     assert widget.team_views.currentWidget() is editor and editor.actors[1].findText('配装角色') == -1
     assert editor.actors[1].findText('未拥有') == -1
+    assert editor.ranks[0].value() == 6
+    editor.actors[1].setCurrentText('新队友')
+    assert editor.ranks[1].value() == 4
     editor.actors[1].setCurrentText('队友甲')
+    assert editor.ranks[1].value() == 0
     editor.ranks[1].setValue(6)
     editor.findChild(PrimaryPushButton).click()
     assert config(account)['profiles'][0]['squad'] == [dict(agent='队友甲', mindscape=6)]
@@ -63,13 +69,23 @@ def smoke(host, temp):
     with patch.object(QInputDialog,'getText',return_value=('换人队',True)):
         actions['复制为另一配队'].trigger()
     actions['队伍成员'].trigger()
+    assert editor.ranks[1].value() == 6
     editor.actors[1].setCurrentText('队友乙')
-    editor.ranks[1].setValue(2)
+    assert editor.ranks[1].value() == 2
     editor.findChild(PrimaryPushButton).click()
     original_again, other = config(account)['profiles']
     assert original == original_again and other['squad'] == [dict(agent='队友乙', mindscape=2)]
     assert window_requests(other)[0][2]['combatExtraStats'] == {}
     assert '队友乙 2影' in widget.team_score.text()
+    second_account = account.parent/'2'
+    save(second_account/'config.json', dict(config(second_account), profiles=[team]))
+    save(second_account/'challenge-preferences.json', {'agents': {'配装角色': {'mindscape': 1}, '另一位队友': {}}})
+    widget.ctx.current_instance_idx = 2
+    widget.on_interface_shown()
+    widget.navigation.open('我的配队')
+    actions['队伍成员'].trigger()
+    assert editor.ranks[0].value() == 1 and editor.actors[1].findText('新队友') == -1
+    assert editor.actors[1].findText('另一位队友') > 0
     widget.close()
 
 

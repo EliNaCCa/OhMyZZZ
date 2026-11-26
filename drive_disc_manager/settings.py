@@ -687,10 +687,21 @@ class ManagerInterface(BaseInterface):
         profile = token[2]['profiles'][index]
         lead = self.agent_labels.get(profile.get('agentKey')) or profile['request']['characterName']
         self.squad_edit = token, index
-        labels = [agent['label'] for agent in self.agents if agent['owned']]
-        if not labels:
-            labels = self.agent_labels.values() if self.agent_labels else [a['label'] for a in self.agents]
-        self.squad_editor.present(profile, labels, lead)
+        from .challenge import account_pool, agent_labels
+        from .roster import agent_id
+        wiki = read(wiki_path(), {})
+        aliases = agent_labels(wiki)
+        def canonical(name):
+            return aliases.get(agent_id(name), name)
+        declared = read(self.root/'challenge-preferences.json', {}).get('agents', {})
+        # OCR has disc owners. The network export also carries character ranks.
+        network = read(self.root/'network-inventory.json', {})
+        known = (agent['label'] for agent in self.agents if agent['owned'])
+        pool = account_pool(network, declared, wiki, known=known, labels=aliases)
+        ranks = {name:row['mindscape'] for name,row in pool.items()
+                 if type(row.get('mindscape')) is int and 0 <= row['mindscape'] <= 6}
+        choices = pool or self.agent_labels.values() or [a['label'] for a in self.agents]
+        self.squad_editor.present(profile, choices, canonical(lead), canonical=canonical, ranks=ranks)
         self.team_views.setCurrentWidget(self.squad_editor)
 
     def save_squad(self):
