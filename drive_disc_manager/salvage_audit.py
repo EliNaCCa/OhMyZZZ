@@ -29,17 +29,24 @@ def disc_shape(disc):
     return digest([str(disc['slotKey']), disc['level'], disc['mainStatKey'], sorted(s['key'] for s in disc['substats'])])
 
 
-def prepare_batch(z, report, observed, grade, *, include_marked=True):
+def prepare_batch(z, report, observed, grade, *, include_marked=True, before_marking=False):
     discs, counts = inventory(z)
     if report['inventory'] != digest(z) or grade not in GRADE_FILTERS:
         raise ValueError('拆解品级或库存已变化，需重新预览')
     entries = []
     unresolved_grades = 0
+    unread_marks = 0
+    planned = set()
+    if before_marking and include_marked:
+        planned = {row['fp'] for row in report.get('discs', []) if row.get('decision') == '弃置候选'}
+    candidates = {}
     for disc in discs:
         fp = fingerprint(disc)
         mark = observed.get(fp, disc.get('markState')) if counts[fp]==1 else disc.get('markState')
         if include_marked and mark not in ('marked','unmarked'):
-            raise ValueError('存在未读清的弃置标记，已停在可逆标记阶段')
+            if not before_marking:
+                raise ValueError('存在未读清的弃置标记，已停在可逆标记阶段')
+            unread_marks += 1
         rank = disc.get('observedGrade')
         if include_marked and mark == 'marked':
             source = '游戏原有弃置' if disc.get('markState') == 'marked' else '本轮观察到弃置'
@@ -48,13 +55,22 @@ def prepare_batch(z, report, observed, grade, *, include_marked=True):
             source = '低品级可能入选'
         else:
             unresolved_grades += int(rank not in ('S','A','B'))
-            continue
-        entries.append(dict(fp=fp, set=disc['setKey'], slot=disc['slotKey'], main=disc['mainStatKey'],
-                            level=disc['level'], source=source, beforeMultiplicity=counts[fp], shape=disc_shape(disc)))
-    return dict(batch=uuid4().hex, started=time(), inventory=report['inventory'], rules=report.get('rules'),
+            if fp not in planned or counts[fp] != 1:
+                continue
+            source = None
+        entry = dict(fp=fp, set=disc['setKey'], slot=disc['slotKey'], main=disc['mainStatKey'],
+                     level=disc['level'], beforeMultiplicity=counts[fp], shape=disc_shape(disc))
+        if source:
+            entries.append(dict(entry, source=source))
+        else:
+            candidates[fp] = entry
+    receipt = dict(batch=uuid4().hex, started=time(), inventory=report['inventory'], rules=report.get('rules'),
                 configuration=report['configuration'], selector='全选已弃置' if include_marked else '仅按品级', nativeGrade=grade,
                 beforeTotal=len(discs), beforeCounts=dict(counts), entries=entries,
                 unresolvedGrades=unresolved_grades, status='not_submitted')
+    if before_marking:
+        receipt.update(markCandidates=candidates, unreadMarks=unread_marks)
+    return receipt
 
 
 def record(root, receipt):
@@ -90,11 +106,24 @@ def observe_native(root, account, native, scan_started):
     before = read(root/'dismantle-preview.json', {})
     last = read(root/'dismantle-result.json', {})
     if (before.get('account') != account or before.get('status') != 'not_submitted'
-            or not (before.get('entries') or before.get('unresolvedGrades'))
             or before['batch'] == last.get('batch') or needs_review(last)):
         return
     baseline = before.get('nativeAtPreview') or {}
     if native['updated'] <= max(before['started'], baseline.get('updated', 0)):
+        return
+    candidates = before.pop('markCandidates', {})
+    if candidates:
+        for fp, entry in read(root/'markers.json', {}).items():
+            if fp not in candidates or entry.get('batch') != before['batch'] or entry.get('inventory') != before['inventory']:
+                continue
+            if entry.get('state') in ('marked', 'already-discarded'):
+                source = '本轮观察到弃置'
+            elif entry.get('state') == 'pending' and entry.get('intended') == 'mark':
+                source = '弃置标记待核'
+            else:
+                continue
+            before['entries'].append(dict(candidates[fp], source=source))
+    if not (before.get('entries') or before.get('unresolvedGrades') or before.get('unreadMarks')):
         return
     record(root, dict(before, status='pending', independentNative=native))
 
@@ -155,7 +184,7 @@ def retire_departed_marks(root, receipt):
     for disc in receipt['entries']:
         entry = history.get(disc['fp'], {})
         if (disc['after'] == '已不在库存' and entry.get('state') in ('marked', 'already-discarded')
-                and entry.get('time', 0) <= receipt['started']):
+                and (entry.get('time', 0) <= receipt['started'] or entry.get('batch') == receipt['batch'])):
             entry.update(previousState=entry['state'], state='absent-after-rescan',
                          observedAt=receipt['observedAt'], batch=receipt['batch'])
             retired = True
@@ -213,7 +242,9 @@ def reconcile(root, fresh):
         # With arrivals, the old batch must be completely absent. For snapshots with
         # no arrivals retain the established success/unchanged-mark reconciliation.
         exact_result = resolved and native['status'] == 1 and new_count == 0
-        resolved = previous.get('unresolvedGrades') == 0 and (exact_result or (all_gone and new_count is not None))
+        uncertain_marks = previous.get('unreadMarks') or any(e['source'] == '弃置标记待核' for e in previous['entries'])
+        resolved = (not uncertain_marks and previous.get('unresolvedGrades') == 0
+                    and (exact_result or (all_gone and new_count is not None)))
         if resolved and new_count:
             previous['newDiscs'] = new_count
     previous.update(status='reconciled' if resolved else 'needs_review', observations=dict(states),

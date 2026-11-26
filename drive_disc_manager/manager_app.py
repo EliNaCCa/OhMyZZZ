@@ -139,15 +139,18 @@ class ManagerApp(ZApplication):
                 if scanner is None:
                     return self.round_fail('请开启本轮重新扫描后再标记')
                 from .live import Marker
-                observed = Marker(self,scanner,report).run()
+                from .dismantle import handoff
+                marker = Marker(self,scanner,report)
+                marker.batch = handoff(self, report)
+                observed = marker.run()
+                if marker.batch:
+                    handoff(self, report, observed, batch=marker.batch)
+                messages.append('标记完成')
             if field:
                 from .loadout import apply_loadout
                 from .equip_ui import EquipUI
                 receipt = apply_loadout(self.root,cfg,report,snapshot,EquipUI(self,scanner,wiki_path()),name=field,names=names)
                 messages.append(f"{receipt['profile']} · 已复读 {len(receipt['verified'])} 个号位")
-            if mark:
-                from .dismantle import handoff
-                messages.append(handoff(self,report,observed))
             return self.round_success(' / '.join(messages) if messages else '预览 · '+str(report['counts']))
         except (KeyError,ValueError,OSError,TypeError) as exc:
             return self.round_fail(str(exc))

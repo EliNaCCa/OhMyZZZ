@@ -22,6 +22,8 @@ def hints(ocr, screen):
 
 
 class Marker:
+    batch = None
+
     def __init__(self, app, scanner, report):
         self.app = app
         self.scanner = scanner
@@ -98,6 +100,8 @@ class Marker:
 
     def remember(self,fp,state,intended=None,spare=False):
         entry = dict(state=state,intended=intended,inventory=self.report['inventory'],time=time.time())
+        if self.batch:
+            entry['batch'] = self.batch
         if state in ('pending', 'released', 'manual-unlock', 'manual-keep'):
             entry['values'] = self.rows[fp]['observedValues']
         if spare:

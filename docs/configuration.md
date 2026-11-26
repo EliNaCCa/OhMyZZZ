@@ -127,6 +127,8 @@
 
 在 **设置 → 库存记录** 查看上次离库和新刷到的盘。遇到清单外少盘、重复盘或新盘词条没读清，页面会列出需要核对的盘。核实后点「我已在游戏中核对」。
 
+一条龙会在 OhMyZZZ 中断后继续执行后面的任务。如果内置拆解接着运行，下次完整扫描会核对原已弃置的盘和本轮确实标好的盘。点了弃置但没读到结果的盘会显示「标记时中断」。
+
 扫描器导出中文套装名时，OhMyZZZ 会按对应的订阅字段筛盘，继续用库存中的原始指纹识别你的单盘保护。随包补充的六套名称取自同一套装 ID 的简中和英文条目。[套装 ID](https://github.com/EnkaNetwork/API-docs/blob/26b4ddcd045a1264d0a8ef3ef5a3a3e33cbe16ce/store/zzz/equipments.json) · [名称对照](https://github.com/EnkaNetwork/API-docs/blob/26b4ddcd045a1264d0a8ef3ef5a3a3e33cbe16ce/store/zzz/locs.json)
 
 单盘冒烟使用上游归档的「谶羽之誓」五号盘两帧画面，以及一条龙 PP-OCRv6 和仓库扫描器。两帧分别读到「弃置」和「解除弃置」，对应同一实物指纹。插件用 FeatheredFate 查询该盘的订阅规则。[回放样本](e2e/recap_20261101/mark_before.jpg)

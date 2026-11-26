@@ -71,6 +71,26 @@ def smoke(root):
     assert replay('legacy-arrival', kept, drop)['status'] == 'needs_review'
     assert replay('legacy-exact', kept)['status'] == 'reconciled'
 
+    # If the host continues into dismantling after a marker interruption, only
+    # a mark observed in THIS batch is a known addition to the old marks.
+    fresh_scan = warehouse(old, kept, drop)
+    kept_fp, drop_fp = fingerprint(kept), fingerprint(drop)
+    planned = dict(inventory=digest(fresh_scan), configuration='fixture', discs=[
+        dict(fp=fp, decision='弃置候选') for fp in (kept_fp, drop_fp)])
+    starting = prepare_batch(fresh_scan, planned, {}, 'A及以下', before_marking=True)
+    starting.update(account=1, started=10, nativeAtPreview=None)
+    for state, wanted in [('marked','reconciled'), ('pending','needs_review')]:
+        account = root/('stopped-'+state)
+        save(account/'dismantle-preview.json', starting)
+        stamp = dict(batch=starting['batch'], inventory=starting['inventory'], time=11)
+        save(account/'markers.json', {kept_fp:dict(stamp, state=state, intended='mark'),
+                                      drop_fp:dict(stamp, state='marked', batch='older')})
+        observe_native(account, 1, dict(account=1, updated=12, status=1), 13)
+        reconcile(account, warehouse(drop))
+        result = read(account/'dismantle-result.json')
+        assert result['status'] == wanted and {e['fp'] for e in result['entries']} == {fingerprint(old),kept_fp}
+        assert (read(account/'markers.json')[kept_fp]['state'] == 'absent-after-rescan') == (state == 'marked')
+
 
 if __name__ == '__main__':
     with TemporaryDirectory() as temp:

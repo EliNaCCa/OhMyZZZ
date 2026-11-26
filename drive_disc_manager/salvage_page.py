@@ -55,7 +55,11 @@ class SalvagePage(QWidget):
         for entry in data.get('entries', []):
             state = entry.get('after')
             if state:
-                rows.append((entry, labels.get(state, state), state not in ('已不在库存', '在库且未标弃置')))
+                text = labels.get(state, state)
+                uncertain = entry.get('source') == '弃置标记待核'
+                if uncertain:
+                    text = '标记时中断 · ' + ('仍在仓库' if state == '在库且未标弃置' else text)
+                rows.append((entry, text, uncertain or state not in ('已不在库存', '在库且未标弃置')))
         for item in data.get('stockChanges', []):
             state = '新刷到的盘' if item['kind'] == 'extra' and data.get('newDiscs') else item['after']
             rows.append((item, state, review))
@@ -93,5 +97,7 @@ class SalvagePage(QWidget):
             parts.append(f"新刷到 {data['newDiscs']} 张")
         if review and data.get('unresolvedGrades'):
             parts.append(f"有 {data['unresolvedGrades']} 张品级没读清")
+        if review and data.get('unreadMarks'):
+            parts.append(f"有 {data['unreadMarks']} 张弃置标记没读清")
         self.note.setText('　·　'.join(parts))
         self.note.setVisible(bool(parts))
