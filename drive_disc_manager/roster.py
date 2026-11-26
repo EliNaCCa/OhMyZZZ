@@ -34,7 +34,7 @@ ALIASES = {identifier(alias): identifier(name) for name, aliases in _NAMES.items
 # The pinned optimizer's /data/characters.json supplies both names for these agents.
 _FULL_NAMES = {'菲欧妮·蕾法爱菈':'菲欧妮', '洛克茜·伊芙莉塔·普莱斯':'洛克茜',
                '希格莉德·德拉叙尔':'希格莉德', '蕾米埃尔·丹':'蕾米埃尔', '维琳娜·艾嘉德':'维琳娜',
-               '诺姆·霍洛维尔':'诺姆', '本·比格':'本', '克拉蕾·弗林特':'克拉蕾'}
+               '诺姆·霍洛维尔':'诺姆', '本·比格':'本', '克拉蕾·弗林特':'克拉蕾', '浅羽悠真':'悠真'}
 ALIASES.update({identifier(full):identifier(short) for full, short in _FULL_NAMES.items()})
 
 
@@ -102,22 +102,26 @@ def roster_catalog(z, fields, cfg, wiki, known_owned=()):
         item['label'] = agent.get('CHS') or item['name']
         for alias in (uid, name, agent.get('code'), agent.get('CHS')):
             if isinstance(alias,str) and alias:
-                scan_keys[identifier(alias)] = item['key']
+                scan_keys[agent_id(alias)] = item['key']
 
     from .store import observed_agents
     for raw in [*known_owned, *observed_agents(z)]:
         if isinstance(raw,str) and raw.strip():
-            resolved = scan_keys.get(identifier(raw))
+            resolved = scan_keys.get(agent_id(raw))
             item = entries[resolved] if resolved else entry(raw)
             item['owned'] = True
 
-    future = set(cfg.get('futureAgents', []))
-    excluded = set(cfg.get('excludedAgents', []))
+    def selection_keys(values):
+        return {scan_keys.get(key, key) for key in map(agent_id, values)}
+
+    future = selection_keys(cfg.get('futureAgents', []))
+    excluded = selection_keys(cfg.get('excludedAgents', []))
     for key in future | excluded:
         if key not in entries:
             entry(key)
     for key, item in entries.items():
         item['future'] = key in future
+        item['excluded'] = key in excluded
         item['selected'] = item['future'] or (cfg.get('includeOwned', True) and item['owned'] and key not in excluded)
     return sorted(entries.values(), key=lambda i:(not i['selected'], not i['owned'], i['name'].casefold()))
 

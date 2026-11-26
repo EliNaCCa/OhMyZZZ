@@ -16,8 +16,6 @@ def agent_labels(wiki):
     from .roster import agent_id
     agents = [item.value for item in AgentEnum if item.value.agent_type.name != 'UNKNOWN']
     by_name = {agent_id(key): agent.agent_name for agent in agents for key in (agent.agent_id, agent.agent_name)}
-    if agent_id('悠真') in by_name:
-        by_name[agent_id('浅羽悠真')] = by_name[agent_id('悠真')]
     for uid, row in wiki.get('character', {}).items():
         label = row.get('CHS')
         if label:

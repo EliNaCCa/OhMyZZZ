@@ -576,8 +576,8 @@ class ManagerInterface(BaseInterface):
         selected = self.agent_table.selectionModel().selectedRows()
         if not selected:
             return
-        future = set(self.cfg['futureAgents'])
-        excluded = set(self.cfg['excludedAgents'])
+        future = {agent['key'] for agent in self.agents if agent['future']}
+        excluded = {agent['key'] for agent in self.agents if agent['excluded']}
         for index in selected:
             agent = self.agents[index.row()]
             key = agent['key']
