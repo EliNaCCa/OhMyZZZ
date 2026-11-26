@@ -92,7 +92,7 @@ def smoke(home, tmp):
     with patch('drive_disc_manager.scan_marks.capture_marks', lambda _:nullcontext()), \
          patch('drive_disc_manager.live.Marker') as marker:
         status, reason = ManagerApp.manage_inventory(manager)
-        assert status == 'failed' and '上批拆解待复核' in reason
+        assert status == 'failed' and '库存记录' in reason
         marker.assert_not_called()
     assert read(root/'dismantle-result.json') == outstanding
     from drive_disc_manager.salvage_audit import close_reviewed, needs_review

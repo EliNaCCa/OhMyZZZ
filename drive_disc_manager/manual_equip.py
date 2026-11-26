@@ -10,8 +10,8 @@ SCAN_GROUP = 'ohmyzzz_manual_scan'
 _request = ContextVar('ohmyzzz_manual_equip', default=None)
 
 
-def confirmation(account, name, cfg, report, snapshot):
-    targets = target_loadout(cfg, report, snapshot, name)
+def confirmation(account, name, cfg, report, snapshot, *, preview_only=False):
+    targets = target_loadout(cfg, report, snapshot, name, preview_only=preview_only)
     # Ignore export ordering but include a changed donor in the next preview.
     identity = [{k:t[k] for k in ('profile','agent','slot','fp','observedValues','location')} for t in targets]
     return dict(account=account, name=name, configuration=digest(cfg), selection=digest(identity)), targets

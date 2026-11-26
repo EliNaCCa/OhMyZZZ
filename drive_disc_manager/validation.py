@@ -7,6 +7,11 @@ from .optimizer import number
 def validate(value):
     cfg={**defaults(),**value}
     quota(cfg['reserve'])
+    if cfg['inventorySource'] not in ('ocr', 'network'):
+        raise ValueError('请选择库存读取方式')
+    for key in ('dailyLimit', 'weeklyLimit'):
+        if type(cfg[key]) is not int or not 1 <= cfg[key] <= 99:
+            raise ValueError('运行次数可填 1 到 99')
     for key in ('reserve_rules','profiles','pins','roster'):
         if not isinstance(cfg[key],list): raise ValueError(key+' 应为数组')
     from .roster import agent_id

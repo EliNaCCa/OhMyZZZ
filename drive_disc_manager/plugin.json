@@ -1,7 +1,7 @@
 {
   "id": "drive_disc_manager",
   "name": "OhMyZZZ",
-  "summary": "订阅留盘规则、分配配队及备用盘，按盘锁定和标记，核对拆解记录。",
+  "summary": "按配队分盘，保留备用盘，自动锁盘和标记弃置。",
   "version": "0.2.0",
   "versionCode": 47,
   "defaultGroup": true,

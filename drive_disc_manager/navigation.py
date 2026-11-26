@@ -7,7 +7,7 @@ class ManagerPages(QWidget):
     """OneDragon-style navigation; secondary pages share their section's pivot."""
 
     sections = {'仓库': ('仓库预览',), '配队': ('我的配队',),
-                '规则': ('规则订阅', '角色留盘', '备用规则'), '设置': ('运行设置', '版本维护')}
+                '规则': ('规则订阅', '角色留盘', '备用规则'), '设置': ('运行设置', '库存记录', '版本更新')}
 
     def __init__(self):
         super().__init__()

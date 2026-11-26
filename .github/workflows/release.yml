@@ -16,6 +16,7 @@ jobs:
       - name: Read player-facing notes for this version
         run: python -m drive_disc_manager.release_notes "$GITHUB_REF_NAME" > "$RUNNER_TEMP/ohmyzzz-notes.md"
       - run: python scripts/smoke.py
+      - run: python scripts/salvage_rescan_smoke.py
       - run: python scripts/group_priority_smoke.py
       - run: python scripts/allocation_input_smoke.py
       - run: python scripts/scan_copies_smoke.py

@@ -70,8 +70,17 @@ class ManagerApp(ZApplication):
                 from .loadout import verify_bindings
                 verify_bindings(cfg, field, read(wiki_path(), {}))
             mark = not interactive and cfg.get('applyMarkers')
+            network = cfg.get('inventorySource') == 'network'
+            if network and cfg['run_scanner'] and not interactive:
+                from .network_reader import capture
+                def same_account():
+                    if self.ctx.current_instance_idx != self.account or not self.ctx.run_context.is_context_running:
+                        raise ValueError('账号已切换或任务已停止')
+                capture(self.root, same_account)
+                if mark or field:
+                    preview(self.root, wiki_path(), snapshot=pinned)
             scanner = None
-            if interactive or cfg['run_scanner']:
+            if interactive or (cfg['run_scanner'] and (not network or mark or field)):
                 from time import time
                 from .scanner_status import scanner_status
                 ready, reason = scanner_status(self.ctx, self.account)
@@ -105,15 +114,16 @@ class ManagerApp(ZApplication):
                 names = equipment_names(read(wiki_path(), {}))
                 names.update(cfg.get('aliases', {}))
                 reconcile_scan(self.root, snapshot, names)
-            if scanner is None and not (self.root / 'inventory.json').is_file():
-                return self.round_fail('本账号还没有库存。请开启「运行时重新扫描」，或在仓库页导入扫描文件。')
-            report = preview(self.root,wiki_path(),snapshot=pinned)
+            from .store import snapshot_path
+            if scanner is None and not snapshot_path(self.root, cfg).is_file():
+                return self.round_fail('请先在仓库页读取库存')
+            report = preview(self.root,wiki_path(),snapshot=pinned, verified_game=scanner is not None)
             if scan_only:
                 return self.round_success(f"已扫描 {len(snapshot['discs'])} 张驱动盘 · 预览已保存")
             if mark:
                 from .salvage_audit import needs_review
                 if needs_review(read(self.root/'dismantle-result.json', {})):
-                    return self.round_fail('上批拆解待复核，请在「设置 → 拆解记录」核对后继续')
+                    return self.round_fail('请先到「设置 → 库存记录」核对上次的盘')
             if self.group == MANUAL_GROUP:
                 self.guard_game()
                 verify_selection(request, cfg, report, snapshot)

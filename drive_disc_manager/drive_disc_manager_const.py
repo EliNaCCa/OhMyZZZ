@@ -7,4 +7,4 @@ NEED_NOTIFY = False
 PLUGIN_AUTHOR = "EliNaCCa / upstream idk500"
 PLUGIN_HOMEPAGE = "https://github.com/EliNaCCa/OhMyZZZ"
 PLUGIN_VERSION = "0.2.0"
-PLUGIN_DESCRIPTION = "订阅留盘规则、分配配队及备用盘，按盘锁定和标记，核对拆解记录。"
+PLUGIN_DESCRIPTION = "按配队分盘，保留备用盘，自动锁盘和标记弃置。"

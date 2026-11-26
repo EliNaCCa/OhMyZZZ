@@ -52,7 +52,7 @@ class ReservePresets(QWidget):
         self.current = BodyLabel()
         self.current.setWordWrap(True)
         layout.addWidget(self.current)
-        self.change = PushButton('设置此范围的备用数量')
+        self.change = PushButton('设置备用数量')
         layout.addWidget(self.change)
         self.grid = table(['已设范围', '用途', '同类名额', '推荐盘策略', '排序依据'])
         layout.addWidget(self.grid)
@@ -122,7 +122,7 @@ class ReservePresets(QWidget):
             return
         limits, trim = matching_rules(self.scope(), self.cfg)
         uses = '、'.join(purpose+' '+amount(count) for purpose, (_, count, _) in limits.items())
-        self.current.setText('每种同类盘分别计数 · '+uses+'　｜　推荐盘'+('按名额筛选' if trim else '全部保留'))
+        self.current.setText('每类留盘 · '+uses+'　｜　推荐盘'+('按名额筛选' if trim else '全部保留'))
 
     def edit_row(self, index, _column):
         if 0 <= index < len(self.rules):

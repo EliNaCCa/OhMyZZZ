@@ -115,7 +115,7 @@ class UpdatePrompt(QObject):
                     raise ValueError('安装版本已变化，请重新打开设置后检查更新')
                 queued = maintenance.read(directory/'request.json', {})
                 if queued and (queued.get('action'),queued.get('version')) != ('retry',ref['version']):
-                    raise ValueError('已有其他版本待办，请先在版本维护页取消待办')
+                    raise ValueError('已有更新在排队，请先到「版本更新」取消')
                 # Copy on the host volume, then retain() can perform an atomic move.
                 import shutil
                 stage = maintenance.archived(Path(temporary.name), ref)

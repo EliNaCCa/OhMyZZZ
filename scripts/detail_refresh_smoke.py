@@ -28,6 +28,12 @@ def smoke(home, tmp):
     assert widget.tabs.currentWidget() is widget.reserve_presets
     nav.pivot.items['设置'].click()
     assert widget.tabs.currentWidget() is nav.pages['运行设置'] and 'afterEarly' not in widget.flags
+    widget.reader.setCurrentIndex(widget.reader.findData('network'))
+    assert widget.cfg['inventorySource']=='network' and not widget.reader_open.isHidden()
+    widget.limits['weeklyLimit'].setValue(3)
+    assert widget.cfg['weeklyLimit']==3 and widget.scan_button.text()=='读取仓库'
+    widget.reader.setCurrentIndex(widget.reader.findData('ocr'))
+    assert widget.cfg['inventorySource']=='ocr' and widget.reader_open.isHidden()
     nav.pivot.items['仓库'].click()
     root = widget.root
     a = dict(id='a', fp='first', set='SwingJazz', slot='4', main='atk_', level=0,
@@ -88,6 +94,26 @@ def smoke(home, tmp):
     ctx.current_instance_idx = 2
     widget.on_interface_shown()
     assert widget.tabs.currentIndex() == 0 and widget.root.name == '2'
+    # Switch between the player's account and an empty one from the embedded record page.
+    from drive_disc_manager.store import read
+    receipt = dict(batch='one', status='needs_review', beforeTotal=2, afterTotal=1, afterInventory='saved',
+                   independentNative=dict(updated=12, status=1), entries=[dict(set='TheSkyAblaze', slot='1',
+                   main='hp', level=15, source='游戏原有弃置', after='已不在库存', beforeMultiplicity=1)],
+                   stockChanges=[dict(set='TheSkyAblaze', slot='2', main='atk', level=0, kind='missing',
+                                      after='清单外少盘', count=1)])
+    save(root/'dismantle-result.json', receipt)
+    ctx.current_instance_idx = 1
+    widget.on_interface_shown()
+    nav.open('库存记录'); panel = widget.salvage_page
+    assert widget.tabs.currentWidget() is panel and panel.grid.rowCount() == 1
+    assert panel.grid.item(0, 0).text() == '拂晓行纪' and panel.grid.item(0, 4).text() == '清单外少盘'
+    panel.issues.setChecked(False)
+    assert panel.grid.rowCount() == 2 and not panel.close_batch.isHidden()
+    panel.close_batch.click()
+    assert read(root/'dismantle-result.json')['status'] == 'reviewed' and panel.close_batch.isHidden()
+    ctx.current_instance_idx = 2
+    widget.on_interface_shown(); nav.open('库存记录')
+    assert panel.grid.rowCount() == 0 and panel.title.text() == '还没有库存记录'
     widget.close()
 
 

@@ -3,11 +3,11 @@ from collections import Counter, defaultdict
 from time import time
 from uuid import uuid4
 
-from .store import digest, fingerprint, inventory, read, save
+from .stat_reading import checked_values
+from .store import digest, fingerprint, inventory, read, roll_base, save
 
 
 GRADE_FILTERS = {'B': {'B'}, 'A及以下': {'A', 'B'}}
-SCOPE_UNAVAILABLE = '宿主未提供实际选盘明细，OhMyZZZ 已停在可逆标记阶段。'
 
 
 def needs_review(receipt):
@@ -22,6 +22,11 @@ def needs_review(receipt):
                        for e in receipt.get('entries', []))
                 or receipt.get('beforeTotal', 0) - receipt.get('afterTotal', 0) != states.get('已不在库存', 0))
     return False
+
+
+def disc_shape(disc):
+    # Set names and optional numeric fields can change between scanner dictionaries.
+    return digest([str(disc['slotKey']), disc['level'], disc['mainStatKey'], sorted(s['key'] for s in disc['substats'])])
 
 
 def prepare_batch(z, report, observed, grade, *, include_marked=True):
@@ -45,10 +50,11 @@ def prepare_batch(z, report, observed, grade, *, include_marked=True):
             unresolved_grades += int(rank not in ('S','A','B'))
             continue
         entries.append(dict(fp=fp, set=disc['setKey'], slot=disc['slotKey'], main=disc['mainStatKey'],
-                            level=disc['level'], source=source, beforeMultiplicity=counts[fp]))
+                            level=disc['level'], source=source, beforeMultiplicity=counts[fp], shape=disc_shape(disc)))
     return dict(batch=uuid4().hex, started=time(), inventory=report['inventory'], rules=report.get('rules'),
                 configuration=report['configuration'], selector='全选已弃置' if include_marked else '仅按品级', nativeGrade=grade,
-                beforeTotal=len(discs), entries=entries, unresolvedGrades=unresolved_grades, status='not_submitted')
+                beforeTotal=len(discs), beforeCounts=dict(counts), entries=entries,
+                unresolvedGrades=unresolved_grades, status='not_submitted')
 
 
 def record(root, receipt):
@@ -91,6 +97,70 @@ def observe_native(root, account, native, scan_started):
     if native['updated'] <= max(before['started'], baseline.get('updated', 0)):
         return
     record(root, dict(before, status='pending', independentNative=native))
+
+
+def addition_reason(disc, base, duplicate, shapes):
+    from .optimizer import STATS
+    if duplicate:
+        return '同属性盘数量增加'
+    if not shapes or None in shapes:
+        return '上批缺少比对信息'
+    if disc_shape(disc) in shapes:
+        return '与上批候选属性相似'
+    if disc['level'] != 0:
+        return '本次多出强化盘'
+    if (disc.get('observedGrade') != disc['rarity'] or disc['rarity'] not in ('A', 'B', 'S')
+            or disc['setKey'].strip() in ('', 'Unknown')):
+        return '品级或套装待核'
+    subs = disc['substats']
+    if any(s['upgrades'] != base for s in subs):
+        return '强化档数与零级盘不符'
+    if (not subs or (disc['rarity'] == 'S' and len(subs) < 3)
+            or any(not STATS.get(s['key'], (None, None))[1] for s in subs) or not checked_values(disc, base)):
+        return '词条数值未读全'
+    return ''
+
+
+def stock_changes(root, previous, remaining, counts, by_fp, base):
+    """Describe inventory differences without adding any disc to the native batch."""
+    missing = remaining - counts
+    labels = {}
+    if missing:
+        preview = read(root/'preview.json', {})
+        if preview.get('inventory') == previous['inventory']:
+            labels = {e['fp']:e for e in preview.get('discs', []) if e['fp'] in missing}
+    candidates = {e['fp']:e for e in previous['entries']}
+    changes = []
+    for fp, count in missing.items():
+        entry = labels.get(fp) or candidates.get(fp, {})
+        changes.append(dict(fp=fp, count=count, kind='missing', after='清单内数量减少' if fp in candidates else '清单外少盘',
+                            **{k:entry[k] for k in ('set', 'slot', 'main', 'level') if k in entry}))
+    shapes = {e.get('shape') for e in previous['entries']}
+    additions = counts - remaining
+    verified = not missing and all(n >= 0 for n in remaining.values())
+    for fp, count in additions.items():
+        disc = by_fp[fp][0]
+        reason = addition_reason(disc, base, count != 1 or fp in previous['beforeCounts'], shapes)
+        if reason:
+            verified = False
+        changes.append(dict(fp=fp, set=disc['setKey'], slot=disc['slotKey'], main=disc['mainStatKey'],
+                            level=disc['level'], count=count, kind='extra', after=reason or '本次多出'))
+    return changes, additions.total() if verified else None
+
+
+def retire_departed_marks(root, receipt):
+    path = root / 'markers.json'
+    history = read(path, {})
+    retired = False
+    for disc in receipt['entries']:
+        entry = history.get(disc['fp'], {})
+        if (disc['after'] == '已不在库存' and entry.get('state') in ('marked', 'already-discarded')
+                and entry.get('time', 0) <= receipt['started']):
+            entry.update(previousState=entry['state'], state='absent-after-rescan',
+                         observedAt=receipt['observedAt'], batch=receipt['batch'])
+            retired = True
+    if retired:
+        save(path, history)
 
 
 def reconcile(root, fresh):
@@ -137,14 +207,25 @@ def reconcile(root, fresh):
             if entry['after'] == '已不在库存':
                 remaining[entry['fp']] -= 1
         all_gone = bool(previous['entries']) and states['已不在库存'] == len(previous['entries'])
-        resolved = (resolved and (native['status'] == 1 or all_gone)
-                    and previous.get('unresolvedGrades') == 0 and expected is not None and remaining == counts)
+        new_count = None
+        if expected and sum(expected.values()) == previous['beforeTotal']:
+            previous['stockChanges'], new_count = stock_changes(root, previous, remaining, counts, by_fp, roll_base(fresh))
+        # With arrivals, the old batch must be completely absent. For snapshots with
+        # no arrivals retain the established success/unchanged-mark reconciliation.
+        exact_result = resolved and native['status'] == 1 and new_count == 0
+        resolved = previous.get('unresolvedGrades') == 0 and (exact_result or (all_gone and new_count is not None))
+        if resolved and new_count:
+            previous['newDiscs'] = new_count
     previous.update(status='reconciled' if resolved else 'needs_review', observations=dict(states),
                     resolution='已核对库存差额和现存标记' if resolved else '确认结果待核，本批不会自动重试')
     if native:
         result = {0:'记录已重置，缺少结束结果', 1:'回执成功', 2:'回执失败', 3:'只有开始记录，缺少结束结果'}
         stock = ('本批全部离库，其余盘已对上' if all_gone else '前后库存已对上') if resolved else '库存变化待核'
+        if previous.get('newDiscs'):
+            stock += f"，另有 {previous['newDiscs']} 张新盘入库"
         previous['resolution'] = '内置任务'+result[native['status']]+' · '+stock
+        if resolved:
+            retire_departed_marks(root, previous)
     record(root, previous)
 
 

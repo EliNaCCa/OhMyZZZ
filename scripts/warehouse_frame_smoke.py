@@ -22,7 +22,7 @@ def smoke(home):
     from drive_disc_manager.manager_app import wiki_path
     from drive_disc_manager.planner import plan
     from drive_disc_manager.optimizer import as_disc
-    from drive_disc_manager.scan_marks import MarkReader
+    from drive_disc_manager.scan_marks import MarkReader, observed_header
     from drive_disc_manager.scan_copies import selected_position, viewport_stamp
     from drive_disc_manager.stat_reading import measure
     from drive_disc_manager.disc_probe import read_selected
@@ -114,6 +114,16 @@ def smoke(home):
                      for text,matches in ocr.run_ocr(part).items() for m in matches]
             scanned = MarkReader(parser, ocr, frame[985:1070,1050:1920]).parse_ocr_result(items,part)
             assert scanned['observedValues'] == values and fingerprint(scanned) == fp and scanned['markState'] == state
+            if name == 'mark_before':
+                # Same frame, with the label and fraction delivered out of order as two OCR boxes.
+                label = next(i for i in items if '等级' in i['text'])
+                left, top, right, bottom = label['position']
+                split = [i for i in items if i is not label] + [dict(label, text='3/15', position=(right,top,right+30,bottom)),
+                                                               dict(label, text='等级')]
+                assert observed_header(split) == ('5', 3, 'S')
+                verified = MarkReader(parser, ocr, frame[985:1070,1050:1920]).parse_ocr_result(split, part)
+                assert verified['level'] == 3 and verified['observedValues'] == values
+                assert observed_header(split + [dict(text='等级0/15', confidence=.99)]) == ('5', None, None)
             assert scanned['lockState'] == 'unlocked' and not scanned['lock']
             assert scanned['ownerState'] == 'bag' and not scanned['location']
             candidate = as_disc(scanned, {scanned['setKey']:'谶羽之誓'}, roll_base=1)

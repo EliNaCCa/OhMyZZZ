@@ -68,23 +68,23 @@ class DiscDetails(QWidget):
         page = QWidget(); box = QVBoxLayout(page); self.tabs.addTab(page,'规则来源')
         self.rules = table(['角色 / 套装','字段','来源页签','对这张盘的判断']); box.addWidget(self.rules)
         self.field_value = label(); box.addWidget(self.field_value)
-        self.rule_button = PushButton('在规则订阅中查看'); box.addWidget(self.rule_button)
+        self.rule_button = PushButton('查看规则'); box.addWidget(self.rule_button)
         self.rule_button.clicked.connect(self.open_rule)
         self.rules.itemSelectionChanged.connect(self.select_rule)
         page = QWidget(); box = QVBoxLayout(page); self.tabs.addTab(page,'配队与备用')
         self.teams = table(['方案','角色','同时出场组','选择依据']); box.addWidget(self.teams)
-        self.team_button = PushButton('在我的配队中查看'); box.addWidget(self.team_button)
+        self.team_button = PushButton('查看配队'); box.addWidget(self.team_button)
         self.team_button.clicked.connect(self.open_team)
         self.teams.itemSelectionChanged.connect(self.select_team)
         self.spares = label(); box.addWidget(self.spares)
-        self.summary = PlainTextEdit(); self.summary.setReadOnly(True); self.tabs.addTab(self.summary,'判定明细')
+        self.summary = PlainTextEdit(); self.summary.setReadOnly(True); self.tabs.addTab(self.summary,'留盘理由')
         self.version = label(); outer.addWidget(self.version)
 
     def present(self, row, report, *, set_name, coverage, rule_keys, team_names, probe=False, stale=False, pinned=False):
         self.book = report.get('traceRules', {})
         self.uses = row.get('ruleUses', [])
         self.empty_hint = ('旧预览中没有逐字段来源，可返回仓库重新计算。' if 'traceRules' not in report else
-                           '游戏已标记弃置，按现有弃置标记处理。' if row['marked'] else '这张盘没有对应的订阅字段。')
+                           '已标记弃置' if row['marked'] else '没有匹配的订阅规则')
         self.rule_keys, self.team_names = set(rule_keys), set(team_names)
         title = f"{set_name} · {row['slot']} 号位 +{row['level']}　{row['decision']}"
         self.title.setText(title)
@@ -122,13 +122,14 @@ class DiscDetails(QWidget):
                 picked = ' · 这张已入选' if '备用 · '+use['purpose'] in reasons else ''
                 lines.append(f"{use['purpose']} 名额 {count}，同类入选 {use['covered']} 张{picked}")
         if not teams and not probe:
-            lines.append('本轮没有配队占用这张盘')
+            lines.append('暂无配队使用')
         if probe:
-            lines.append('完整库存可用于计算配队占用和实际备用张数。')
+            lines.append('读完整个仓库后可查看备用数量。')
         self.spares.setText('　｜　'.join(lines))
         rev = (report.get('rules') or '')[:12] or '无'
         scope = '单盘实测 · 当前规则' if probe else '库存预览 · 计算时规则'
-        self.version.setText(f'{scope} {rev}' + ('　｜　预览已过期，请重新计算' if stale else ''))
+        self.version.setToolTip(rev)
+        self.version.setText(f'{scope}' + ('　｜　预览已过期，请重新计算' if stale else ''))
         self.tabs.setCurrentIndex(0 if self.uses else 2)
 
     def select_rule(self):
@@ -144,7 +145,7 @@ class DiscDetails(QWidget):
                  '生效　'+values(entry['active'])]
         if entry['conflict']:
             lines.insert(0,'上游变动前　'+values(entry['old']))
-            lines.append('本轮按个人规则处理冲突')
+            lines.append('当前使用我的设置')
         self.field_value.setText('　｜　'.join(lines))
 
     def open_rule(self):

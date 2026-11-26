@@ -12,6 +12,7 @@ jobs:
         with:
           python-version: '3.11'
       - run: python scripts/smoke.py
+      - run: python scripts/salvage_rescan_smoke.py
       - run: python scripts/maintenance_smoke.py
       - name: Compare the manager's decisions on six sample discs
         if: github.event_name == 'pull_request'

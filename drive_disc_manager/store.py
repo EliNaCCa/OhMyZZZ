@@ -49,7 +49,7 @@ def fingerprint(d):
 def roll_base(z):
     # inventory_scan v1.4.7 writes the initial roll as 1. Keep raw fields
     # intact so upgrading this calculation preserves pins and marker history.
-    return 1 if z.get('source') == 'Zenless Optimizer' else 0
+    return 1 if z.get('source') == 'Zenless Optimizer' or z.get('networkPreview') is True else 0
 
 
 def equipment_names(wiki):
@@ -81,7 +81,7 @@ def equipment_keys(names):
     return {label:key for label, key in reverse.items() if key}
 
 
-def inventory(z):
+def inventory(z, *, preview_only=False):
     if not isinstance(z, dict) or (z.get('format'), z.get('dbVersion'), z.get('version')) != ('ZOD', 2, 1):
         raise ValueError('需要 ZOD v1 / dbVersion 2 完整导出')
     if not all(isinstance(z.get(k), list) for k in ('discs', 'characters', 'wengines')):
@@ -89,8 +89,10 @@ def inventory(z):
     ds = z['discs']
     base = roll_base(z)
     audit = z.get('audit') or {}
-    if audit.get('partial') or any(type(audit.get(k)) is not int or audit[k] != v
-                                   for k, v in [('game_total',len(ds)),('exported',len(ds)),('delta',0)]):
+    if z.get('networkPreview') and not preview_only:
+        raise ValueError('请先在游戏中核对库存')
+    if not (preview_only and z.get('networkPreview') is True) and (audit.get('partial') or any(type(audit.get(k)) is not int or audit[k] != v
+                                   for k, v in [('game_total',len(ds)),('exported',len(ds)),('delta',0)])):
         total = audit.get('game_total')
         detail = f'（游戏内 {total}，导出 {len(ds)}）' if type(total) is int else ''
         raise ValueError('库存不完整或缺少游戏内数量核对'+detail+'，请重新扫描')
@@ -114,7 +116,16 @@ def inventory(z):
 def defaults():
     return dict(reserve=2, reserve_rules=[], trimRecommended=False, pins=[], protect15=True, protectNaturalCrit=True, profiles=[], overrides={},
                 auto_sync=True, run_scanner=True, applyMarkers=False, rotateSpareLocks=False, fieldProfile='',
-                optimizer_url='', roster=[], aliases={}, includeOwned=True, futureAgents=[], excludedAgents=[])
+                optimizer_url='', roster=[], aliases={}, includeOwned=True, futureAgents=[], excludedAgents=[],
+                inventorySource='ocr', dailyLimit=1, weeklyLimit=7)
+
+
+def snapshot_path(root, cfg):
+    return root / ('network-inventory.json' if cfg.get('inventorySource') == 'network' else 'inventory.json')
+
+
+def preview_path(root, cfg):
+    return root / ('network-preview.json' if cfg.get('inventorySource') == 'network' else 'preview.json')
 
 
 def config(root):

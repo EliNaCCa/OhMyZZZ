@@ -22,9 +22,9 @@ def verify_bindings(cfg, name, wiki):
             raise ValueError(f"「{profile['name']}」的换装角色绑定待核对，请在「我的配队」更新所选配队。")
 
 
-def target_loadout(cfg, report, snapshot, name):
+def target_loadout(cfg, report, snapshot, name, *, preview_only=False):
     lineup = fielded_profiles(cfg, name)
-    discs, counts = inventory(snapshot)
+    discs, counts = inventory(snapshot, preview_only=preview_only)
     if report['configuration'] != digest(cfg) or report['inventory'] != digest(snapshot):
         raise ValueError('当前配队或库存已变化，请重新计算')
     by_fp = {fingerprint(d):d for d in discs}

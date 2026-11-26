@@ -3,12 +3,33 @@ import re
 from contextlib import contextmanager
 
 
+def observed_header(items):
+    # OCR may split a level label and its fraction into unordered boxes on one line.
+    rows, detached = [], []
+    for item in sorted(items, key=lambda i:(i.get('position') or (0, 0))[1]):
+        pos = item.get('position')
+        token = item.get('text', '') if item.get('confidence', 0) >= .85 else '|'
+        token = ''.join(token.split()).replace('【','[').replace('】',']')
+        if not pos:
+            detached.append(token)
+        else:
+            if not rows or pos[1] - rows[-1][0] > 12:
+                rows.append((pos[1], []))
+            rows[-1][1].append((pos[0], token))
+    lines = [''.join(t for _, t in sorted(boxes)) for _, boxes in rows] + detached
+    text = '|'.join(lines)
+    slots = set(re.findall(re.escape('[') + '([1-6])' + re.escape(']'), text))
+    pairs = set(re.findall(r'(?:等级|Lv[.]?)([0-9]{1,2})/([0-9]+)', text, re.I))
+    slot = slots.pop() if len(slots) == 1 else None
+    if len(pairs) == 1:
+        level, cap = pairs.pop()
+        if cap in ('9', '12', '15') and int(level) <= int(cap):
+            return slot, int(level), {'9':'B','12':'A','15':'S'}[cap]
+    return slot, None, None
+
+
 def observed_grade(items):
-    # The host parser defaults rarity to S. Use an explicit enhancement cap instead.
-    text = ''.join(str(i.get('text','')) for i in items if i.get('confidence',0) >= 0.85).replace(' ','')
-    caps = re.findall(r'(?:等级|Lv[.]?)(?:[0-9]{1,2})/(9|12|15)(?![0-9])', text, re.I)
-    if len(set(caps)) == 1:
-        return {'9':'B','12':'A','15':'S'}[caps[0]]
+    return observed_header(items)[2]
 
 
 class MarkReader:
@@ -20,18 +41,20 @@ class MarkReader:
 
     def parse_ocr_result(self, items, image):
         # The host's spelling dictionary mutates its input. Preserve raw value tokens.
-        result = self.parser.parse_ocr_result([dict(i) for i in items], None)
+        parsed_items = [dict(i, text=i['text'].replace('【','[').replace('】',']')) for i in items]
+        result = self.parser.parse_ocr_result(parsed_items, None)
         if result is None:
             return None
         from .disc_owner import read_owner
         result['ownerState'], result['location'] = read_owner(image, getattr(self.parser, 'icon_matcher', None))
         mark, lock = read_controls(self.ocr, self.footer)
         result.update(markState=mark, trash=mark == 'marked', lockState=lock, lock=lock == 'locked')
-        result['observedGrade'] = observed_grade(items)
-        if result['observedGrade']:
-            result['rarity'] = result['observedGrade']
+        slot, level, grade = observed_header(items)
+        result['observedGrade'] = grade
+        if grade:
+            result.update(rarity=grade, level=level)
         from .stat_reading import measure
-        result['observedValues'] = measure(items, result, self.parser) if result['observedGrade'] else None
+        result['observedValues'] = measure(items, result, self.parser) if grade and slot == str(result['slotKey']) else None
         if self.cell is not None:
             result['scanCell'] = self.cell
         return result

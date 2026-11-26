@@ -4,7 +4,7 @@ from csv import Error as CSVError
 from pathlib import Path
 from .planner import plan
 from .maintenance import Deferred, exclusive
-from .store import config, digest, equipment_names, read, save
+from .store import config, digest, equipment_names, read, save, snapshot_path, preview_path
 from .subscriptions import sync
 
 
@@ -21,9 +21,10 @@ def rule_snapshot(root, refresh=True):
         return config(root), read(root/'rules.json',{}), warnings
 
 
-def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=False):
+def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=False, verified_game=False):
     cfg, rules, warnings = snapshot if snapshot is not None else rule_snapshot(root, refresh)
-    z = read(root/'inventory.json')
+    inputs = dict(cfg, inventorySource='ocr') if verified_game else cfg
+    z = read(snapshot_path(root, inputs))
     dictionary = read(wiki) if wiki and Path(wiki).is_file() else {}
     names = equipment_names(dictionary)
     names.update(cfg.get('aliases',{}))
@@ -41,8 +42,8 @@ def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=F
             return candidate_pool(endpoint, profile, discs, current)
         report = plan(z,cfg,rules,names,candidates,
                       wiki=dictionary, known_owned=read(root/'owned-agents.json', []), history=history,
-                      previous_preview=read(root/'preview.json', {}) if reuse_allocations else None)
+                      previous_preview=read(preview_path(root, inputs), {}) if reuse_allocations else None)
     report['configuration'] = digest(cfg)
     report.update(warnings=warnings,generated=time.time(), mode='preview')
-    save(root/'preview.json',report)
+    save(preview_path(root, inputs),report)
     return report

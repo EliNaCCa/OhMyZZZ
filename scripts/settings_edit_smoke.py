@@ -55,7 +55,7 @@ def smoke(home, tmp):
         widget.editor.setPlainText('暂存的配置')
         finish()
         assert widget.rules['fields'][key] == ['def_'] and widget.editor.toPlainText() == '暂存的配置'
-        assert widget.rules['version'][:8] in widget.rule_stamp.text() and '暂无记录' not in widget.rule_stamp.text()
+        assert widget.rule_stamp.toolTip() == widget.rules['version'] and '暂无记录' not in widget.rule_stamp.text()
 
     def switch(*args):
         context.current_instance_idx = 2
@@ -101,7 +101,7 @@ def smoke(home, tmp):
     assert '开启「驱动盘」' in widget.scanner_note.text()
     option.scan_drive_disk = True
     widget.on_interface_shown()
-    assert '已就绪' in widget.scanner_note.text()
+    assert widget.scanner_note.isHidden()
 
     def inherit(dialog):
         assert dialog.custom.isChecked() and dialog.count.value() == 6

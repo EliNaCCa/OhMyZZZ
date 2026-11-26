@@ -20,3 +20,7 @@ class ManagerFactory(ApplicationFactory):
 
     def create_config(self, instance_idx, group_id):
         return ApplicationConfig(meta.APP_ID,instance_idx,group_id)
+
+    def create_run_record(self, instance_idx):
+        from .frequency import ManagerRunRecord
+        return ManagerRunRecord(self.ctx, instance_idx)

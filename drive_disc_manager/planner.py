@@ -60,7 +60,7 @@ def assess_rules(row, cfg, fields, reverse, by_set, unresolved, excluded):
 
 
 def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_owned=(),history=None,previous_preview=None):
-    ds, _ = inventory(z)
+    ds, _ = inventory(z, preview_only=True)
     from .marks import owns_spare, scanned_identities
     history = history or {}
     keys, counts = scanned_identities(ds, names)

@@ -1,5 +1,5 @@
 """Describe when the current account's native daily task can pick up disc marks."""
-from .drive_disc_manager_const import APP_ID
+
 
 
 NATIVE_ID = 'drive_disc_dismantle'
@@ -29,29 +29,3 @@ def marker_conflict(ctx, account, current_group):
         if native and native.dismantle_level == 'S及以下':
             return '内置拆解还会选择未弃置的 S 级盘 · '+group_id
     return ''
-
-
-def describe_order(group, native, cfg):
-    enabled = [row.app_id for row in group.app_list if row.enabled]
-    daily = APP_ID in enabled
-    entry = '已加入日常' if daily else '未加入日常'
-    mode = '扫描并标记' if cfg['applyMarkers'] else ('扫描并预览' if cfg['run_scanner'] else '使用已有库存预览')
-    parts = [f'{entry} · {mode}']
-    if native is None or NATIVE_ID not in enabled:
-        parts.append('内置拆解未启用')
-    else:
-        scope = native.dismantle_level + ('、已弃置盘' if native.dismantle_abandon else '')
-        parts.append(f'内置拆解 · {scope}')
-        if native.dismantle_level == 'S及以下':
-            parts.append('当前品级包含未弃置的 S 盘，自动标记将暂停。')
-        elif native.dismantle_abandon and cfg['applyMarkers'] and daily:
-            if enabled.index(APP_ID) > enabled.index(NATIVE_ID):
-                parts.append('新标记将在下一轮拆解。把 OhMyZZZ 移到拆解前可在本轮处理。')
-            else:
-                parts.append('本轮先标记，再由内置任务拆解。')
-    return '\n'.join(parts)
-
-
-def account_order(ctx, account, cfg):
-    group, native = group_settings(ctx, account)
-    return describe_order(group, native, cfg)
