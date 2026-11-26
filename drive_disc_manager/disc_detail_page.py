@@ -105,7 +105,8 @@ class DiscDetails(QWidget):
         rule_rows = []
         for key, agent, outcome in self.uses:
             entry = self.book.get(key, {})
-            rule_rows.append((agent or set_name, key, '、'.join(entry.get('tabs', [])) or '未记录页签', outcome))
+            source = '、'.join(entry.get('tabs', [])) or '未记录页签'
+            rule_rows.append((agent or set_name, key, ('原页签 · ' if entry.get('formerSource') else '')+source, outcome))
         fill(self.rules,rule_rows); self.select_rule()
         teams = teams_for_disc(report, row)
         fill(self.teams, [(name, team.get('agent') or '—', team.get('group') or '可借盘', result.get('reason',''))

@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QTabWidget,QWidge
     QPlainTextEdit,QTableWidget,QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView,QCheckBox,QLineEdit,QMenu)
 from .store import read,save,config,import_inventory,digest,equipment_names,equipment_keys
 from .service import preview
-from .subscriptions import sync, current_conflicts, can_merge, effective, resolve_conflict, save_config, save_config_draft, save_field_override
+from .subscriptions import sync, current_conflicts, can_merge, effective, field_tabs, resolve_conflict, save_config, save_config_draft, save_field_override
 from .manager_app import wiki_path
 from .drive_disc_manager_const import APP_ID, APP_NAME, PLUGIN_VERSION
 from .reserve_policy import matching_rules, normalized_rule, SELECTORS
@@ -1287,8 +1287,9 @@ class ManagerInterface(BaseInterface):
         labels = {'sets4':'四件套','sets2':'两件套','subs':'副词条'}
         for slot in '456':
             labels[slot] = labels['slot'+slot] = f'{slot} 号主词条'
-        tabs = self.rules.get('origins',{}).get(key) or [{'matrix':'Set+Main','build':'Prydwen Builds','guide':'角色攻略表'}.get(source,source)]
+        tabs = field_tabs(self.rules, key) or [{'matrix':'Set+Main','build':'Prydwen Builds','guide':'角色攻略表'}.get(source,source)]
         remote = self.rules.get('fields',{}).get(key)
+        tab_label = ('原页签 · ' if key in self.rules.get('formerOrigins', {}) else '') + '、'.join(tabs)
         conflict = self.conflicts.get(key)
         override = self.cfg['overrides'].get(key) or {}
         mode = override.get('mode','inherit')
@@ -1307,7 +1308,7 @@ class ManagerInterface(BaseInterface):
                 return '、'.join(names.get(v, v) for v in sorted(accepted_terms(key, values))) or '无'
             return '、'.join(values) or '无'
         local = '继承上游' if mode=='inherit' else ('额外接受 ' if mode=='add' else '只接受 ') + display(override['values'], show_accepted=True)
-        return [('⚠ ' if conflict else '')+subject, labels.get(field,field), '、'.join(tabs),
+        return [('⚠ ' if conflict else '')+subject, labels.get(field,field), tab_label,
                 display(conflict['old']) if conflict else '—', display(remote), local, display(effective(remote,override or None), show_accepted=True)]
 
     def filter_rules(self, *_):

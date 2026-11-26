@@ -11,6 +11,74 @@ from drive_disc_manager import subscriptions as sub
 from drive_disc_manager.store import config, read, save
 
 
+def guide_smoke(root):
+    cards = '''
+,Roxy Ifrita Pryce,,
+,Last Updated:,,
+,,Main Stats,Sub Stats
+,,ER% Dics 6,ATK%
+,Anton Ivanov,,
+,Last Updated:,,
+,,Main Stats,Sub Stats
+,,CR%/CD%Disc 4,
+,Ju Fufu,,
+,Last Updated:,,
+,,Main Stats,Sub Stats
+,,ATK% > CR% Disc 4¹,CR%
+,,Main Stats,Sub Stats
+,,Impact% Disc 6,
+,,Generic Team Example,
+'''
+    fields = sub.guide_fields(cards)
+    expected = {'guide/Roxy Ifrita Pryce/slot6':{'energyRegen_'},
+                'guide/Anton Ivanov/slot4':{'crit_', 'crit_dmg_'},
+                'guide/Ju Fufu/slot4':{'atk_', 'crit_'}, 'guide/Ju Fufu/slot6':{'impact'}}
+    for key, stats in expected.items():
+        assert sub.accepted_terms(key, fields.get(key)) == stats, key
+    key = 'guide/Ju Fufu/slot4'
+    cfg = config(root)
+    cfg['overrides'] = {key:dict(mode='only', values=['crit_'])}
+    save(root/'config.json', cfg)
+    tabs = {'Fire':'42'}
+    def update(previous, fields, origins):
+        return sub.merge(previous, fields, cfg['overrides'], tabs, origins)
+    base = update({}, {key:fields[key]}, {key:['Fire']})
+    save(root/'rules.json', base)
+    before = (root/'rules.json').read_bytes()
+    broken = cards.replace('Main Stats,Sub Stats\n,,CR%/CD%Disc', 'Main,Sub\n,,CR%/CD%Disc')
+    with patch.object(sub, 'sources', side_effect=lambda: (sub.guide_fields(broken), tabs, {})):
+        try:
+            sub.sync(root)
+        except ValueError as exc:
+            assert 'Anton Ivanov' in str(exc)
+        else:
+            raise AssertionError('published a guide with a missing role header')
+    assert (root/'rules.json').read_bytes() == before
+    assert key not in sub.guide_fields(cards.replace('ATK% > CR% Disc 4¹', ''))
+    alternate = update(base, base['fields'], {key:['Other']})
+    assert alternate['version'] != base['version'] and not alternate['conflicts']
+    removed = update(base, {'build/Ju Fufu/sets4':['SwingJazz']}, {})
+    save(root/'rules.json', removed)
+    conflict = sub.current_conflicts(removed, cfg['overrides'])[key]
+    assert conflict['old'] == fields[key] and conflict['remote'] is None
+    assert conflict['active'] == ['crit_'] and sub.field_tabs(removed, key) == ['Fire']
+    from drive_disc_manager.planner import plan
+    sample = dict(id='d4',setKey='SwingJazz',slotKey='4',level=0,rarity='S',mainStatKey='crit_',
+                  substats=[dict(key=k,upgrades=0) for k in ('crit_dmg_','atk','hp')])
+    inventory = dict(format='ZOD', version=1, dbVersion=2, characters=[], wengines=[], discs=[sample],
+                     audit=dict(game_total=1, exported=1, delta=0))
+    report = plan(inventory, dict(cfg, futureAgents=['jufufu'], reserve=0, trimRecommended=False), removed, {})
+    assert report['discs'][0]['decision'] == '保留' and (key,'Ju Fufu','主属性符合') in report['discs'][0]['ruleUses']
+    entry = report['traceRules'][key]
+    assert entry['tabs'] == ['Fire'] and entry['old'] == fields[key] and entry['active'] == ['crit_']
+    sub.resolve_conflict(root, key, conflict, 'local')
+    cfg = config(root)
+    same = update(removed, removed['fields'], {})
+    assert not sub.current_conflicts(same, cfg['overrides']) and sub.field_tabs(same, key) == ['Fire']
+    restored = update(same, {key:fields[key]}, {key:['Updated Fire']})
+    assert sub.field_tabs(restored, key) == ['Updated Fire']
+
+
 def smoke(root):
     key = 'matrix/SwingJazz/4'
     cfg = config(root)
@@ -197,6 +265,8 @@ def smoke(root):
 
 
 if __name__ == '__main__':
+    with TemporaryDirectory() as temp:
+        guide_smoke(Path(temp))
     with TemporaryDirectory() as temp:
         smoke(Path(temp))
     print('PASS subscription: three-way decisions, stale edits, acknowledgement, union and failed schema')

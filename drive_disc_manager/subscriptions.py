@@ -88,31 +88,43 @@ def matrix_fields(raw):
     return fields
 
 
+_GUIDE_SLOT = re.compile(r'(.+?)(?<![A-Za-z])(?:Disc|Dics)\s*([456])[¹²³⁴⁵]*(?!\w)', re.I)
+
+
 def guide_fields(raw):
     rows = [r+['']*40 for r in csv.reader(io.StringIO(raw), strict=True) if any(cell.strip() for cell in r)]
     result, agent, cols = {}, '', {}
     for i, row in enumerate(rows):
-        if row[1].strip().startswith('Last Updated:') and i:
+        if row[1].strip().startswith('Last Updated:'):
+            if agent and not cols:
+                raise ValueError('角色表缺少词条表头 · '+agent)
+            if not i:
+                raise ValueError('角色栏为空')
             agent = rows[i-1][1].strip()
             cols = {}
             if not agent:
                 raise ValueError('角色栏为空')
         if not agent:
             continue
-        if 'Main Stats' in row and 'Sub Stats' in row:
+        if 'Main Stats' in row or 'Sub Stats' in row:
+            if row.count('Main Stats') != 1 or row.count('Sub Stats') != 1:
+                raise ValueError('角色词条表头缺失或重复 · '+agent)
             cols = {'main':row.index('Main Stats'), 'subs':row.index('Sub Stats')}
             continue
         if not cols:
             continue
         field = 'guide/'+agent+'/'
-        m = re.search(r'(.+?)\s+Disc\s*([456])\b', row[cols['main']], re.I)
-        if m:
-            result.setdefault(field+'slot'+m[2], []).append(m[1].strip())
+        for m in _GUIDE_SLOT.finditer(row[cols['main']]):
+            stat = m[1].strip()
+            if stat:
+                result.setdefault(field+'slot'+m[2], []).append(stat)
         sub = row[cols['subs']].strip()
         if sub == 'Baseline Stats':
             cols['subs_done'] = True
         elif sub and not cols.get('subs_done'):
             result.setdefault(field+'subs', []).append(sub)
+    if agent and not cols:
+        raise ValueError('角色表缺少词条表头 · '+agent)
     if not result:
         raise ValueError('角色表结构未知')
     return result
@@ -223,9 +235,16 @@ def current_conflicts(snapshot, overrides):
     return pending
 
 
+def field_tabs(snapshot, key):
+    return snapshot.get('origins', {}).get(key) or snapshot.get('formerOrigins', {}).get(key, [])
+
+
 def merge(previous, fields, overrides, tabs, origins=None):
     old = previous.get('fields', {})
-    rev = digest(fields)
+    origins = origins or {}
+    # A deleted field remains editable locally, including after acknowledging a conflict.
+    former = {key:known for key in overrides if key not in fields and (known := field_tabs(previous, key))}
+    rev = digest([fields, tabs, origins, former])
     pending = current_conflicts(previous, overrides)
     for key, override in overrides.items():
         before, after = old.get(key), fields.get(key)
@@ -237,7 +256,8 @@ def merge(previous, fields, overrides, tabs, origins=None):
         conflict = conflict_view(change, override, key)
         if conflict:
             pending[key] = conflict
-    return dict(fields=fields, version=rev, tabs=tabs, origins=origins or {}, updated=time.time(), conflicts=pending)
+    return dict(fields=fields, version=rev, tabs=tabs, origins=origins, formerOrigins=former,
+                updated=time.time(), conflicts=pending)
 
 
 def can_merge(conflict):

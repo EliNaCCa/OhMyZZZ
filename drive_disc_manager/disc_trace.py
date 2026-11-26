@@ -1,5 +1,5 @@
 """Values and sources used at planning time, shared across the inventory report."""
-from .subscriptions import effective
+from .subscriptions import effective, field_tabs
 
 
 def rule_book(rows, rules, overrides, conflicts):
@@ -11,7 +11,8 @@ def rule_book(rows, rules, overrides, conflicts):
         conflict = conflicts.get(key)
         book[key] = dict(remote=remote, mode=local.get('mode', 'inherit'), local=local.get('values'),
                          active=effective(remote, local), old=conflict['old'] if conflict else None,
-                         conflict=bool(conflict), tabs=rules.get('origins', {}).get(key, []))
+                         conflict=bool(conflict), tabs=field_tabs(rules, key),
+                         formerSource=key in rules.get('formerOrigins', {}))
     return book
 
 
