@@ -16,14 +16,18 @@ def selected_position(image, target):
     col = round((x - 167) / 135)
     if col not in range(9) or abs(x - (167 + 135 * col)) > 20 or not 220 <= y <= 930:
         return None
-    left, top = x - 90, y - 90
+    # inventory_scan fits its click points to the colored strip below the
+    # disc artwork. The selection frame is centered about 44 px above them.
+    # Include the whole frame, then require the click to be inside it.
+    left, top = x - 90, y - 145
     crop = image[top:y+91, left:x+91]
     hsv = cv2.cvtColor(crop, cv2.COLOR_RGB2HSV)
     mask = cv2.inRange(hsv, np.array([20, 120, 110]), np.array([43, 255, 255]))
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     for contour in contours:
         dx, dy, w, h = cv2.boundingRect(contour)
-        if not (125 <= w <= 138 and 123 <= h <= 138 and abs(dx+w/2-90) <= 16 and abs(dy+h/2-90) <= 24):
+        if not (125 <= w <= 138 and 123 <= h <= 138 and abs(dx+w/2-90) <= 16
+                and top + dy + 8 <= y <= top + dy + h - 8):
             continue
         border = mask[dy:dy+h, dx:dx+w] > 0
         if (border[:9, 18:-18].any(axis=0).mean() > .80 and

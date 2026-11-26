@@ -70,6 +70,10 @@ def smoke(home):
                              for img,y in ((frame,bottom), (moved,upper))]
                 assert all(pos is not None and pos[0]==3 for pos in positions)
                 assert positions[0][1]-positions[1][1] == bottom-upper
+                # Native grid points sit on the colored strip below the art.
+                assert selected_position(frame, SimpleNamespace(x=572, y=841)) == positions[0]
+                assert selected_position(frame, SimpleNamespace(x=572, y=667)) is None
+                assert selected_position(frame, SimpleNamespace(x=707, y=841)) is None
                 assert selected_position(moved, SimpleNamespace(x=572, y=bottom)) is None
                 stamp = viewport_stamp(frame,3)
                 assert stamp and viewport_stamp(moved,3) == stamp
