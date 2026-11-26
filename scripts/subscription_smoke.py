@@ -87,6 +87,24 @@ def guide_smoke(root):
     assert sub.field_tabs(restored, key) == ['Updated Fire']
 
 
+def icon_smoke():
+    from drive_disc_manager.guide_sets import HEADER, UNKNOWN, role_icons, match_icons
+    from PIL import Image
+    from io import BytesIO
+    # A merged four-piece cell and an image in the neighbouring main-stat column.
+    raw = f',Example\n,Last Updated 3.3\n,{HEADER},,Main Stats\n\n,Best in Disorder\n,2 Piece Drive Disc Set'
+    rows = [['', 'Example'], ['', 'Last Updated 3.3'], ['', f'<td colspan="2">{HEADER}</td>', 'Main Stats'],
+            ['', '<td colspan="2"><img src="disc"></td>', '<td><img src="main"></td>'],
+            ['', 'Best in Disorder'], ['', '2 Piece Drive Disc Set']]
+    html = '<table class="waffle">'+''.join(f'<tr><th id="7R{i}"></th>'+''.join(v if v.startswith('<td') else '<td>'+v+'</td>' for v in row)+'</tr>' for i,row in enumerate(rows))+'</table>'
+    assert role_icons(raw,html) == {'Example':[(4,1,'disc',(5,1,'Best in Disorder'))]}
+    data = {}
+    for key, color in [('first','red'), ('second','blue'), ('new','yellow')]:
+        buffer = BytesIO(); Image.new('RGB',(16,16),color).save(buffer,format='PNG'); data[key]=buffer.getvalue()
+    result = match_icons({'一':'first','二':'second'}, {'first','new'}, data.__getitem__)
+    assert result['first']==('一',) and result['new']==(UNKNOWN,)
+
+
 def smoke(root):
     key = 'matrix/SwingJazz/4'
     cfg = config(root)
@@ -279,6 +297,7 @@ def smoke(root):
 
 
 if __name__ == '__main__':
+    icon_smoke()
     with TemporaryDirectory() as temp:
         guide_smoke(Path(temp))
     with TemporaryDirectory() as temp:

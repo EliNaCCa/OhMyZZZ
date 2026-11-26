@@ -176,6 +176,8 @@ class DiscDetails(QWidget):
             lines.append(tab)
             for coord, heading, raw in source['cells']:
                 if not fixed or heading == '套装':
+                    if heading == '四件套图标':
+                        raw = ' / '.join(self.set_names.get(v, v) for v in raw.split(' / '))
                     lines.append(f'{coord}　{heading}　{raw or "（空白）"}')
         self.source_text.setPlainText(chr(10).join(lines))
         self.source_text.setToolTip(chr(10).join(s['url'] for s in cells.values()))

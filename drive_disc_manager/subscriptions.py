@@ -97,11 +97,12 @@ _GUIDE_SLOT = re.compile(r'(.+?)(?<![A-Za-z])(?:Disc|Dics)\s*([456])[¹²³⁴�
 
 
 def guide_fields(raw, note=None):
+    from .guide_sets import UPDATED
     rows = [(n, r+['']*40) for n, r in enumerate(csv.reader(io.StringIO(raw), strict=True), 1)
             if any(cell.strip() for cell in r)]
     result, agent, cols = {}, '', {}
     for i, (number, row) in enumerate(rows):
-        if row[1].strip().startswith('Last Updated:'):
+        if UPDATED.match(row[1].strip()):
             if agent and not cols:
                 raise ValueError('角色表缺少词条表头 · '+agent)
             if not i:
@@ -179,9 +180,11 @@ def build_fields(raw, note=None):
 
 
 def sources():
+    from .guide_sets import reference_icons, role_icons, match_icons
     index = fetch(GUIDE+'html')
-    tabs = [(name,gid) for name,gid in re.findall(r'items[.]push[(][{]name:\s*"([^"]+)"[^}]*?gid:\s*"([0-9]+)"', index) if name.lower() in ELEMENTS]
-    if not {'Physical','Fire','Ice','Electric','Ether'}.issubset({name for name,_ in tabs}):
+    catalog = dict(re.findall(r'items[.]push[(][{]name:\s*"([^"]+)"[^}]*?gid:\s*"([0-9]+)"', index))
+    tabs = [(name,gid) for name,gid in catalog.items() if name.lower() in ELEMENTS]
+    if not {'Physical','Fire','Ice','Electric','Ether','Drive Disc Guide'}.issubset(catalog):
         raise ValueError('攻略表页签变化')
     evidence = {}
 
@@ -200,18 +203,40 @@ def sources():
 
     sheet = MATRIX.split('/export?')[0]+'/edit#gid='
     fields = matrix_fields(fetch(MATRIX), record_cells('Set+Main', sheet+'133245023'))
+    reference_gid = catalog['Drive Disc Guide']
+    html_url = GUIDE+'html/sheet?headers=false&gid='
+    refs = reference_icons(fetch(html_url+reference_gid), {k.split('/')[1] for k in fields})
     origins = {key:['Set+Main'] for key in fields}
     builds = build_fields(fetch(MATRIX.rsplit('=',1)[0]+'='+BUILDS_GID),
                           record_cells('Prydwen Builds', sheet+BUILDS_GID))
     fields.update(builds)
     origins.update({key:['Prydwen Builds'] for key in builds})
+    def role_tab(entry):
+        _, gid = entry
+        raw = fetch(GUIDE+'?single=true&output=csv&gid='+gid)
+        return raw, role_icons(raw, fetch(html_url+gid))
+
+    pictures = []
     with ThreadPoolExecutor(max_workers=3) as pool:
-        urls = [GUIDE+'?single=true&output=csv&gid='+gid for _, gid in tabs]
-        for (tab, gid), data in zip(tabs, pool.map(fetch, urls), strict=True):
-            for key, value in guide_fields(data, record_cells(tab, GUIDE+'html?gid='+gid+'&single=true')).items():
+        for (tab, gid), (data, icons) in zip(tabs, pool.map(role_tab, tabs), strict=True):
+            note = record_cells(tab, GUIDE+'html?gid='+gid+'&single=true')
+            for key, value in guide_fields(data, note).items():
                 fields[key] = sorted(set(fields.get(key, [])+value))
                 origins.setdefault(key, []).append(tab)
-    return fields, dict(tabs, **{'Prydwen Builds':BUILDS_GID, 'Set+Main':'133245023'}), origins, evidence
+            for actor, entries in icons.items():
+                pictures.append(('guide/'+actor+'/sets4', tab, note, entries))
+    recognized = match_icons(refs, {url for _,_,_,entries in pictures for _,_,url,_ in entries})
+    for key, tab, note, entries in pictures:
+        active = set(fields.get(key, []))
+        for row, col, url, caption in entries:
+            names = recognized[url]
+            active.update(names)
+            note(key, row, col, '四件套图标', ' / '.join(names))
+            if caption:
+                note(key, caption[0], caption[1], '适用场合', caption[2])
+        fields[key] = sorted(active)
+        origins.setdefault(key, []).append(tab)
+    return fields, dict(tabs, **{'Drive Disc Guide':reference_gid, 'Prydwen Builds':BUILDS_GID, 'Set+Main':'133245023'}), origins, evidence
 
 
 def effective(remote, override=None):

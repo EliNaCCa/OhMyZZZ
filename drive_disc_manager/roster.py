@@ -2,6 +2,7 @@
 import re
 from collections import defaultdict
 
+from .guide_sets import UNKNOWN as UNKNOWN_ICON
 from .subscriptions import ELEMENTS, STATS, effective
 
 
@@ -187,7 +188,9 @@ def compile_roster(catalog, fields, overrides, set_aliases=None):
         preferred = set()
         sub_fields = []
         unknown_substats = {}
-        all_set_fields_excluded = bool(item['builds'])
+        all_set_fields_excluded = True
+        has_set_fields = False
+        unclear_fields = []
         for source, names in [('build',item['builds']), ('guide',item['guides'])]:
             for name in names:
                 prefix = f'{source}/{name}/'
@@ -199,10 +202,15 @@ def compile_roster(catalog, fields, overrides, set_aliases=None):
                 preferred.update(substats)
                 if substats:
                     sub_fields.append(sub_field)
-                if source == 'build':
-                    for group in ('sets4','sets2'):
+                groups = ('sets4','sets2') if source == 'build' else ('sets4',)
+                if source == 'build' or prefix+'sets4' in fields or prefix+'sets4' in overrides:
+                    for group in groups:
+                        has_set_fields = True
                         field = prefix+group
                         accepted = effective(fields.get(field), overrides.get(field)) or []
+                        if source == 'guide' and UNKNOWN_ICON in accepted:
+                            unclear_fields.append(field)
+                            accepted = [v for v in accepted if v != UNKNOWN_ICON]
                         if overrides.get(field, {}).get('mode') != 'only' or accepted:
                             all_set_fields_excluded = False
                         accepted_ids = {set_id(value) for value in accepted}
@@ -217,7 +225,9 @@ def compile_roster(catalog, fields, overrides, set_aliases=None):
                     if not values and overrides.get(field, {}).get('mode') == 'only':
                         uncertain = False
                     slot_rules[slot].append((field,stats,uncertain))
-        if not sets and not all_set_fields_excluded:
+        for field in unclear_fields:
+            unresolved.append((item['label'], field))
+        if not unclear_fields and not sets and not (has_set_fields and all_set_fields_excluded):
             unresolved.append(item['label'])
         for key, set_fields in sets.items():
             by_set[key].append((item['label'],set_fields,slot_rules,preferred,sub_fields,unknown_substats))
@@ -237,8 +247,7 @@ def explain(row, by_set, unresolved, excluded):
             outcome = '主属性符合' if row['main'] in stats else ('主属性待核' if uncertain else '主属性不符')
             rules.append((field, label, outcome))
         if fixed or matched:
-            evidence = '、'.join([*set_fields,*matched])
-            row['recommendations'].append(f'角色留盘 · {label} · {row["main"]} · {evidence}')
+            row['recommendations'].append('适合'+label)
             for field, terms in unknown_substats.items():
                 note = '角色副词条待核 · '+label+' · '+'、'.join(terms)
                 row['review'].append(note)
@@ -251,5 +260,11 @@ def explain(row, by_set, unresolved, excluded):
                 rules.extend((field, label, '用于备用盘副词条排序') for field in sub_fields)
         elif any(unknown for _, _, unknown in slots.get(row['slot'], ())):
             row['review'].append('角色主词条待核 · '+label)
-    if unresolved:
-        row['review'].append('角色套装待核 · '+'、'.join(unresolved))
+    for item in unresolved:
+        if isinstance(item, tuple):
+            label, field = item
+            message = label+'的四件套图标待核对'
+            rules.append((field, label, message))
+        else:
+            message = '角色套装待核 · '+item
+        row['review'].append(message)

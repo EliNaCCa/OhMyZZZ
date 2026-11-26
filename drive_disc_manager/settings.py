@@ -500,9 +500,14 @@ class ManagerInterface(BaseInterface):
         self.agents = roster_catalog(inventory, fields, self.cfg, wiki, known_agents(self.root))
         def display(agent):
             selected = '已选' if agent['future'] else ('自动' if agent['selected'] else '不留盘')
+            sources = []
+            if agent['builds']:
+                sources.append('Prydwen Builds')
+            if any('guide/'+name+'/sets4' in fields for name in agent['guides']):
+                sources.append('角色攻略表')
             return (agent['label'], '已拥有' if agent['owned'] else '未扫描到', selected,
                     ' / '.join(dict.fromkeys(agent['builds']+agent['guides'])),
-                    'Prydwen Builds' if agent['builds'] else '套装待核')
+                    '、'.join(sources) or '套装待核')
         self.fill(self.agent_table,[display(agent) for agent in self.agents])
         count = sum(a['selected'] for a in self.agents)
         owned = sum(a['owned'] for a in self.agents)
@@ -1477,7 +1482,7 @@ class ManagerInterface(BaseInterface):
             chosen = dialog.values()
             # Existing guide rules can store the original sheet text for the same checkboxes.
             override = dict(mode=mode, values=selected if chosen == initial and mode == old['mode'] else chosen)
-        elif mode != 'inherit' and key.startswith('build/') and key.rsplit('/',1)[-1] in ('sets4','sets2'):
+        elif mode != 'inherit' and key.startswith(('build/', 'guide/')) and field in ('sets4','sets2'):
             from .set_rule_editor import SetRuleEditor
             matrix_sets = {k.split('/')[1] for k in self.keys if k.startswith('matrix/') and k.count('/') == 2}
             choices = {k:self.set_names.get(k,k) for k in matrix_sets | self.set_names.keys()}
