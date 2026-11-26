@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFormLayout
                                QPushButton, QRadioButton, QSpinBox, QVBoxLayout)
 
 from .purpose_editor import PurposeEditor, ranking_label
-from .reserve_policy import DEFAULT_STATS, exact_purpose, matching_rules, normalized_rule, rule_selectors
+from .reserve_policy import DEFAULT_STATS, PURPOSE_STATS, exact_purpose, matching_rules, normalized_rule, rule_selectors
 
 
 def amount(n):
@@ -15,7 +15,7 @@ class QuotaEditor(QDialog):
         super().__init__(parent)
         self.group, self.cfg, self.reverse = group, cfg, reverse
         self.report = report
-        self.purpose_stats = {'偏暴击':['crit_'], '偏暴伤':['crit_dmg_']}
+        self.purpose_stats = PURPOSE_STATS.copy()
         self.draft_rules = list(cfg['reserve_rules'])
         self.displayed_purpose = None
         self.changes = {}
@@ -167,6 +167,9 @@ class QuotaEditor(QDialog):
         if result is None:
             self.impact.setText('请先在仓库预览重新计算一次，以载入备用名额的计算依据。')
         else:
-            self.impact.setText(f"此范围 {result['groups']} 组、{result['total']} 张未弃置盘　｜　"
-                f"保留 {result['before']} → {result['after']} 张，其中备用 {result['spares']} 张　｜　"
-                f"新增弃置候选 {result['newCandidates']} 张")
+            summary = (f"{result['total']} 张未弃置盘，保留 {result['before']} → {result['after']} 张，其中备用 {result['spares']} 张。"
+                       f"新增弃置候选 {result['newCandidates']} 张。")
+            uses = '、'.join(f'{name} {count} 张' for name, count in result['byPurpose'].items())
+            if result['shared']:
+                uses += f"（{result['shared']} 张同时入选多个用途）"
+            self.impact.setText('\n'.join(filter(None, (summary, uses))))

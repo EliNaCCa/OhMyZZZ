@@ -8,7 +8,7 @@ from .disc_detail_page import fill, table
 from .main_rule_editor import NAMES
 from .purpose_editor import ranking_label
 from .quota_editor import amount
-from .reserve_policy import DEFAULT_STATS, matching_rules, normalized_rule, rule_selectors
+from .reserve_policy import matching_rules, normalized_rule, rule_selectors, rule_stats
 from .store import equipment_keys
 from .subscriptions import SLOT_MAIN
 
@@ -114,7 +114,7 @@ class ReservePresets(QWidget):
             mode = '继承' if 'trimRecommended' not in rule else '按名额筛选' if rule['trimRecommended'] else '全部保留'
             purpose = rule.get('purpose') or '通用'
             return (scope_name(rule_selectors(rule), names), purpose, amount(rule['count']), mode,
-                    ranking_label(purpose, rule.get('stats', DEFAULT_STATS)))
+                    ranking_label(purpose, rule_stats(rule)))
         fill(self.grid, [row(rule) for rule in self.rules])
 
     def describe(self, *_):

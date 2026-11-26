@@ -97,11 +97,19 @@ def smoke(home):
         equal = scan(inventory(tie, old))
         assert picked(equal.report['discs']) == [old['id']] and not equal.phase_targets('release')
         # A single double-crit disc can fill both extra purposes outside the team's gear.
-        special = [dict(purpose='偏暴击', count=1, stats=['crit_']),dict(purpose='偏暴伤', count=1, stats=['crit_dmg_'])]
+        special = [dict(purpose='偏暴击', count=1), dict(purpose='偏暴伤', count=1)]
         multi_cfg = dict(cfg, reserve=0, reserve_rules=special)
         overlap = plan(inventory(fresh,dict(old,location='Nicole'),manual),multi_cfg,rules,names)
         uses = overlap['reserveCoverage'][0]
         assert uses['kept'] == uses['eligible'] == 1 and [p['covered'] for p in uses['purposes']] == [0,1,1]
+        impact = quota_impact(overlap, {'set':'SwingJazz'}, multi_cfg, {})
+        assert impact['byPurpose'] == {'偏暴击':1, '偏暴伤':1} and impact['spares'] == impact['shared'] == 1
+        for name, excluded in [('偏暴击', 'crit_dmg_'), ('偏暴伤', 'crit_')]:
+            other = disc('other', {excluded:4.8 if excluded == 'crit_dmg_' else 2.4, 'atk_':3, 'def':15})
+            one = dict(multi_cfg, reserve_rules=[dict(purpose=name, count=1)])
+            assert plan(inventory(other),one,rules,names)['discs'][0]['decision'] == '弃置候选'
+            one['reserve_rules'][0]['stats'] = ['atk_']
+            assert plan(inventory(other),one,rules,names)['discs'][0]['reasons'] == ['备用 · '+name]
         for extra, pins in [({'location':'TestAgent'}, []), ({}, [old_id])]:
             cfg['pins'] = pins
             m = scan(inventory(dict(old, **extra), fresh, manual))
@@ -112,7 +120,7 @@ def smoke(home):
         assert m.rows[manual_id]['reasons'] == ['游戏内已锁定']
         original_report = deepcopy(m.report)
         impact = quota_impact(m.report, {'set':'SwingJazz'}, dict(cfg,reserve=0), {})
-        assert impact == dict(total=3,before=2,after=1,newCandidates=1,spares=0,groups=1)
+        assert impact == dict(total=3,before=2,after=1,newCandidates=1,spares=0,groups=1,byPurpose={},shared=0)
         assert m.report == original_report
         visit(m, 'lock', fresh)
         visit(m, 'lock', manual)

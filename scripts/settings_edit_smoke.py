@@ -153,6 +153,7 @@ def smoke(home, tmp):
         dialog.edit_purpose(new=True)
     dialog.try_button.click()
     assert '保留 0 → 1 张，其中备用 1 张' in dialog.impact.text()
+    assert '异常队 1 张' in dialog.impact.text()
     dialog.count.setValue(2)
     assert not dialog.impact.text()
     dialog.purpose.setCurrentText('通用')

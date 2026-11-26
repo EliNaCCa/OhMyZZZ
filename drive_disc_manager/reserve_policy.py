@@ -3,6 +3,7 @@ from collections import defaultdict
 
 
 DEFAULT_STATS = ('crit_', 'crit_dmg_', 'atk_')
+PURPOSE_STATS = {'偏暴击': ('crit_',), '偏暴伤': ('crit_dmg_',)}
 SELECTORS = ('set', 'slot', 'main')
 
 
@@ -37,6 +38,10 @@ def rule_selectors(rule):
     return {k: str(rule[k]) for k in SELECTORS if rule.get(k) not in (None, '', '*')}
 
 
+def rule_stats(rule):
+    return rule.get('stats', PURPOSE_STATS.get(rule.get('purpose'), DEFAULT_STATS))
+
+
 def matching_rules(group, cfg):
     limits = {'通用': (-1, quota(cfg['reserve']), DEFAULT_STATS)}
     trim = (-1, cfg.get('trimRecommended', False))
@@ -49,7 +54,7 @@ def matching_rules(group, cfg):
             trim = rank, rule['trimRecommended']
         purpose = rule.get('purpose') or '通用'
         if purpose not in limits or rank >= limits[purpose][0]:
-            limits[purpose] = rank, quota(rule['count']), rule.get('stats', DEFAULT_STATS)
+            limits[purpose] = rank, quota(rule['count']), rule_stats(rule)
     return limits, trim[1]
 
 
@@ -87,7 +92,7 @@ def apply_reserves(rows, cfg):
             elif keep_lock and not row['reasons']:
                 row['reasons'].append('插件备用锁')
         by_purpose = []
-        selected = set()
+        selected = defaultdict(int)
         for purpose, (_, count, stats) in limits.items():
             def rank(row):
                 rolls = sum(row['rolls'].get(stat, 0) for stat in stats)
@@ -111,16 +116,17 @@ def apply_reserves(rows, cfg):
             picks = sorted(matching, key=rank, reverse=True)[:count]
             for row in picks:
                 row['reasons'].append('备用 · ' + purpose)
-                selected.add(row['fp'])
+                selected[row['fp']] += 1
             by_purpose.append(dict(purpose=purpose, count=count, covered=len(picks)))
-        fixed_extra = fixed - selected
+        fixed_extra = fixed.difference(selected)
         for row in eligible:
             if row['fp'] in fixed_extra:
                 row['reasons'].append('插件备用锁')
             elif row['fp'] not in selected:
                 row['explanation'].append('超出同类备用名额')
         report.append(dict(**criteria, trimRecommended=trim, eligible=len(eligible),
-                           kept=len(selected) + len(fixed_extra), fixedExtra=len(fixed_extra), purposes=by_purpose))
+                           kept=len(selected) + len(fixed_extra), fixedExtra=len(fixed_extra), purposes=by_purpose,
+                           shared=sum(uses > 1 for uses in selected.values())))
     return report
 
 
@@ -143,5 +149,11 @@ def quota_impact(report, scope, cfg, reverse):
     after = sum(bool(row['reasons']) for row in prepared)
     new_candidates = sum(old['decision'] != '弃置候选' and not new['reasons'] and not new['review']
                          for old,new in zip(rows, prepared, strict=True))
+    by_purpose = defaultdict(int)
+    for group in coverage:
+        for use in group['purposes']:
+            if use['count'] != 0:
+                by_purpose[use['purpose']] += use['covered']
     return dict(total=len(rows), before=before, after=after, newCandidates=new_candidates,
-                spares=sum(group['kept'] for group in coverage), groups=len(coverage))
+                spares=sum(group['kept'] for group in coverage), groups=len(coverage),
+                byPurpose=dict(by_purpose), shared=sum(group['shared'] for group in coverage))
