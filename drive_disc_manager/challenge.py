@@ -94,9 +94,9 @@ def encounter_shortlist(pool, stages, needed, familiar=(), budget=25000):
         for team, mask, elements, roles, investment, links in parties:
             if not stage.get('weak') and not stage.get('resist') and not stage.get('buffRole'):
                 continue
-            weak = stage.get('weak') in elements
+            weak = bool(stage.get('weak')) and stage['weak'] in elements
             resisted = bool(stage.get('resist')) and elements == {stage['resist']}
-            buff = stage.get('buffRole') in roles
+            buff = bool(stage.get('buffRole')) and stage['buffRole'] in roles
             quality = int(weak) + int(buff) - int(resisted)
             # Among equal fits prefer covering more lanes with distinct carries.
             # Triple carries are still available if the player's roster requires it.

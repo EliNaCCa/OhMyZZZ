@@ -325,6 +325,8 @@ class ManagerInterface(BaseInterface):
     def finish_showcase(self, root, uid, message):
         self.showcase_jobs.discard(root)
         if self.root == root and int(root.name) == self.ctx.current_instance_idx:
+            if self.tabs.currentWidget() is self.challenge:
+                self.reload()
             self.show_challenge()
             if config(root).get('showcaseUid') == uid:
                 self.challenge.status.setText(message)
