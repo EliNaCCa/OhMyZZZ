@@ -25,29 +25,49 @@ def agent_labels(wiki):
     return by_name
 
 
-def account_pool(snapshot, declared, wiki, *, known=(), labels=None):
+def account_pool(root, snapshot, wiki, *, labels=None):
     from zzz_od.game_data.agent import AgentEnum
     from .roster import agent_id
-    from .store import observed_agents
+    from .store import config, known_agents, observed_agents, read, roster_showcase
     labels = agent_labels(wiki) if labels is None else labels
     agents = {item.value.agent_name:item.value for item in AgentEnum}
+    declared = read(root/'challenge-preferences.json', {}).get('agents', {})
+    cfg = config(root)
+    show = roster_showcase(root, cfg)
+    network = snapshot if snapshot.get('source') == 'ZZZ Packet Capture' else read(root/'network-inventory.json', {})
     pool = {}
-    for name in sorted(observed_agents(snapshot) | set(declared) | set(known)):
+    for name in sorted(observed_agents(snapshot) | observed_agents(network) | known_agents(root, showcase=show)):
         label = labels.get(agent_id(name), name)
         agent = agents.get(label)
         row = pool.setdefault(label, dict(role=agent.agent_type.value if agent else '',
                                           element=agent.dmg_type.value if agent else ''))
         row.update(declared.get(name, {}))
-    if snapshot.get('networkPreview'):
-        for field, key, owner, stat, maximum in [('characters','mindscape','key','mindscape',6),
-                                                  ('wengines','modification','location','engineRank',5)]:
-            for item in snapshot.get(field, []):
-                if not isinstance(item, dict) or not isinstance(item.get(owner), str):
-                    continue
-                label = labels.get(agent_id(item[owner]), item[owner])
-                value = item.get(key)
-                if label in pool and type(value) is int and int(field == 'wengines') <= value <= maximum:
-                    pool[label][stat] = value
+    def add_stat(name, stat, value, low, high):
+        label = labels.get(agent_id(name), name)
+        if label in pool and type(value) is int and low <= value <= high:
+            pool[label][stat] = value
+
+    def add_network():
+        if network.get('networkPreview'):
+            for field, key, owner, stat, low, high in [
+                    ('characters', 'level', 'key', 'level', 1, 60),
+                    ('characters', 'mindscape', 'key', 'mindscape', 0, 6),
+                    ('wengines', 'modification', 'location', 'engineRank', 1, 5)]:
+                for item in network.get(field, []):
+                    if isinstance(item, dict) and isinstance(item.get(owner), str):
+                        add_stat(item[owner], stat, item.get(key), low, high)
+
+    def add_showcase():
+        for actor, stats in show.get('training', {}).items():
+            for stat, low, high in [('level', 1, 60), ('mindscape', 0, 6), ('engineRank', 1, 5)]:
+                add_stat(actor, stat, stats.get(stat), low, high)
+
+    if cfg.get('inventorySource') == 'network':
+        add_showcase()
+        add_network()
+    else:
+        add_network()
+        add_showcase()
     return pool
 
 
@@ -87,15 +107,16 @@ def encounter_shortlist(pool, stages, needed, familiar=(), budget=25000):
     best = None
     selected = []
     clipped = False
-    for indexes in combinations(range(len(stages)), needed):
-        if any(not options[i] for i in indexes):
-            continue
+    groups = list(combinations([i for i, rows in enumerate(options) if rows], needed))
+    for position, indexes in enumerate(groups):
+        allowance = budget // (len(groups) - position)
+        spent = 0
         tops = [options[i][0] for i in indexes]
         def rank(rows):
             return (tuple(sorted(row[0] for row in rows)), sum(row[1] for row in rows),
-                    sum(row[7] for row in rows), sum(row[8] for row in rows), sum(row[9] for row in rows))
+                    sum(row[7] for row in rows), tuple(sorted(row[8] for row in rows)), sum(row[9] for row in rows))
         def visit(rows, mask):
-            nonlocal best, selected, budget, clipped
+            nonlocal best, selected, spent, clipped
             depth = len(rows)
             if best is not None and rank(rows + tops[depth:]) <= best:
                 return
@@ -103,16 +124,22 @@ def encounter_shortlist(pool, stages, needed, familiar=(), budget=25000):
                 best, selected = rank(rows), list(zip(indexes, rows))
                 return
             for row in options[indexes[depth]]:
-                if budget <= 0:
+                if spent >= allowance:
                     clipped = True
                     return
-                budget -= 1
+                spent += 1
+                # Replacing this lane by any later row can only lower the rank.
+                # Ignore collisions in the remaining lanes for an optimistic bound.
+                branch = [*rows, row]
+                if best is not None and rank(branch + tops[depth+1:]) <= best:
+                    break
                 if mask & row[3]:
                     continue
-                visit([*rows,row], mask | row[3])
-                if rank(rows + tops[depth:]) == best:
+                visit(branch, mask | row[3])
+                if depth + 1 == needed or rank(rows + tops[depth:]) == best:
                     return
         visit([], 0)
+        budget -= spent
     return [dict(stage=i, team=row[2], weak=row[4], buff=row[5], resisted=row[6]) for i,row in selected], clipped
 
 

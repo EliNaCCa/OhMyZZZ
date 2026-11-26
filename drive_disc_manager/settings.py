@@ -37,6 +37,7 @@ class ManagerInterface(BaseInterface):
     equip_finished = Signal(str, str, str, object)
     rules_finished = Signal(object, str)
     preview_finished = Signal(object, str)
+    showcase_finished = Signal(object, str, str)
 
     def __init__(self, ctx, parent=None):
         super().__init__('ohmyzzz_settings', APP_NAME, '', parent)
@@ -264,6 +265,9 @@ class ManagerInterface(BaseInterface):
         from .challenge_page import ChallengePage
         self.challenge = ChallengePage()
         tabs.addTab(self.challenge, '关卡分队')
+        self.showcase_jobs = set()
+        self.challenge.read_agents.clicked.connect(lambda:self.invoke(self.read_showcase_agents))
+        self.showcase_finished.connect(self.finish_showcase, Qt.ConnectionType.QueuedConnection)
         self.tabs.currentChanged.connect(self.optimizer_tab_changed)
         self.tabs.currentChanged.connect(self.show_challenge)
         from .disc_comparison_page import DiscComparison
@@ -282,6 +286,48 @@ class ManagerInterface(BaseInterface):
     def show_challenge(self, *_):
         if self.tabs.currentWidget() is self.challenge and hasattr(self, 'root'):
             self.challenge.present(self.root, read(snapshot_path(self.root, self.cfg), {}), read(wiki_path(), {}))
+            self.challenge.read_agents.setEnabled(self.root not in self.showcase_jobs)
+
+    def read_showcase_agents(self):
+        root = self.root
+        self.check_account(root)
+        if root in self.showcase_jobs:
+            return
+        uid = config(root).get('showcaseUid')
+        if not uid:
+            uid = self.edit_showcase(from_roster=True)
+            if not uid:
+                return
+        self.showcase_jobs.add(root)
+        self.challenge.read_agents.setEnabled(False)
+        self.challenge.status.setText('正在读取角色展柜…')
+
+        def worker():
+            from .showcase import refresh_training
+            from .maintenance import exclusive
+            def check():
+                if int(root.name) != self.ctx.current_instance_idx or config(root).get('showcaseUid') != uid:
+                    raise ValueError('账号已切换')
+            try:
+                with exclusive(root.parent/'_maintenance'):
+                    check()
+                    count = refresh_training(root, uid, check)
+                message = f'展柜已读取 {count} 位代理人' if count else '角色展柜暂未展示代理人'
+            except Exception as exc:
+                message = str(exc) or '角色展柜暂时读不到'
+            try:
+                self.showcase_finished.emit(root, uid, message)
+            except RuntimeError:
+                pass
+
+        Thread(target=worker, name='OhMyZZZ showcase', daemon=True).start()
+
+    def finish_showcase(self, root, uid, message):
+        self.showcase_jobs.discard(root)
+        if self.root == root and int(root.name) == self.ctx.current_instance_idx:
+            self.show_challenge()
+            if config(root).get('showcaseUid') == uid:
+                self.challenge.status.setText(message)
 
     def on_interface_shown(self):
         # OneDragon caches embedded pages by navigation stack, not by account.
@@ -332,12 +378,23 @@ class ManagerInterface(BaseInterface):
             url = 'https://github.com/Treageer/zzz-drive-exporter/blob/v0.2.1/README.md'
         QDesktopServices.openUrl(QUrl(url))
 
-    def edit_showcase(self):
+    def edit_showcase(self, *, from_roster=False):
+        from .showcase import valid_uid
         token = self.edit_token()
-        uid, ok = QInputDialog.getText(self, '角色展柜', '输入游戏 UID，从 Enka 读取公开展示角色的穿戴。留空关闭。',
+        uid, ok = QInputDialog.getText(self, '角色展柜', '游戏 UID（用于读取公开展示的代理人，留空解绑）',
                                        text=token[2].get('showcaseUid', ''))
         if ok:
-            self.finish_edit(token, dict(token[2], showcaseUid=uid.strip()))
+            uid = uid.strip()
+            if uid and not valid_uid(uid):
+                raise ValueError('请填写游戏内的 UID')
+            value = dict(token[2], showcaseUid=uid)
+            if from_roster:
+                self.check_account(token[0])
+                save_config(token[0], value, token[1])
+                self.reload()
+            else:
+                self.finish_edit(token, value)
+            return uid
 
     def open_reader(self):
         import os
@@ -442,7 +499,6 @@ class ManagerInterface(BaseInterface):
         self.reader_open.setVisible(self.cfg['inventorySource'] == 'network')
         source = self.cfg['inventorySource']
         cn_export = source == 'cn_export'
-        self.showcase_button.setVisible(cn_export)
         self.showcase_button.setText('更改展柜 UID' if self.cfg.get('showcaseUid') else '绑定角色展柜')
         self.scan_button.setText('读取仓库' if source in ('cn_export', 'network') else '扫描仓库')
         self.import_button.setVisible(source != 'network')
@@ -767,11 +823,11 @@ class ManagerInterface(BaseInterface):
         aliases = agent_labels(wiki)
         def canonical(name):
             return aliases.get(agent_id(name), name)
-        declared = read(self.root/'challenge-preferences.json', {}).get('agents', {})
-        # OCR has disc owners. The network export also carries character ranks.
-        network = read(self.root/'network-inventory.json', {})
-        known = (agent['label'] for agent in self.agents if agent['owned'])
-        pool = account_pool(network, declared, wiki, known=known, labels=aliases)
+        inventory = read(snapshot_path(self.root, self.cfg), {})
+        pool = account_pool(self.root, inventory, wiki, labels=aliases)
+        for agent in self.agents:
+            if agent['owned']:
+                pool.setdefault(canonical(agent['label']), {})
         ranks = {name:row['mindscape'] for name,row in pool.items()
                  if type(row.get('mindscape')) is int and 0 <= row['mindscape'] <= 6}
         choices = pool or self.agent_labels.values() or [a['label'] for a in self.agents]

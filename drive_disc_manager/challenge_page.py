@@ -23,6 +23,8 @@ class ChallengePage(QWidget):
         self.goal = BodyLabel()
         top.addWidget(self.goal)
         top.addStretch()
+        self.read_agents = PushButton('读取角色展柜')
+        top.addWidget(self.read_agents)
         self.roster = BodyLabel()
         self.roster.setWordWrap(True)
         box.addWidget(self.roster)
@@ -80,10 +82,7 @@ class ChallengePage(QWidget):
         switched = root != self.root
         self.root = root
         preferences = read(root/'challenge-preferences.json', {})
-        from .store import known_agents
-        if snapshot.get('source') == 'zzz-drive-exporter':
-            snapshot = read(root / 'network-inventory.json', {})
-        self.pool = account_pool(snapshot, preferences.get('agents', {}), wiki, known=known_agents(root))
+        self.pool = account_pool(root, snapshot, wiki)
         self.familiar = preferences.get('parties', [])
         def label(item):
             name, stats = item
@@ -91,6 +90,13 @@ class ChallengePage(QWidget):
                 return f"{name}（{stats['mindscape']}+{stats['engineRank']}）"
             return name
         self.roster.setText('角色池　' + ('、'.join(map(label,self.pool.items())) or '等待读取角色'))
+        details = []
+        for name, stats in self.pool.items():
+            fields = [('level', '级'), ('mindscape', '影'), ('engineRank', '星音擎')]
+            parts = [f'{stats[key]}{unit}' for key, unit in fields if key in stats]
+            if parts:
+                details.append(name + '　' + ' · '.join(parts))
+        self.roster.setToolTip('\n'.join(details))
         self.compare.setEnabled(bool(self.pool))
         if switched:
             self.shown_mode = None

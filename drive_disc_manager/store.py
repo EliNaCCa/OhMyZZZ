@@ -187,12 +187,27 @@ def network_agents(root):
     return observed_agents(read(root/'network-inventory.json', {}))
 
 
-def known_agents(root):
+def roster_showcase(root, cfg, cn=None):
+    uid = cfg.get('showcaseUid')
+    if not uid:
+        return {}
+    if cn is None:
+        cn = read(root/'cn-inventory.json', {})
+    records = [read(root/'showcase-agents.json', {}), cn.get('showcase') or {}]
+    return max((item for item in records if item.get('uid') == uid and 'training' in item and not item.get('note')),
+               key=lambda item: item.get('at', 0), default={})
+
+
+def known_agents(root, *, showcase=None):
     declared = read(root/'challenge-preferences.json', {}).get('agents', {})
     cn = read(root/'cn-inventory.json', {})
-    showcase = cn.get('showcase') or {}
-    shown = showcase.get('owners', {}).values() if showcase.get('uid') == config(root).get('showcaseUid') else ()
-    return set(read(root/'owned-agents.json', [])) | network_agents(root) | set(declared) | observed_agents(cn) | set(shown)
+    cfg = config(root)
+    if showcase is None:
+        showcase = roster_showcase(root, cfg, cn)
+    disc_record = cn.get('showcase') or {}
+    shown = disc_record.get('owners', {}).values() if cfg.get('showcaseUid') and disc_record.get('uid') == cfg['showcaseUid'] else ()
+    return (set(read(root/'owned-agents.json', [])) | network_agents(root) | set(declared) |
+            observed_agents(cn) | set(shown) | set(showcase.get('training', {})))
 
 
 def import_inventory(root, path, *, readings=None, cn_export=None, names=None):

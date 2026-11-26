@@ -65,21 +65,35 @@ def matched_piece(entry, discs, wiki):
         return uid
 
 
-def match(payload, uid, discs, wiki):
+def visible_avatars(payload, uid):
     if not isinstance(payload, dict) or str(payload.get('uid')) != uid:
         raise ValueError('展柜 UID 与设置不符')
     avatars = payload.get('PlayerInfo', {}).get('ShowcaseDetail', {}).get('AvatarList', [])
     if not isinstance(avatars, list):
         raise ValueError('展柜角色列表有误')
+    return [a for a in avatars if isinstance(a, dict) and not a.get('IsHidden')
+            and re.fullmatch(r'[1-9][0-9]*', str(a.get('Id')))]
+
+
+def training(avatars):
+    result = {}
+    for avatar in avatars:
+        weapon = avatar.get('Weapon')
+        phase = weapon.get('UpgradeLevel') if isinstance(weapon, dict) and weapon.get('Id') else None
+        fields = [('level', avatar.get('Level'), 1, 60), ('mindscape', avatar.get('TalentLevel'), 0, 6),
+                  ('engineRank', phase, 1, 5)]
+        result[str(avatar['Id'])] = {name: value for name, value, low, high in fields
+                                     if type(value) is int and low <= value <= high}
+    return result
+
+
+def match(payload, uid, discs, wiki):
+    avatars = visible_avatars(payload, uid)
     by_id = {d['id']: d for d in discs}
     owners, slots = {}, set()
     seen_ids, seen_slots = Counter(), Counter()
     for avatar in avatars:
-        if avatar.get('IsHidden'):
-            continue
         actor = str(avatar['Id'])
-        if not actor.isdecimal() or not actor.strip('0'):
-            continue
         for entry in avatar.get('EquippedList', []):
             try:
                 piece = str(entry['Equipment']['Uid'])
@@ -106,9 +120,23 @@ def read_showcase(uid, discs, wiki, previous):
     result = dict(uid=uid, at=now, until=now+60, owners={})
     try:
         payload = fetch(uid)
-        result['until'] = now + max(60, int(payload.get('ttl', 60)))
+        result['training'] = training(visible_avatars(payload, uid))
         result['owners'] = match(payload, uid, discs, wiki)
+        result['until'] = now + max(60, int(payload.get('ttl', 60)))
         result['signatures'] = {d['id']:fingerprint(d) for d in discs if d['id'] in result['owners']}
     except (OSError, http.client.HTTPException, KeyError, TypeError, ValueError, AttributeError) as exc:
         result['note'] = str(exc) if isinstance(exc, ValueError) and str(exc).startswith('展柜') else '暂时读不到角色展柜'
     return result
+
+
+def refresh_training(root, uid, check_account):
+    from .store import roster_showcase, save
+    previous = roster_showcase(root, {'showcaseUid': uid})
+    # Older disc-only caches can have a valid TTL without any character data.
+    result = read_showcase(uid, [], {}, previous if 'training' in previous else {})
+    check_account()
+    if result.get('note'):
+        raise ValueError(result['note'])
+    cache = {key: result[key] for key in ('uid', 'at', 'until', 'training')}
+    save(root/'showcase-agents.json', cache)
+    return len(cache['training'])
