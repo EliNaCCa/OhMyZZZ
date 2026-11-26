@@ -4,13 +4,26 @@ from .store import config, digest, fingerprint, inventory, roll_base, save
 from .stat_reading import checked_values
 
 
-def target_loadout(cfg, report, snapshot, name):
+def fielded_profiles(cfg, name):
     profiles = [p for p in cfg['profiles'] if p.get('enabled', True)]
     selected = next((p for p in profiles if p['name'] == name), None)
     if selected is None:
         raise ValueError('出场方案已停用或不存在')
     group = selected.get('simultaneous')
-    lineup = [p for p in profiles if group and p.get('simultaneous') == group] if group else [selected]
+    return [p for p in profiles if p.get('simultaneous') == group] if group else [selected]
+
+
+def verify_bindings(cfg, name, wiki):
+    from .roster import scanner_agent_key
+    for profile in fielded_profiles(cfg, name):
+        actor = (profile.get('request') or {}).get('characterName')
+        key = scanner_agent_key(wiki, actor) if isinstance(actor, str) else ''
+        if not key or key != profile.get('agentKey'):
+            raise ValueError(f"「{profile['name']}」的换装角色绑定待核对，请在「我的配队」更新所选配队。")
+
+
+def target_loadout(cfg, report, snapshot, name):
+    lineup = fielded_profiles(cfg, name)
     discs, counts = inventory(snapshot)
     if report['configuration'] != digest(cfg) or report['inventory'] != digest(snapshot):
         raise ValueError('当前配队或库存已变化，请重新计算')

@@ -622,13 +622,16 @@ class ManagerInterface(BaseInterface):
             self.reload()
             raise ValueError('规则已更新，请重新计算后应用配队')
         name = self.cfg['profiles'][index]['name']
-        request, targets = confirmation(account, name, config(root), self.report, read(root/'inventory.json'))
+        from .loadout import verify_bindings
+        current_cfg, wiki = config(root), read(wiki_path(), {})
+        verify_bindings(current_cfg, name, wiki)
+        request, targets = confirmation(account, name, current_cfg, self.report, read(root/'inventory.json'))
         dialog = QDialog(self); dialog.setWindowTitle('应用当前配队'); dialog.resize(720,420)
         panel = QVBoxLayout(dialog)
         panel.addWidget(QLabel(f'{name} · {len(targets)} 个号位'))
         from .store import equipment_names
         from .stat_reading import display_values
-        sets = equipment_names(read(wiki_path(), {})) | self.cfg.get('aliases',{})
+        sets = equipment_names(wiki) | current_cfg.get('aliases',{})
         agents = {p['name']:p.get('request',{}).get('characterName') for p in self.cfg['profiles']}
         table = self.grid(['方案','目标角色','号位','套装','主副词条','上次扫描装备者'])
         self.fill(table,[(t['profile'], agents.get(t['profile']) or t['agent'], t['slot'], sets.get(t['set'],t['set']),
@@ -827,14 +830,25 @@ class ManagerInterface(BaseInterface):
         profile = token[2]['profiles'][index]
         with self.optimizer_session() as endpoint:
             updated, changed = refreshed_profile(profile, saved_targets(endpoint), wiki=read(wiki_path(), {}))
-        if not changed:
+        different = {key: {'原值': profile['request'].get(key), '新值': updated['request'].get(key)} for key in changed}
+        if profile.get('agentKey') != updated.get('agentKey'):
+            different['换装角色绑定'] = {'原值': profile.get('agentKey') or '未绑定', '新值': updated['agentKey']}
+            from .allocation import group_conflict
+            conflict = group_conflict(updated if i == index else p for i, p in enumerate(token[2]['profiles'])
+                                      if p.get('simultaneous') == updated.get('simultaneous'))
+            if conflict:
+                raise ValueError(conflict)
+        if not different:
             QMessageBox.information(self, profile['name'], '所选配队已与配装器目标一致。')
             return
         question = QMessageBox(self)
         question.setWindowTitle('更新所选配队')
         question.setText(f"将「{profile['name']}」更新为配装器里「{updated['request']['characterName']}」的当前目标？")
-        question.setInformativeText('保留分组、出场选择、输出窗口和满暴容差。变更字段：' + '、'.join(changed))
-        different = {key: {'原值': profile['request'].get(key), '新值': updated['request'].get(key)} for key in changed}
+        summary = '变更字段：' + '、'.join(different)
+        if '换装角色绑定' in different:
+            binding = different['换装角色绑定']
+            summary += f"\n换装角色：{binding['原值']} → {binding['新值']}"
+        question.setInformativeText(summary)
         question.setDetailedText(pretty(different))
         accept = question.addButton('更新配队', QMessageBox.ButtonRole.AcceptRole)
         cancel = question.addButton('取消', QMessageBox.ButtonRole.RejectRole)

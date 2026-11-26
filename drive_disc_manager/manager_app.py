@@ -64,6 +64,9 @@ class ManagerApp(ZApplication):
                 if digest(cfg) != request['configuration']:
                     return self.round_fail('配队配置已变化，请重新预览')
             field = request['name'] if request else cfg.get('fieldProfile')
+            if field:
+                from .loadout import verify_bindings
+                verify_bindings(cfg, field, read(wiki_path(), {}))
             mark = request is None and cfg.get('applyMarkers')
             scanner = None
             if request or cfg['run_scanner']:

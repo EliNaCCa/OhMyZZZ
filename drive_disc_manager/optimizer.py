@@ -115,13 +115,18 @@ def refreshed_profile(profile, choices, *, wiki=None):
         raise ValueError('未找到唯一的原配装器目标。可将当前配装器目标保存为新方案。')
     source = matches[0]
     original, updated = profile['request'], source['request']
-    from .roster import same_agent
+    from .roster import same_agent, scanner_agent_key
     if (not same_agent(wiki or {}, updated['characterName'], original['characterName'])
             or not same_agent(wiki or {}, source['agent'], updated['characterName'])):
         raise ValueError('此目标对应的角色已变化，请另存为新方案。')
     if source['requiresClaimMapping']:
         raise ValueError('原目标要求避让配装器占用盘，请先核对占用记录。')
     refreshed = dict(profile, request=updated)
+    agent = scanner_agent_key(wiki or {}, updated['characterName'])
+    if wiki is not None and not agent:
+        raise ValueError('扫描器角色字典无法唯一识别此代理人，请更新字典并核对角色名称后再更新配队。')
+    if agent:
+        refreshed['agentKey'] = agent
     from .combat_windows import window_requests
     window_requests(refreshed)
     changed = [key for key in sorted(original.keys() | updated.keys())
