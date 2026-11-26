@@ -78,27 +78,41 @@ def apply_loadout(root, cfg, report, snapshot, ui, *, name=None, names=None):
             raise ValueError('换装过程中配置已变化')
         ui.guard()
 
-    freed_slots = set()
     save(path, receipt)
     try:
+        # Track where the still-needed pieces are worn. Replacing a borrowed disc
+        # can swap the displaced piece to the donor instead of sending it to the bag.
+        owners = {t['fp']: t['location'] for t in targets}
+        pending_worn = {}
+        for t in targets:
+            if t['location']:
+                position = t['location'], t['slot']
+                if position in pending_worn:
+                    raise ValueError(f"扫描里有两张盘都穿在 {t['location']} 的 {t['slot']} 号位，请重新扫描")
+                pending_worn[position] = t
         for target in targets:
             checkpoint()
             # Opening the same target on retry observes the current live action button.
             state = ui.inspect(target)
+            dest = target['agent'], target['slot']
+            donor = owners[target['fp']]
+            pending_worn.pop((donor, target['slot']), None)
             if state == 'equipped':
                 continue
             if state != 'available':
                 raise ValueError('当前盘的穿戴状态待核')
-            donor = target['location']
             if donor == target['agent']:
                 raise ValueError('扫描时已穿戴的盘目前不在位，请重新计算')
-            if (donor, target['slot']) in freed_slots:
-                # An earlier verified action in this very plan displaced the donor's old disc.
-                donor = ''
+            displaced = pending_worn.pop(dest, None)
+            if displaced:
+                checkpoint()
+                if ui.inspect(dict(displaced, agent=target['agent'])) != 'equipped':
+                    raise ValueError(f"{target['agent']} 的 {target['slot']} 号位已变化，请重新扫描")
             if donor:
                 checkpoint()
                 if ui.inspect(dict(target, agent=donor)) != 'equipped':
                     raise ValueError(f"{donor} 的 {target['slot']} 号位已变化，请重新计算借盘方案")
+            if displaced or donor:
                 checkpoint()
                 if ui.inspect(target) != 'available':
                     raise ValueError('返回目标角色后，驱动盘的穿戴状态已变化')
@@ -107,11 +121,24 @@ def apply_loadout(root, cfg, report, snapshot, ui, *, name=None, names=None):
             receipt['actions'].append(action)
             save(path,receipt)
             ui.equip(dict(target, location=donor), checkpoint)
+            checkpoint()
             if ui.inspect(target) != 'equipped':
                 raise ValueError(f"{target['agent']} 的 {target['slot']} 号盘换装后未能复读")
             action['state'] = 'observed'
-            freed_slots.add((target['agent'], target['slot']))
             save(path,receipt)
+            if displaced:
+                new_owner = ''
+                if donor:
+                    checkpoint()
+                    state = ui.inspect(dict(displaced, agent=donor))
+                    if state == 'equipped':
+                        new_owner = donor
+                        pending_worn[donor, target['slot']] = displaced
+                    elif state != 'available':
+                        raise ValueError('换下的驱动盘穿戴状态待核，请重新扫描')
+                owners[displaced['fp']] = new_owner
+                action['displaced'] = dict(fp=displaced['fp'], location=new_owner)
+                save(path,receipt)
         # Re-open each slot after the last teammate has finished borrowing discs.
         for target in targets:
             checkpoint()
