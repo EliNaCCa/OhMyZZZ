@@ -12,6 +12,7 @@ def rule_book(rows, rules, overrides, conflicts):
         book[key] = dict(remote=remote, mode=local.get('mode', 'inherit'), local=local.get('values'),
                          active=effective(remote, local), old=conflict['old'] if conflict else None,
                          conflict=bool(conflict), tabs=field_tabs(rules, key),
+                         sourceCells=rules.get('sourceCells', {}).get(key, {}),
                          formerSource=key in rules.get('formerOrigins', {}))
     return book
 

@@ -17,7 +17,8 @@ def assess_rules(row, cfg, fields, reverse, by_set, unresolved, excluded):
     verified_fixed = fixed and ('matrix/'+row['set']+'/4') in fields
     if verified_fixed:
         row['recommendations'].append('已知套装固定主属性')
-        row['ruleUses'].append(('matrix/'+row['set']+'/4', '', '四号位表收录了该套装，当前号位主属性固定'))
+        stat = {'1':'生命值', '2':'攻击力', '3':'防御力'}[row['slot']]
+        row['ruleUses'].append(('matrix/'+row['set']+'/4', '', f'表里有这套盘，{row["slot"]} 号位固定为{stat}'))
     override = cfg['overrides'].get(key) or {}
     allowed = effective(fields.get(key),override)
     known = fields.get(key+'/known',[])

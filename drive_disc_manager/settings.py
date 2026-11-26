@@ -1274,6 +1274,7 @@ class ManagerInterface(BaseInterface):
             self.detail_observation = digest(self.probe_record)
         self.detail_selection = (self.root, row, probe)
         self.detail.present(row, report, set_name=self.set_names.get(row['set'],row['set']), probe=probe, pinned=is_pinned(row, self.cfg['pins']),
+                            set_names=self.set_names,
                             coverage=None if probe or row['marked'] else self.coverage.get(tuple(row[k] for k in SELECTORS)),
                             rule_keys=self.keys, team_names=[p['name'] for p in self.cfg['profiles']],
                             stale=not probe and self.preview_stale)
@@ -1496,15 +1497,13 @@ class ManagerInterface(BaseInterface):
             self.refresh_saved_preview()
 
     def rule_row(self, key):
+        from .disc_detail_page import field_label, rule_values
         parts = key.split('/')
-        source, field = parts[0], parts[-1]
+        source = parts[0]
         subject = '/'.join(parts[1:-1]) or key
         localized = (self.set_names if source=='matrix' else self.agent_names).get(subject)
         if localized and localized != subject:
             subject = localized
-        labels = {'sets4':'四件套','sets2':'两件套','subs':'副词条'}
-        for slot in '456':
-            labels[slot] = labels['slot'+slot] = f'{slot} 号主词条'
         tabs = field_tabs(self.rules, key) or [{'matrix':'Set+Main','build':'Prydwen Builds','guide':'角色攻略表'}.get(source,source)]
         remote = self.rules.get('fields',{}).get(key)
         tab_label = ('原页签 · ' if key in self.rules.get('formerOrigins', {}) else '') + '、'.join(tabs)
@@ -1512,21 +1511,9 @@ class ManagerInterface(BaseInterface):
         override = self.cfg['overrides'].get(key) or {}
         mode = override.get('mode','inherit')
         def display(values, *, show_accepted=False):
-            if values is None: return '字段缺失'
-            if source == 'matrix':
-                from .main_rule_editor import NAMES
-                return '、'.join(NAMES.get(v,v) for v in values) or '无'
-            if source == 'build' and field in ('sets4','sets2'):
-                return '、'.join(self.set_names.get(v,v) for v in values) or '无'
-            if show_accepted and source in ('guide','build') and field in ('subs','slot4','slot5','slot6'):
-                from .main_rule_editor import NAMES
-                from .purpose_editor import SUBSTAT_NAMES
-                from .subscriptions import accepted_terms
-                names = SUBSTAT_NAMES if field == 'subs' else NAMES
-                return '、'.join(names.get(v, v) for v in sorted(accepted_terms(key, values))) or '无'
-            return '、'.join(values) or '无'
+            return rule_values(key, values, self.set_names, accepted=show_accepted)
         local = '继承上游' if mode=='inherit' else ('额外接受 ' if mode=='add' else '只接受 ') + display(override['values'], show_accepted=True)
-        return [('⚠ ' if conflict else '')+subject, labels.get(field,field), tab_label,
+        return [('⚠ ' if conflict else '')+subject, field_label(key), tab_label,
                 display(conflict['old']) if conflict else '—', display(remote), local, display(effective(remote,override or None), show_accepted=True)]
 
     def filter_rules(self, *_):

@@ -41,10 +41,29 @@ def fill(widget, rows):
         widget.selectRow(0)
 
 
-def values(items):
+def field_label(key):
+    field = key.rsplit('/', 1)[-1]
+    if field in ('sets4', 'sets2', 'subs'):
+        return {'sets4':'四件套', 'sets2':'两件套', 'subs':'副词条'}[field]
+    slot = field.removeprefix('slot')
+    return f'{slot} 号主词条' if slot in ('4', '5', '6') else field
+
+
+def rule_values(key, items, set_names, *, accepted=False):
     if items is None:
-        return '字段缺失'
-    return '、'.join(items) or '空'
+        return '表中没有这项'
+    from .main_rule_editor import NAMES
+    from .purpose_editor import SUBSTAT_NAMES
+    from .subscriptions import accepted_terms, stat_field
+    names = {}
+    if key.startswith('matrix/'):
+        names = NAMES
+    elif key.endswith(('/sets4', '/sets2')):
+        names = set_names
+    elif accepted and (field := stat_field(key)):
+        names = SUBSTAT_NAMES if field == 'subs' else NAMES
+        items = sorted(accepted_terms(key, items))
+    return '、'.join(names.get(v, v) for v in items) or '无'
 
 
 class DiscDetails(QWidget):
@@ -66,9 +85,15 @@ class DiscDetails(QWidget):
         self.stats = label(); outer.addWidget(self.stats)
         self.tabs = DetailPages(); outer.addWidget(self.tabs)
         page = QWidget(); box = QVBoxLayout(page); self.tabs.addTab(page,'规则来源')
-        self.rules = table(['角色 / 套装','字段','来源页签','对这张盘的判断']); box.addWidget(self.rules)
+        self.rules = table(['角色 / 套装','规则','来源页签','对这张盘的判断']); box.addWidget(self.rules)
         self.field_value = label(); box.addWidget(self.field_value)
-        self.rule_button = PushButton('查看规则'); box.addWidget(self.rule_button)
+        actions = QHBoxLayout(); box.addLayout(actions)
+        self.rule_button = PushButton('查看规则'); actions.addWidget(self.rule_button)
+        self.show_source = PushButton('表格原文'); self.show_source.setCheckable(True); actions.addWidget(self.show_source)
+        actions.addStretch()
+        self.source_text = PlainTextEdit(); self.source_text.setReadOnly(True); self.source_text.setMaximumHeight(140)
+        box.addWidget(self.source_text); self.source_text.hide()
+        self.show_source.toggled.connect(self.source_text.setVisible)
         self.rule_button.clicked.connect(self.open_rule)
         self.rules.itemSelectionChanged.connect(self.select_rule)
         page = QWidget(); box = QVBoxLayout(page); self.tabs.addTab(page,'配队与备用')
@@ -80,7 +105,10 @@ class DiscDetails(QWidget):
         self.summary = PlainTextEdit(); self.summary.setReadOnly(True); self.tabs.addTab(self.summary,'留盘理由')
         self.version = label(); outer.addWidget(self.version)
 
-    def present(self, row, report, *, set_name, coverage, rule_keys, team_names, probe=False, stale=False, pinned=False):
+    def present(self, row, report, *, set_name, coverage, rule_keys, team_names, set_names=None, probe=False, stale=False, pinned=False):
+        self.set_names = set_names or {}
+        self.fixed_main = str(row['slot']) in ('1', '2', '3')
+        self.show_source.setChecked(False)
         self.book = report.get('traceRules', {})
         self.uses = row.get('ruleUses', [])
         self.empty_hint = ('旧预览中没有逐字段来源，可返回仓库重新计算。' if 'traceRules' not in report else
@@ -110,7 +138,8 @@ class DiscDetails(QWidget):
         for key, agent, outcome in self.uses:
             entry = self.book.get(key, {})
             source = '、'.join(entry.get('tabs', [])) or '未记录页签'
-            rule_rows.append((agent or set_name, key, ('原页签 · ' if entry.get('formerSource') else '')+source, outcome))
+            name = '套装收录' if self.fixed_main and key.startswith('matrix/') else field_label(key)
+            rule_rows.append((agent or set_name, name, ('原页签 · ' if entry.get('formerSource') else '')+source, outcome))
         fill(self.rules,rule_rows); self.select_rule()
         teams = teams_for_disc(report, row)
         fill(self.teams, [(name, team.get('agent') or '—', team.get('group') or '可借盘', result.get('reason',''))
@@ -140,15 +169,32 @@ class DiscDetails(QWidget):
         key = self.uses[index][0] if 0 <= index < len(self.uses) else None
         entry = self.book.get(key)
         self.rule_button.setEnabled(key in self.rule_keys)
+        cells = (entry or {}).get('sourceCells', {})
+        fixed = self.fixed_main and bool(key and key.startswith('matrix/'))
+        lines = []
+        for tab, source in cells.items():
+            lines.append(tab)
+            for coord, heading, raw in source['cells']:
+                if not fixed or heading == '套装':
+                    lines.append(f'{coord}　{heading}　{raw or "（空白）"}')
+        self.source_text.setPlainText(chr(10).join(lines))
+        self.source_text.setToolTip(chr(10).join(s['url'] for s in cells.values()))
+        self.show_source.setVisible(bool(lines))
+        self.source_text.setVisible(bool(lines) and self.show_source.isChecked())
         if not entry:
             self.field_value.setText(self.empty_hint)
             return
-        mode = {'inherit':'继承上游', 'add':'额外接受', 'only':'只接受'}[entry['mode']]
-        lines = ['上游　'+values(entry['remote']), '个人　'+mode+(' '+values(entry['local']) if entry['mode']!='inherit' else ''),
-                 '生效　'+values(entry['active'])]
+        if fixed:
+            self.field_value.setText('')
+            return
+        def values(items):
+            return rule_values(key, items, self.set_names, accepted=True)
+        lines = ['订阅推荐　'+values(entry['remote'])]
+        if entry['mode'] != 'inherit':
+            mode = {'add':'额外接受', 'only':'只接受'}[entry['mode']]
+            lines.extend(['我的规则　'+mode+' '+values(entry['local']), '当前生效　'+values(entry['active'])])
         if entry['conflict']:
             lines.insert(0,'上游变动前　'+values(entry['old']))
-            lines.append('当前使用我的设置')
         self.field_value.setText('　｜　'.join(lines))
 
     def open_rule(self):

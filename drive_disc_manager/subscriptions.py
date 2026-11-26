@@ -37,9 +37,9 @@ def fetch(url):
     return raw.decode('utf-8-sig')
 
 
-def matrix_fields(raw):
+def matrix_fields(raw, note=None):
     fields, seen_slots, columns = {}, set(), {}
-    for row in csv.reader(io.StringIO(raw), strict=True):
+    for number, row in enumerate(csv.reader(io.StringIO(raw), strict=True), 1):
         name = row[0].strip() if row else ''
         if not name:
             continue
@@ -49,6 +49,7 @@ def matrix_fields(raw):
                 raise ValueError('主词条表重复表头')
             seen_slots.add(slot)
             columns = {}
+            headings = row
             for i, cell in enumerate(row[1:], 1):
                 if not cell.strip():
                     break
@@ -72,7 +73,11 @@ def matrix_fields(raw):
         if key in fields:
             raise ValueError('重复套装行 '+name)
         accepted, known = [], []
+        if note:
+            note(key, number, 0, '套装', row[0])
         for i, stat in columns.items():
+            if note:
+                note(key, number, i, headings[i], row[i])
             value = row[i].strip()
             if not value:
                 continue
@@ -91,16 +96,17 @@ def matrix_fields(raw):
 _GUIDE_SLOT = re.compile(r'(.+?)(?<![A-Za-z])(?:Disc|Dics)\s*([456])[¹²³⁴⁵]*(?!\w)', re.I)
 
 
-def guide_fields(raw):
-    rows = [r+['']*40 for r in csv.reader(io.StringIO(raw), strict=True) if any(cell.strip() for cell in r)]
+def guide_fields(raw, note=None):
+    rows = [(n, r+['']*40) for n, r in enumerate(csv.reader(io.StringIO(raw), strict=True), 1)
+            if any(cell.strip() for cell in r)]
     result, agent, cols = {}, '', {}
-    for i, row in enumerate(rows):
+    for i, (number, row) in enumerate(rows):
         if row[1].strip().startswith('Last Updated:'):
             if agent and not cols:
                 raise ValueError('角色表缺少词条表头 · '+agent)
             if not i:
                 raise ValueError('角色栏为空')
-            agent = rows[i-1][1].strip()
+            agent = rows[i-1][1][1].strip()
             cols = {}
             if not agent:
                 raise ValueError('角色栏为空')
@@ -118,11 +124,15 @@ def guide_fields(raw):
             stat = m[1].strip()
             if stat:
                 result.setdefault(field+'slot'+m[2], []).append(stat)
+                if note:
+                    note(field+'slot'+m[2], number, cols['main'], 'Main Stats', row[cols['main']])
         sub = row[cols['subs']].strip()
         if sub == 'Baseline Stats':
             cols['subs_done'] = True
         elif sub and not cols.get('subs_done'):
             result.setdefault(field+'subs', []).append(sub)
+            if note:
+                note(field+'subs', number, cols['subs'], 'Sub Stats', row[cols['subs']])
     if agent and not cols:
         raise ValueError('角色表缺少词条表头 · '+agent)
     if not result:
@@ -130,21 +140,23 @@ def guide_fields(raw):
     return result
 
 
-def build_fields(raw):
-    records = csv.DictReader(io.StringIO(raw), strict=True)
-    columns = records.fieldnames or []
+def build_fields(raw, note=None):
+    records = csv.reader(io.StringIO(raw), strict=True)
+    columns = next(records, [])
     required = {'Name', 'Disc 4', 'Disc 5', 'Disc 6', 'Substats', '4pc_0', 'All 2pc_0'}
     if not required.issubset(columns) or len(columns) != len(set(columns)):
         raise ValueError('Prydwen Builds 的角色、套装或词条表头发生变化')
     groups = {key: [col for col in columns if re.fullmatch(pattern, col)]
               for key, pattern in [('sets4', r'4pc_[0-9]+'), ('sets2', r'All 2pc_[0-9]+')]}
-    used_columns = required.union(*groups.values())
+    mapped = {**groups, 'subs':['Substats'], **{'slot'+s:['Disc '+s] for s in '456'}}
+    last_required = max(columns.index(col) for col in required.union(*groups.values()))
     result = {}
-    for record in records:
-        if not any(record.values()):
+    for number, row in enumerate(records, 2):
+        if not any(row):
             continue
-        if None in record or any(record[col] is None for col in used_columns):
-            raise ValueError(f'Prydwen Builds 第 {records.line_num} 行列数不符')
+        if not last_required < len(row) <= len(columns):
+            raise ValueError(f'Prydwen Builds 第 {number} 行列数不符')
+        record = dict(zip(columns, row))
         name = (record['Name'] or '').strip()
         prefix = 'build/' + name + '/'
         if not name or '/' in name or prefix + 'sets4' in result:
@@ -157,6 +169,10 @@ def build_fields(raw):
             result[prefix+'slot'+slot] = [raw_stats] if raw_stats else []
         subs = (record['Substats'] or '').strip()
         result[prefix+'subs'] = [subs] if subs else []
+        if note:
+            for field, headers in mapped.items():
+                for col in headers:
+                    note(prefix+field, number, columns.index(col), col, record[col])
     if not result:
         raise ValueError('Prydwen Builds 缺少角色记录')
     return result
@@ -167,18 +183,35 @@ def sources():
     tabs = [(name,gid) for name,gid in re.findall(r'items[.]push[(][{]name:\s*"([^"]+)"[^}]*?gid:\s*"([0-9]+)"', index) if name.lower() in ELEMENTS]
     if not {'Physical','Fire','Ice','Electric','Ether'}.issubset({name for name,_ in tabs}):
         raise ValueError('攻略表页签变化')
-    fields = matrix_fields(fetch(MATRIX))
+    evidence = {}
+
+    def record_cells(tab, url):
+        def note(key, row, column, heading, value):
+            group = evidence.setdefault(key, {}).setdefault(tab, {'url':url, 'cells':[]})
+            letters = ''
+            index = column + 1
+            while index:
+                index, digit = divmod(index - 1, 26)
+                letters = chr(65 + digit) + letters
+            cell = [letters+str(row), heading, value]
+            if cell not in group['cells']:
+                group['cells'].append(cell)
+        return note
+
+    sheet = MATRIX.split('/export?')[0]+'/edit#gid='
+    fields = matrix_fields(fetch(MATRIX), record_cells('Set+Main', sheet+'133245023'))
     origins = {key:['Set+Main'] for key in fields}
-    builds = build_fields(fetch(MATRIX.rsplit('=',1)[0]+'='+BUILDS_GID))
+    builds = build_fields(fetch(MATRIX.rsplit('=',1)[0]+'='+BUILDS_GID),
+                          record_cells('Prydwen Builds', sheet+BUILDS_GID))
     fields.update(builds)
     origins.update({key:['Prydwen Builds'] for key in builds})
     with ThreadPoolExecutor(max_workers=3) as pool:
         urls = [GUIDE+'?single=true&output=csv&gid='+gid for _, gid in tabs]
-        for (tab, _), data in zip(tabs, pool.map(fetch, urls), strict=True):
-            for key, value in guide_fields(data).items():
+        for (tab, gid), data in zip(tabs, pool.map(fetch, urls), strict=True):
+            for key, value in guide_fields(data, record_cells(tab, GUIDE+'html?gid='+gid+'&single=true')).items():
                 fields[key] = sorted(set(fields.get(key, [])+value))
                 origins.setdefault(key, []).append(tab)
-    return fields, dict(tabs, **{'Prydwen Builds':BUILDS_GID, 'Set+Main':'133245023'}), origins
+    return fields, dict(tabs, **{'Prydwen Builds':BUILDS_GID, 'Set+Main':'133245023'}), origins, evidence
 
 
 def effective(remote, override=None):
@@ -239,12 +272,16 @@ def field_tabs(snapshot, key):
     return snapshot.get('origins', {}).get(key) or snapshot.get('formerOrigins', {}).get(key, [])
 
 
-def merge(previous, fields, overrides, tabs, origins=None):
+def merge(previous, fields, overrides, tabs, origins=None, evidence=None):
     old = previous.get('fields', {})
     origins = origins or {}
     # A deleted field remains editable locally, including after acknowledging a conflict.
     former = {key:known for key in overrides if key not in fields and (known := field_tabs(previous, key))}
-    rev = digest([fields, tabs, origins, former])
+    evidence = dict(evidence or {})
+    for key in former:
+        if key in previous.get('sourceCells', {}):
+            evidence[key] = previous['sourceCells'][key]
+    rev = digest([fields, tabs, origins, former, evidence])
     pending = current_conflicts(previous, overrides)
     for key, override in overrides.items():
         before, after = old.get(key), fields.get(key)
@@ -256,7 +293,7 @@ def merge(previous, fields, overrides, tabs, origins=None):
         conflict = conflict_view(change, override, key)
         if conflict:
             pending[key] = conflict
-    return dict(fields=fields, version=rev, tabs=tabs, origins=origins, formerOrigins=former,
+    return dict(fields=fields, version=rev, tabs=tabs, origins=origins, formerOrigins=former, sourceCells=evidence,
                 updated=time.time(), conflicts=pending)
 
 
@@ -343,11 +380,11 @@ def save_config_draft(root, base, edited):
 def sync(root):
     # Fetch outside the brief write lock. An older download must not replace a newer snapshot.
     start = read(root/'rules.json', {}).get('updated')
-    fields, tabs, origins = sources()
+    fields, tabs, *metadata = sources()
     with exclusive(root/'_rules'):
         previous = read(root/'rules.json', {})
         if previous.get('updated') != start:
             return previous
-        new = merge(previous, fields, config(root)['overrides'], tabs, origins)
+        new = merge(previous, fields, config(root)['overrides'], tabs, *metadata)
         save(root/'rules.json', new)
         return new

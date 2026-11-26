@@ -29,13 +29,21 @@ def guide_smoke(root):
 ,,Impact% Disc 6,
 ,,Generic Team Example,
 '''
-    fields = sub.guide_fields(cards)
+    cells = {}
+    def remember(key, row, col, header, text):
+        cells.setdefault(key, []).append((row, col, header, text))
+    fields = sub.guide_fields(cards, remember)
     expected = {'guide/Roxy Ifrita Pryce/slot6':{'energyRegen_'},
                 'guide/Anton Ivanov/slot4':{'crit_', 'crit_dmg_'},
                 'guide/Ju Fufu/slot4':{'atk_', 'crit_'}, 'guide/Ju Fufu/slot6':{'impact'}}
     for key, stats in expected.items():
         assert sub.accepted_terms(key, fields.get(key)) == stats, key
     key = 'guide/Ju Fufu/slot4'
+    assert cells[key] == [(13, 2, 'Main Stats', 'ATK% > CR% Disc 4¹')]
+    # Even when a quoted cell spans two lines, the next agent occupies the next sheet row.
+    build = 'Name,Disc 4,Disc 5,Disc 6,Substats,4pc_0,All 2pc_0\nA,,,,"ATK%\nCR%",,\n\nB,CR%,,,,, '
+    sub.build_fields(build, remember)
+    assert cells['build/B/slot4'] == [(4, 1, 'Disc 4', 'CR%')]
     cfg = config(root)
     cfg['overrides'] = {key:dict(mode='only', values=['crit_'])}
     save(root/'config.json', cfg)
