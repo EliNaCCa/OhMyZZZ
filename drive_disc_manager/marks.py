@@ -8,9 +8,9 @@ def owns_spare(entry, values):
 
 def scanned_identities(discs, names):
     from collections import Counter
-    from .store import equipment_keys, fingerprint
+    from .store import equipment_key, equipment_keys, fingerprint
     reverse = equipment_keys(names)
-    keys = {d['setKey']:d['setKey'] if d['setKey'] in names else reverse.get(d['setKey'].strip(), d['setKey']) for d in discs}
+    keys = {raw:equipment_key(raw, names, reverse) for raw in {d['setKey'] for d in discs}}
     identities = Counter(fingerprint(dict(d, setKey=keys[d['setKey']])) for d in discs)
     counts = {fingerprint(d):identities[fingerprint(dict(d, setKey=keys[d['setKey']]))] for d in discs}
     return keys, counts

@@ -27,7 +27,7 @@ def probe_trace(record, cfg, rules, wiki, known_owned):
     from .optimizer import STATS
     from .planner import assess_rules
     from .roster import roster_catalog, compile_roster
-    from .store import equipment_names, equipment_keys
+    from .store import equipment_names, equipment_keys, equipment_key, fingerprint, is_pinned, pin_keys
     from .subscriptions import current_conflicts
     if record.get('status') != 'verified':
         raise ValueError('需要先读一张盘')
@@ -40,18 +40,23 @@ def probe_trace(record, cfg, rules, wiki, known_owned):
         reasons.append('读取时游戏内已锁定')
     if cfg['protect15'] and disc['level'] == 15:
         reasons.append('已满级')
-    if disc['fingerprint'] in cfg['pins']:
-        reasons.append('手动保护')
     rolls = {}
     if disc['rarity'] == 'S':
         for key, quantity in values['subs'].items():
             step = STATS.get(key, (None, None))[1]
             if step and 1 <= round(quantity/step) <= 6 and abs(round(quantity/step)*step-quantity) < 1e-6:
                 rolls[key] = round(quantity/step)
-    row = dict(fp=disc['fingerprint'], set=reverse.get(disc['setKey'],disc['setKey']), slot=str(disc['slotKey']),
+    row = dict(fp=disc['fingerprint'], set=equipment_key(disc['setKey'], names, reverse), slot=str(disc['slotKey']),
                level=disc['level'], main=next(iter(values['main'])), observedValues=values, rolls=rolls,
                reasons=reasons, recommendations=[], review=[], explanation=[], ruleUses=[],
                decision='单盘观察', marked=disc['markState']=='marked')
+    # Older probes omitted the raw rolls. Only recover their aliases on an exact hash match.
+    original = disc if 'substats' in disc else dict(disc, mainStatKey=row['main'],
+                    substats=[dict(key=key, upgrades=n) for key, n in rolls.items()])
+    if fingerprint(original) == row['fp']:
+        row['pinKeys'] = pin_keys(original, names, reverse, row['fp'])
+    if is_pinned(row, cfg['pins']):
+        reasons.append('手动保护')
     if 'ownerState' in disc:
         row.update(ownerState=disc['ownerState'], location=disc.get('location', ''))
     if row['marked']:

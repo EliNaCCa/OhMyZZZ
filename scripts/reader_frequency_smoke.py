@@ -55,6 +55,7 @@ def smoke(home, tmp):
     result = preview(root, refresh=False)
     row, = result['discs']
     assert row['observedValues']['main']=={'atk_':7.5} and row['rolls']['crit_']==1
+    check_reader_identity(cfg, disc, exported)
     assert read(root/'network-preview.json')['inventory']==result['inventory'] and not (root/'inventory.json').exists()
     try: inventory(network)
     except ValueError: pass
@@ -81,6 +82,59 @@ def smoke(home, tmp):
     with patch.object(record,'get_current_dt',return_value='20261130'):
         record.check_and_update_status(); assert not record.is_done
     print('PASS loopback inventory preview, separate game scan, daily/weekly limits and Monday reset')
+
+
+def check_reader_identity(cfg, disc, exported):
+    from drive_disc_manager.manual_equip import confirmation, verify_selection
+    from drive_disc_manager.network_reader import normalize
+    from drive_disc_manager.planner import plan
+    from drive_disc_manager.store import digest, equipment_names, fingerprint, toggle_pin
+
+    names = equipment_names({})
+    en, zh = 'TheSkyAblaze', '拂晓行纪'
+    mains = ['hp', 'atk', 'def', 'atk_', 'atk_', 'atk_']
+    discs = [dict(disc, slotKey=str(slot), mainStatKey=main, setKey=en, level=0,
+                  substats=[dict(key=k, upgrades=0) for k in ('crit_', 'crit_dmg_', 'pen')])
+             for slot, main in enumerate(mains, 1)]
+    network = normalize(dict(exported, discs=discs))
+    samples = [dict(d, setKey=zh, id='ocr-'+str(i), observedValues={
+        group:{k:float(v) for k,v in stats.items()} for group,stats in d['observedValues'].items()})
+        for i,d in enumerate(network['discs'])]
+    ocr = dict(network, source='Zenless Optimizer', networkPreview=False, discs=samples,
+               audit=dict(game_total=6, exported=6, delta=0))
+    net_fp, ocr_fp = fingerprint(network['discs'][0]), fingerprint(samples[0])
+    assert net_fp != ocr_fp
+    for saved_pin, snapshot in [(ocr_fp, network), (net_fp, ocr)]:
+        report = plan(snapshot, dict(cfg, pins=[saved_pin]), {}, names)
+        row = report['discs'][0]
+        assert '手动保护' in row['reasons'], 'switching readers lost a saved pin'
+        assert not any('手动保护' in r['reasons'] for r in report['discs'][1:])
+        assert toggle_pin(row, [net_fp, ocr_fp, 'unrelated']) == ['unrelated']
+        assert toggle_pin(row, []) == [net_fp]
+    ambiguous_names = names | {'AnotherSet':zh}
+    ambiguous = plan(ocr, dict(cfg, pins=[net_fp]), {}, ambiguous_names)
+    assert '手动保护' not in ambiguous['discs'][0]['reasons']
+    profile = '示例配队'
+    cfg = dict(cfg, profiles=[dict(name=profile, agentKey='Nicole')])
+
+    def selection(snapshot):
+        ids = [fingerprint(d) for d in snapshot['discs'][:6]]
+        return dict(configuration=digest(cfg), inventory=digest(snapshot), assignments={profile:dict(ids=ids)})
+
+    request, _ = confirmation(1, profile, cfg, selection(network), network, preview_only=True)
+    verify_selection(request, cfg, selection(ocr), ocr)
+    for changed in (dict(samples[0], location='Other', ownerState='worn'),
+                    dict(samples[0], observedValues=dict(samples[0]['observedValues'], main={'hp':549.0})),
+                    dict(samples[0], setKey='OtherSet')):
+        revised = dict(ocr, discs=[changed, *samples[1:]])
+        try: verify_selection(request, cfg, selection(revised), revised)
+        except ValueError: pass
+        else: raise AssertionError('changed equipment passed confirmation')
+    duplicate = dict(ocr, discs=[*samples, dict(samples[0], setKey=en, id='other-copy')],
+                     audit=dict(game_total=7, exported=7, delta=0))
+    try: verify_selection(request, cfg, selection(duplicate), duplicate)
+    except ValueError: pass
+    else: raise AssertionError('ambiguous equipment passed confirmation')
 
 
 if __name__ == '__main__':

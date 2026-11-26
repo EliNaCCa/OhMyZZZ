@@ -47,6 +47,17 @@ def smoke(home, tmp):
         app.processEvents()
         assert widget.preview_job is None
 
+    alias_row = dict(a, pinKeys=['stable', a['fp']])
+    finish([alias_row])
+    widget.table.selectRow(0)
+    widget.pin_button.trigger()
+    assert widget.cfg['pins'] == ['stable']
+    widget.detail_button.click()
+    assert widget.detail.pin.text() == '取消个人保护'
+    widget.detail.pin.click()
+    assert widget.cfg['pins'] == []
+    widget.detail.back.emit()
+
     finish([a, b])
     widget.inventory_filter.kind.setCurrentText('额外备用')
     widget.table.selectRow(1)

@@ -6,6 +6,7 @@ from one_dragon_qt.widgets.base_interface import BaseInterface
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QWidget,
     QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView)
 from .store import read,save,config,import_inventory,digest,equipment_names,equipment_keys,snapshot_path,preview_path
+from .store import is_pinned, toggle_pin
 from .service import preview
 from .subscriptions import sync, current_conflicts, can_merge, effective, field_tabs, resolve_conflict, save_config, save_config_draft, save_field_override
 from qfluentwidgets import (PushButton, PrimaryPushButton, DropDownPushButton, RoundMenu,
@@ -725,15 +726,15 @@ class ManagerInterface(BaseInterface):
         from .loadout import verify_bindings
         current_cfg, wiki = config(root), read(wiki_path(), {})
         verify_bindings(current_cfg, name, wiki)
-        request, targets = confirmation(account, name, current_cfg, self.report, read(snapshot_path(root,current_cfg)), preview_only=True)
+        sets = equipment_names(wiki) | current_cfg.get('aliases',{})
+        request, targets = confirmation(account, name, current_cfg, self.report, read(snapshot_path(root,current_cfg)), preview_only=True, names=sets)
         dialog = QDialog(self); dialog.setWindowTitle('应用当前配队'); dialog.resize(720,420)
         panel = QVBoxLayout(dialog)
         panel.addWidget(BodyLabel(f'{name} · {len(targets)} 个号位'))
-        from .store import equipment_names
         from .stat_reading import display_values
-        sets = equipment_names(wiki) | current_cfg.get('aliases',{})
         agents = {p['name']:p.get('request',{}).get('characterName') for p in self.cfg['profiles']}
-        table = self.grid(['方案','目标角色','号位','套装','主副词条','上次扫描装备者'])
+        stat_header = '主副词条（换算值）' if current_cfg['inventorySource'] == 'network' else '主副词条'
+        table = self.grid(['方案','目标角色','号位','套装',stat_header,'当前装备者'])
         self.fill(table,[(t['profile'], agents.get(t['profile']) or t['agent'], t['slot'], sets.get(t['set'],t['set']),
                           display_values(t['observedValues']), owner_label(t)) for t in targets])
         table.resizeColumnsToContents(); panel.addWidget(table)
@@ -1126,8 +1127,7 @@ class ManagerInterface(BaseInterface):
         if index < 0: return
         row = self.rows[index]
         if row['marked']: return
-        fp=row['fp']; pins=set(self.cfg['pins'])
-        self.edit_cfg(pins=sorted(pins^{fp}))
+        self.edit_cfg(pins=toggle_pin(row, self.cfg['pins']))
 
     def open_disc_detail(self, *, probe=None):
         if self.root.name != str(self.ctx.current_instance_idx):
@@ -1172,7 +1172,7 @@ class ManagerInterface(BaseInterface):
             row, report = probe_trace(self.probe_record,self.cfg,self.rules,wiki,read(self.root/'owned-agents.json', []))
             self.detail_observation = digest(self.probe_record)
         self.detail_selection = (self.root, row, probe)
-        self.detail.present(row, report, set_name=self.set_names.get(row['set'],row['set']), probe=probe, pinned=row['fp'] in self.cfg['pins'],
+        self.detail.present(row, report, set_name=self.set_names.get(row['set'],row['set']), probe=probe, pinned=is_pinned(row, self.cfg['pins']),
                             coverage=None if probe or row['marked'] else self.coverage.get(tuple(row[k] for k in SELECTORS)),
                             rule_keys=self.keys, team_names=[p['name'] for p in self.cfg['profiles']],
                             stale=not probe and self.preview_stale)
@@ -1193,7 +1193,7 @@ class ManagerInterface(BaseInterface):
                 self.on_interface_shown(); return
             if action == 'pin':
                 if row['marked']: return
-                self.edit_cfg(pins=sorted(set(self.cfg['pins']) ^ {row['fp']}))
+                self.edit_cfg(pins=toggle_pin(row, self.cfg['pins']))
             else:
                 change = self.set_quota(row)
                 if change and self.tabs.currentWidget() is self.detail:

@@ -126,7 +126,7 @@ class ManagerApp(ZApplication):
                     return self.round_fail('请先到「设置 → 库存记录」核对上次的盘')
             if self.group == MANUAL_GROUP:
                 self.guard_game()
-                verify_selection(request, cfg, report, snapshot)
+                verify_selection(request, cfg, report, snapshot, names=names)
             elif report['issues']:
                 return self.round_fail('配装待复核 · '+' / '.join(report['issues']))
             if field and scanner is None:
@@ -140,7 +140,7 @@ class ManagerApp(ZApplication):
             if field:
                 from .loadout import apply_loadout
                 from .equip_ui import EquipUI
-                receipt = apply_loadout(self.root,cfg,report,snapshot,EquipUI(self,scanner,wiki_path()),name=field)
+                receipt = apply_loadout(self.root,cfg,report,snapshot,EquipUI(self,scanner,wiki_path()),name=field,names=names)
                 messages.append(f"{receipt['profile']} · 已复读 {len(receipt['verified'])} 个号位")
             if mark:
                 from .dismantle import handoff

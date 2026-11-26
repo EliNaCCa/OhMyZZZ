@@ -81,6 +81,33 @@ def equipment_keys(names):
     return {label:key for label, key in reverse.items() if key}
 
 
+def equipment_key(raw, names, reverse):
+    return raw if raw in names else reverse.get(raw.strip(), raw)
+
+
+def pin_keys(disc, names, reverse, fp):
+    """Canonical saved pin first, then exact spellings used by older readers."""
+    raw = disc['setKey']
+    key = equipment_key(raw, names, reverse)
+    label = names.get(key)
+    spellings = [key, raw]
+    if isinstance(label, str):
+        label = label.strip()
+        if label not in names and reverse.get(label) == key:
+            spellings.append(label)
+    return [fp if name == raw else fingerprint(dict(disc, setKey=name)) for name in dict.fromkeys(spellings)]
+
+
+def is_pinned(row, pins):
+    return any(key in pins for key in (row.get('pinKeys') or (row['fp'],)))
+
+
+def toggle_pin(row, pins):
+    keys = row.get('pinKeys') or [row['fp']]
+    saved = set(pins)
+    return sorted(saved.difference(keys) if is_pinned(row, saved) else saved | {keys[0]})
+
+
 def inventory(z, *, preview_only=False):
     if not isinstance(z, dict) or (z.get('format'), z.get('dbVersion'), z.get('version')) != ('ZOD', 2, 1):
         raise ValueError('需要 ZOD v1 / dbVersion 2 完整导出')

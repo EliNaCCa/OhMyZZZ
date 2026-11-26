@@ -16,4 +16,4 @@
 
 游戏规则和词条倍率是公开资料，仓库明细属于登录账号。官方声明允许对影响公平的第三方工具采取封禁等措施，具体检测规则和单个读取器的封号概率没有公开。OCR 同样使用第三方自动化来翻包。[绝区零公平运营声明](https://www.hoyolab.com/article/30585630)
 
-本插件适配了支持实时导出的 **0delay 3.3.1**。该分支 2026-11-17 发布了 Windows 版，作者标明支持游戏 3.3。插件代码维护在[自己的 fork](https://github.com/EliNaCCa/OhMyZZZ-Scanner)，首次下载使用[对应上游发布包](https://github.com/pingwinekZ/zzz_packet_capture_0delay/releases/tag/v3.3.1)。游戏升级后需要重新确认协议兼容性。
+本插件适配了支持实时导出的 **0delay 3.3.1**。作者标明支持游戏 3.3 的国际服 Windows 客户端（OSPRODWin），国服客户端还需实机验证。读取器源码保存在自己的 fork，首次安装下载上游发布包。[读取器 fork](https://github.com/EliNaCCa/OhMyZZZ-Scanner) · [上游发布包](https://github.com/pingwinekZ/zzz_packet_capture_0delay/releases/tag/v3.3.1)

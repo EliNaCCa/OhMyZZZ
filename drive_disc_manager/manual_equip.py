@@ -10,10 +10,15 @@ SCAN_GROUP = 'ohmyzzz_manual_scan'
 _request = ContextVar('ohmyzzz_manual_equip', default=None)
 
 
-def confirmation(account, name, cfg, report, snapshot, *, preview_only=False):
-    targets = target_loadout(cfg, report, snapshot, name, preview_only=preview_only)
-    # Ignore export ordering but include a changed donor in the next preview.
-    identity = [{k:t[k] for k in ('profile','agent','slot','fp','observedValues','location')} for t in targets]
+def confirmation(account, name, cfg, report, snapshot, *, preview_only=False, names=None):
+    targets = target_loadout(cfg, report, snapshot, name, preview_only=preview_only, names=names)
+    identity = []
+    for target in targets:
+        entry = {k:target[k] for k in ('profile','agent','slot','selectionFp','location','ownerState')}
+        # OCR writes 19.0 and the reader exports 19. checked_values bounds both to 99999.
+        entry['values'] = {group:{k:float(v) for k, v in stats.items()}
+                           for group, stats in target['observedValues'].items()}
+        identity.append(entry)
     return dict(account=account, name=name, configuration=digest(cfg), selection=digest(identity)), targets
 
 
@@ -55,9 +60,11 @@ def manual_request(account, group):
     return item[1], item[2]
 
 
-def verify_selection(request, cfg, report, snapshot):
-    current, _ = confirmation(request['account'], request['name'], cfg, report, snapshot)
+def verify_selection(request, cfg, report, snapshot, *, names=None):
+    current, _ = confirmation(request['account'], request['name'], cfg, report, snapshot, names=names)
     if current != request:
+        if cfg.get('inventorySource') == 'network':
+            raise ValueError('游戏重扫与网络预览的配队用盘不同。请在设置中选择「游戏画面（OCR）」，重新计算后应用配队。')
         raise ValueError('重扫后的目标盘或配置有变化，已刷新预览，请查看后重新应用')
 
 

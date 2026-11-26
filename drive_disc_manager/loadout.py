@@ -1,6 +1,7 @@
 """Resolve one fielded lineup and verify physical ownership after every equip."""
 from time import time
-from .store import config, digest, fingerprint, inventory, roll_base, save
+from .marks import scanned_identities
+from .store import config, digest, equipment_names, fingerprint, inventory, roll_base, save
 from .stat_reading import checked_values
 
 
@@ -22,11 +23,14 @@ def verify_bindings(cfg, name, wiki):
             raise ValueError(f"「{profile['name']}」的换装角色绑定待核对，请在「我的配队」更新所选配队。")
 
 
-def target_loadout(cfg, report, snapshot, name, *, preview_only=False):
+def target_loadout(cfg, report, snapshot, name, *, preview_only=False, names=None):
     lineup = fielded_profiles(cfg, name)
-    discs, counts = inventory(snapshot, preview_only=preview_only)
+    discs, _ = inventory(snapshot, preview_only=preview_only)
     if report['configuration'] != digest(cfg) or report['inventory'] != digest(snapshot):
         raise ValueError('当前配队或库存已变化，请重新计算')
+    if names is None:
+        names = equipment_names({}) | cfg.get('aliases', {})
+    keys, counts = scanned_identities(discs, names)
     by_fp = {fingerprint(d):d for d in discs}
     agents, claimed, targets = set(), set(), []
     for profile in lineup:
@@ -39,7 +43,7 @@ def target_loadout(cfg, report, snapshot, name, *, preview_only=False):
         if len(ids) != 6 or assignment.get('error'):
             raise ValueError(profile['name']+' 缺少完整六盘方案')
         for slot, fp in enumerate(ids, 1):
-            if counts[fp] != 1 or fp in claimed:
+            if counts.get(fp) != 1 or fp in claimed:
                 raise ValueError('目标盘不唯一或同时出场的方案重盘')
             disc = by_fp[fp]
             if disc.get('ownerState') == 'unknown':
@@ -51,15 +55,16 @@ def target_loadout(cfg, report, snapshot, name, *, preview_only=False):
                 raise ValueError(f'{agent} 的 {slot} 号盘缺少实测词条数值，请用 OhMyZZZ 重新扫描')
             claimed.add(fp)
             targets.append(dict(profile=profile['name'],agent=agent,slot=slot,fp=fp,
+                                selectionFp=fingerprint(dict(disc, setKey=keys[disc['setKey']])),
                                 location=disc.get('location',''),ownerState=disc.get('ownerState','legacy'),
                                 set=disc['setKey'],main=disc['mainStatKey'],
                                 observedValues=observed))
     return targets
 
 
-def apply_loadout(root, cfg, report, snapshot, ui, *, name=None):
+def apply_loadout(root, cfg, report, snapshot, ui, *, name=None, names=None):
     name = name or cfg['fieldProfile']
-    targets = target_loadout(cfg, report, snapshot, name)
+    targets = target_loadout(cfg, report, snapshot, name, names=names)
     receipt = dict(profile=name,configuration=report['configuration'],inventory=report['inventory'],
                    started=time(),status='checking',targets=targets,actions=[],verified=[])
     path = root/'equip-result.json'

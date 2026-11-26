@@ -3,7 +3,7 @@ from collections import Counter, defaultdict
 from .optimizer import as_disc, candidate_pool, STATS
 from .allocation import assign_group, group_conflict, reusable_assignments
 from .drive_disc_manager_const import PLUGIN_VERSION
-from .store import digest, equipment_keys, fingerprint, inventory, roll_base
+from .store import digest, equipment_keys, fingerprint, inventory, is_pinned, pin_keys, roll_base
 from .subscriptions import effective, current_conflicts, SLOT_MAIN
 from .reserve_policy import apply_reserves, assess_growth, normalized_rule
 from .roster import compile_roster, explain, parse_main, preview_bindings, roster_catalog
@@ -69,7 +69,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         return keys[disc['setKey']]
 
     # The scanner can export a Chinese title when its dictionary lacks a new set.
-    # Keep the raw title in physical fingerprints, so pins and history stay attached.
+    # Live actions and marker history still use the raw scanner fingerprint.
     optimizer_names = {d['setKey']:names[set_key(d)] for d in ds if set_key(d) in names}
     base = roll_base(z)
     fields = rules.get('fields',{})
@@ -120,6 +120,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
             for profile,_ in members:
                 assignments[profile['name']] = {'error':str(exc)}
     rows = []
+    pins = set(cfg['pins'])
     for d in ds:
         fp = fingerprint(d)
         why = list(used_by[fp])
@@ -136,12 +137,13 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
             why.append('手动解锁后保留')
         if entry.get('state') == 'manual-keep':
             why.append('手动撤销弃置后保留')
-        if fp in cfg['pins']:
-            why.append('手动保护')
         if cfg['protect15'] and d['level']==15:
             why.append('已满级')
         row = dict(fp=fp, id=d['id'], set=set_key(d), slot=str(d['slotKey']), main=d['mainStatKey'],
                    level=d['level'], location=d.get('location',''), rolls={s['key']:1+s['upgrades']-base for s in d['substats']}, reasons=why, recommendations=[], explanation=[], review=[], ruleUses=[])
+        row['pinKeys'] = pin_keys(d, names, reverse, fp)
+        if is_pinned(row, pins):
+            why.append('手动保护')
         row['marked'] = d.get('trash') is True
         if 'ownerState' in d:
             row['ownerState'] = d['ownerState']
@@ -208,7 +210,8 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     evidence = rule_book(rows, rules, cfg['overrides'], current_conflicts(rules, cfg['overrides']))
     teams = {p['name']:dict(agent=(p.get('request') or {}).get('characterName') or p.get('agentKey'),
                             group=p.get('simultaneous') or '') for p in enabled}
-    return dict(managerVersion=PLUGIN_VERSION, inventory=inventory_hash, rules=rules.get('version'), configuration=digest(cfg), assignments=assignments,
+    return dict(managerVersion=PLUGIN_VERSION, networkPreview=z.get('networkPreview') is True,
+                inventory=inventory_hash, rules=rules.get('version'), configuration=digest(cfg), assignments=assignments,
                 previewBindings=bindings, allocationKey=allocation_key, reusedAssignments=saved is not None,
                 traceRules=evidence, traceTeams=teams,
                 issues=issues, roster=[a for a in catalog if a['selected']], reserveCoverage=coverage,
