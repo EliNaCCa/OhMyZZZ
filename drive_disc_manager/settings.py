@@ -4,7 +4,7 @@ from threading import Thread
 from PySide6.QtCore import Signal, Qt, QSignalBlocker
 from one_dragon_qt.widgets.base_interface import BaseInterface
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QWidget,
-    QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView)
+    QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView,QStackedWidget)
 from .store import read,save,config,import_inventory,digest,equipment_names,equipment_keys,snapshot_path,preview_path
 from .store import is_pinned, known_agents, toggle_pin
 from .service import preview
@@ -134,12 +134,20 @@ class ManagerInterface(BaseInterface):
         self.agent_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         box.addWidget(self.agent_table)
         page = QWidget(); box = QVBoxLayout(page); tabs.addTab(page,'我的配队')
+        self.team_views = QStackedWidget(); box.addWidget(self.team_views)
+        team_list = QWidget(); self.team_views.addWidget(team_list)
+        box = QVBoxLayout(team_list); box.setContentsMargins(0, 0, 0, 0)
+        from .squad_editor import SquadEditor
+        self.squad_editor = SquadEditor(); self.team_views.addWidget(self.squad_editor)
+        self.squad_editor.saved.connect(lambda: self.invoke(self.save_squad))
+        self.squad_editor.canceled.connect(lambda: self.team_views.setCurrentIndex(0))
         engine_bar = QHBoxLayout(); box.addLayout(engine_bar)
         self.button(engine_bar,'导入方案',self.import_profile)
         self.profile_menu = DropDownPushButton('管理方案'); engine_bar.addWidget(self.profile_menu)
         menu = RoundMenu(parent=self.profile_menu); self.profile_menu.setMenu(menu)
         self.menu_action(menu,'复制为另一配队',lambda:self.name_profile(True))
         self.menu_action(menu,'重命名',lambda:self.name_profile(False))
+        self.menu_action(menu,'队伍成员',self.edit_squad)
         self.refresh_target_button = self.menu_action(menu,'同步角色目标',self.refresh_profile)
         self.menu_action(menu,'分组与优先级',self.edit_allocation)
         self.menu_action(menu,'满暴偏好',self.edit_tolerance)
@@ -382,6 +390,7 @@ class ManagerInterface(BaseInterface):
                 item=QTableWidgetItem(str(value)); item.setToolTip(str(value)); table.setItem(r,col,item)
 
     def reload(self):
+        self.team_views.setCurrentIndex(0)
         if self.editor_account is not None:
             text = self.editor.toPlainText()
             if text != pretty(self.editor_base):
@@ -408,6 +417,8 @@ class ManagerInterface(BaseInterface):
         from .roster import preview_bindings
         self.preview_bindings = preview_bindings(self.cfg['profiles'], wiki)
         self.refresh_roster(wiki, inventory)
+        self.agent_labels = {row.get('code') or row.get('EN', '').replace(' ', ''):row['CHS']
+                             for row in wiki.get('character', {}).values() if row.get('CHS')}
         changed_inputs = []
         if self.report:
             if self.report.get('managerVersion') != PLUGIN_VERSION:
@@ -575,9 +586,11 @@ class ManagerInterface(BaseInterface):
         if index < 0 or index >= len(self.cfg['profiles']): return
         profile = self.cfg['profiles'][index]
         result = self.report.get('assignments',{}).get(profile['name'],{})
+        party = self.squad_text(profile)
         if not profile.get('enabled',True) or not result.get('ids'):
             self.build_tabs.hide()
-            self.team_score.setText('方案已停用' if not profile.get('enabled',True) else result.get('error') or '点击「计算配装」查看结果。')
+            status = '方案已停用' if not profile.get('enabled',True) else result.get('error') or '点击「计算配装」查看结果。'
+            self.team_score.setText('　·　'.join(filter(None, (party, status))))
             return
         by_fp = {r['fp']:r for r in self.rows}
         rows = [by_fp[fp] for fp in result['ids'] if fp in by_fp]
@@ -620,6 +633,13 @@ class ManagerInterface(BaseInterface):
             details.append(f"{window['name']}{principal} · 占比 {window['share']:.1%} · {self.crit_summary(window)} · 输出 {window.get('rawOutput', window['outputScore'])}")
             if window.get('metric'):
                 details.append(f"{window['metric']} {window['metricValue']:g} · 暴伤 {window['critDamage']:g}% · 增伤 {window['damageBonus']:g}%")
+            for buff in window.get('buffs', []):
+                from .window_editor import STAT_NAMES as WINDOW_STAT_NAMES
+                member = buff.get('member')
+                who = profile['request']['characterName'] if member == '$self' else member
+                source = ' · '.join(filter(None, (who, buff['source'])))
+                mode = {'additional':'生效', 'included':'已计入', 'inactive':'本窗口不生效', 'off':'未满足队伍条件'}[buff['appliedMode']]
+                details.append(f"  {source} · {WINDOW_STAT_NAMES[buff['stat']]} {number(buff['value']):+g} · {mode}")
         scope = result.get('search',{})
         if scope:
             details.append(f"初选 {scope['candidateBuilds']} 套")
@@ -635,8 +655,31 @@ class ManagerInterface(BaseInterface):
         if self.preview_stale:
             details.append('上次计算结果 · 请用当前库存和规则重新计算')
         self.score_detail.setPlainText(chr(10).join(details))
-        self.team_score.setText(binding_note)
-        self.team_score.setVisible(bool(binding_note))
+        self.team_score.setText('　·　'.join(filter(None, (party, binding_note))))
+        self.team_score.setVisible(bool(party or binding_note))
+
+    def squad_text(self, profile):
+        if 'mindscape' not in profile and not profile.get('squad'):
+            return ''
+        lead = self.agent_labels.get(profile.get('agentKey')) or profile['request']['characterName']
+        members = [dict(agent=lead, mindscape=profile.get('mindscape', 0)), *profile.get('squad', [])]
+        return ' / '.join(f"{m['agent']} {m['mindscape']}影" for m in members)
+
+    def edit_squad(self):
+        index = self.teams.currentRow()
+        if index < 0: return
+        token = self.edit_token()
+        profile = token[2]['profiles'][index]
+        lead = self.agent_labels.get(profile.get('agentKey')) or profile['request']['characterName']
+        self.squad_edit = token, index
+        labels = self.agent_labels.values() if self.agent_labels else [a['label'] for a in self.agents]
+        self.squad_editor.present(profile, labels, lead)
+        self.team_views.setCurrentWidget(self.squad_editor)
+
+    def save_squad(self):
+        token, index = self.squad_edit
+        self.edit_profile_fields(token, index, self.squad_editor.values())
+        self.team_views.setCurrentIndex(0)
 
     @staticmethod
     def crit_summary(result):

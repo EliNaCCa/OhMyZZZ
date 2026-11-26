@@ -2,7 +2,7 @@ from copy import deepcopy
 
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QDoubleSpinBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QRadioButton,
-    QTableWidget, QVBoxLayout)
+    QSpinBox, QTableWidget, QVBoxLayout)
 
 from .combat_windows import WINDOW_STATS, window_requests
 
@@ -17,7 +17,7 @@ class WindowEditor(QDialog):
     def __init__(self, profile, parent=None):
         super().__init__(parent)
         self.setWindowTitle(profile['name']+' · 输出窗口')
-        self.resize(820, 460)
+        self.resize(920, 480)
         self.profile = profile
         self.data = deepcopy(profile.get('windows') or [dict(name='常态',weight=100,buffs=[])])
         self.active = -1
@@ -31,8 +31,9 @@ class WindowEditor(QDialog):
         layout.addWidget(self.windows)
         self.bar(layout, [('添加窗口',self.add_window),('移除所选窗口',self.remove_window)])
         self.label = QLabel(); layout.addWidget(self.label)
-        self.buffs = QTableWidget(0,4); self.buffs.setHorizontalHeaderLabels(['来源 / 生效条件','词条','数值','计算方式'])
-        self.buffs.setColumnWidth(0,205); self.buffs.setColumnWidth(1,165); self.buffs.horizontalHeader().setStretchLastSection(True)
+        self.buffs = QTableWidget(0,6); self.buffs.setHorizontalHeaderLabels(['来源角色','所需影画','技能 / 生效条件','词条','数值','计算方式'])
+        for i, width in enumerate((125,85,160,140,90)): self.buffs.setColumnWidth(i,width)
+        self.buffs.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self.buffs)
         self.bar(layout,[('添加增益',lambda:self.add_buff({})),('移除所选增益',self.remove_buff)])
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
@@ -78,6 +79,13 @@ class WindowEditor(QDialog):
 
     def add_buff(self, buff):
         i=self.buffs.rowCount(); self.buffs.insertRow(i)
+        actor=QComboBox(); actor.addItem('通用',None); actor.addItem('配装角色','$self')
+        for row in self.profile.get('squad', []): actor.addItem(row['agent'],row['agent'])
+        member=buff.get('member')
+        if member and actor.findData(member)<0: actor.addItem(member+'（未入队）',member)
+        actor.setCurrentIndex(actor.findData(member) if member else 0)
+        minimum=QSpinBox(); minimum.setRange(0,6); minimum.setSuffix(' 影'); minimum.setValue(buff.get('requiredMindscape',0))
+        minimum.setEnabled(bool(member)); actor.currentIndexChanged.connect(lambda idx:minimum.setEnabled(idx>0))
         source=QLineEdit(buff.get('source','')); stat=QComboBox()
         for key, label in STAT_NAMES.items(): stat.addItem(label,key)
         stat.setCurrentIndex(stat.findData(buff.get('stat','CRIT_RATE')))
@@ -85,7 +93,7 @@ class WindowEditor(QDialog):
         mode=QComboBox()
         for k,v in MODES.items(): mode.addItem(v,k)
         mode.setCurrentIndex(mode.findData(buff.get('mode','additional')))
-        for j,w in enumerate((source,stat,value,mode)): self.buffs.setCellWidget(i,j,w)
+        for j,w in enumerate((actor,minimum,source,stat,value,mode)): self.buffs.setCellWidget(i,j,w)
 
     def remove_buff(self):
         i=self.buffs.currentRow()
@@ -94,9 +102,13 @@ class WindowEditor(QDialog):
     def collect(self):
         if self.active<0: return
         table=self.buffs
-        self.data[self.active]['buffs']=[dict(source=table.cellWidget(i,0).text().strip(),
-            stat=table.cellWidget(i,1).currentData(),value=table.cellWidget(i,2).value(),
-            mode=table.cellWidget(i,3).currentData()) for i in range(table.rowCount())]
+        buffs=[]
+        for i in range(table.rowCount()):
+            actor,minimum,source,stat,value,mode=(table.cellWidget(i,j) for j in range(6))
+            buff=dict(source=source.text().strip(),stat=stat.currentData(),value=value.value(),mode=mode.currentData())
+            if actor.currentData(): buff.update(member=actor.currentData(),requiredMindscape=minimum.value())
+            buffs.append(buff)
+        self.data[self.active]['buffs']=buffs
 
     def switch(self, row):
         if row<0 or row==self.active: return

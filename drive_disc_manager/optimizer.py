@@ -345,7 +345,7 @@ def worn_output(url, profile, discs, current, request):
 
 
 def _profile_candidates(url, profile, discs, current, request):
-    from .combat_windows import window_requests, combine
+    from .combat_windows import window_requests, combine, buff_evidence
     windows = window_requests(profile)
     if not windows:
         return _window_pool(url, profile, discs, current, request)
@@ -361,6 +361,7 @@ def _profile_candidates(url, profile, discs, current, request):
         pools.append((name, weight, configured, indexed))
 
     combined = []
+    evidence = buff_evidence(profile)
     for ids in ids_to_check:
         rows = []
         for name, weight, configured, indexed in pools:
@@ -374,7 +375,7 @@ def _profile_candidates(url, profile, discs, current, request):
                 row = next(r for r in exact if tuple(r['ids']) == ids)
             rows.append(dict(row, name=name, weight=weight))
         if len(rows) == len(pools):
-            combined.append(combine(rows, profile['mainWindow']))
+            combined.append(combine(rows, profile['mainWindow'], evidence))
     if not combined:
         raise NoBuildCandidates('各窗口的配装条件没有共同的六盘方案')
     return combined

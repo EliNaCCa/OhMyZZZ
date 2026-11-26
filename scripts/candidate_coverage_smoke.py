@@ -65,6 +65,22 @@ def smoke(endpoint):
         assert picked['ids'][2] == wanted
     print('PASS 7 fixture discs; 0.5% selects full crit, 0.3% selects 98% crit')
 
+    buff = dict(member='队友', requiredMindscape=6, source='爆发增益', stat='CRIT_RATE', value=15, mode='additional')
+    team = dict(request=dict(request, baseCritRate=65, combatExtraStats={'CRIT_RATE':20}),
+                mainWindow='爆发', windows=[dict(name='爆发', weight=1, buffs=[buff])])
+    for present, rank, rate in [(True,6,100), (True,5,85), (False,6,85)]:
+        profile = dict(team, squad=[dict(agent='队友', mindscape=rank)] if present else [])
+        build, = candidate_pool(endpoint, profile, fixed, set())
+        assert Decimal(build['rawCritRate']) == rate
+        assert build['windows'][0]['buffs'][0]['appliedMode'] == ('additional' if rate == 100 else 'off')
+        # An explicitly included effect is already in the imported total. It must
+        # disappear under the same conditions without being added a second time.
+        base = dict(team['request'], combatExtraStats={'CRIT_RATE':35})
+        imported = dict(profile, request=base, windows=[dict(name='爆发', weight=1, buffs=[dict(buff,mode='included')])])
+        included, = candidate_pool(endpoint, imported, fixed, set())
+        assert Decimal(included['rawCritRate']) == rate
+    print('PASS 65% panel + 20% self + 15% teammate; 100% or 85% by party and mindscape')
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
