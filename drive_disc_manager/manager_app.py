@@ -70,13 +70,18 @@ class ManagerApp(ZApplication):
                 from .loadout import verify_bindings
                 verify_bindings(cfg, field, read(wiki_path(), {}))
             mark = not interactive and cfg.get('applyMarkers')
-            network = cfg.get('inventorySource') == 'network'
+            source = cfg['inventorySource']
+            network = source in ('cn_export', 'network')
             if network and cfg['run_scanner'] and not interactive:
-                from .network_reader import capture
                 def same_account():
                     if self.ctx.current_instance_idx != self.account or not self.ctx.run_context.is_context_running:
                         raise ValueError('账号已切换或任务已停止')
-                capture(self.root, same_account)
+                if source == 'cn_export':
+                    from .cn_export import refresh
+                    refresh(self.root, same_account)
+                else:
+                    from .network_reader import capture
+                    capture(self.root, same_account)
                 if mark or field:
                     preview(self.root, wiki_path(), snapshot=pinned)
             scanner = None

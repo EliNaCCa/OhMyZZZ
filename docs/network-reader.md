@@ -1,6 +1,14 @@
 # 网络读取
 
-在一条龙的 **OhMyZZZ → 设置 → 运行设置** 选择「网络读取」。
+## 国服 Windows 3.3
+
+在 **OhMyZZZ → 设置 → 运行设置** 选择「国服 · 读取导出文件」，回到「仓库」点「选择国服导出文件」，选本账号的 ZOOD JSON。之后让读取器更新同一个文件，一条龙运行 OhMyZZZ 时会重读它。文件换了位置，可在「仓库 → 更多 → 更换导出文件」重新选择。
+
+仓库按每张盘的编号统计新增、减少和属性变化，包括强化后的等级和词条。国服文件提供驱动盘属性，可用于预览配装。装备者、弃置状态、角色和音擎养成需要其他数据来源。上游作者用国服 3.3.0 的一次历史登录数据导出了 2,335 张盘，其他账号的实时读取仍待验证。[国服读取器 v0.2.1](https://github.com/Treageer/zzz-drive-exporter/blob/v0.2.1/README.md)
+
+## 国际服 Windows 3.3
+
+在 **OhMyZZZ → 设置 → 运行设置** 选择「国际服 · 网络读取」。
 
 1. 在玩游戏的桌面点「打开读取器」。首次使用会下载经过 SHA-256 校验的 Windows 版，启动时由 Windows 请求管理员权限。
 2. 在读取器里打开 **Live export**，保留角色、驱动盘、音擎和穿戴信息，点 **Start capture**，再登录对应的游戏账号。已经在线时需要重新登录一次。
@@ -16,4 +24,4 @@
 
 游戏规则和词条倍率是公开资料，仓库明细属于登录账号。官方声明允许对影响公平的第三方工具采取封禁等措施，具体检测规则和单个读取器的封号概率没有公开。OCR 同样使用第三方自动化来翻包。[绝区零公平运营声明](https://www.hoyolab.com/article/30585630)
 
-本插件适配了支持实时导出的 **0delay 3.3.1**。作者标明支持游戏 3.3 的国际服 Windows 客户端（OSPRODWin），国服客户端还需实机验证。读取器源码保存在自己的 fork，首次安装下载上游发布包。[读取器 fork](https://github.com/EliNaCCa/OhMyZZZ-Scanner) · [上游发布包](https://github.com/pingwinekZ/zzz_packet_capture_0delay/releases/tag/v3.3.1)
+国际服实时读取使用 **0delay 3.3.1**，对应国际服 Windows 客户端（OSPRODWin）。[读取器 fork](https://github.com/EliNaCCa/OhMyZZZ-Scanner) · [上游发布包](https://github.com/pingwinekZ/zzz_packet_capture_0delay/releases/tag/v3.3.1)

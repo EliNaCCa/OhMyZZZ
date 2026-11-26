@@ -80,7 +80,10 @@ class ChallengePage(QWidget):
         switched = root != self.root
         self.root = root
         preferences = read(root/'challenge-preferences.json', {})
-        self.pool = account_pool(snapshot, preferences.get('agents', {}), wiki)
+        from .store import known_agents
+        if snapshot.get('source') == 'zzz-drive-exporter':
+            snapshot = read(root / 'network-inventory.json', {})
+        self.pool = account_pool(snapshot, preferences.get('agents', {}), wiki, known=known_agents(root))
         self.familiar = preferences.get('parties', [])
         def label(item):
             name, stats = item

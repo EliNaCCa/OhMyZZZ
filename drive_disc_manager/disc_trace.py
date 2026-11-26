@@ -20,7 +20,7 @@ def rule_book(rows, rules, overrides, conflicts):
 def teams_for_disc(report, row):
     teams = report.get('traceTeams', {})
     return [(name, teams.get(name, {}), result) for name, result in report.get('assignments', {}).items()
-            if not result.get('error') and row['fp'] in result.get('ids', ())]
+            if not result.get('error') and row.get('buildId', row['fp']) in result.get('ids', ())]
 
 
 def probe_trace(record, cfg, rules, wiki, known_owned):

@@ -7,7 +7,7 @@ from .optimizer import number
 def validate(value):
     cfg={**defaults(),**value}
     quota(cfg['reserve'])
-    if cfg['inventorySource'] not in ('ocr', 'network'):
+    if cfg['inventorySource'] not in ('ocr', 'network', 'cn_export'):
         raise ValueError('请选择库存读取方式')
     for key in ('dailyLimit', 'weeklyLimit'):
         if type(cfg[key]) is not int or not 1 <= cfg[key] <= 99:

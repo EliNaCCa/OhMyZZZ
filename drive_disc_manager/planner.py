@@ -83,9 +83,19 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     fields = rules.get('fields',{})
     catalog = roster_catalog(z, fields, cfg, wiki or {}, known_owned)
     by_set, unresolved, excluded = compile_roster(catalog, fields, cfg['overrides'], reverse)
-    by_fp = {fingerprint(d):d for d in ds}
-    inputs = {fp:as_disc(d,optimizer_names,base) for fp,d in by_fp.items()
-              if counts[fp] == 1 and not d.get('trash') and d.get('markState')!='unknown' and d.get('ownerState') != 'unknown'}
+    stats_only = z.get('networkPreview') is True and z.get('source') == 'zzz-drive-exporter'
+    by_piece = {}
+    inputs = {}
+    for d in ds:
+        fp = fingerprint(d)
+        piece = d['id'] if stats_only else fp
+        by_piece[piece] = d
+        usable = counts[fp] == 1 and d.get('markState') != 'unknown' and d.get('ownerState') != 'unknown'
+        if not d.get('trash') and (stats_only or usable):
+            candidate = as_disc(d, optimizer_names, base)
+            if candidate and stats_only:
+                candidate['id'] = piece
+            inputs[piece] = candidate
     enabled = [p for p in cfg['profiles'] if p.get('enabled',True)]
     assignments, groups, issues = {}, defaultdict(list), []
     used_by = defaultdict(list)
@@ -102,7 +112,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
             binding_errors[name] = f'「{name}」的同场角色身份待核对，请更新扫描器字典与配队目标'
         # Unnamed (mutually exclusive) profiles cannot collide with a named group.
         group = ('group',p['simultaneous']) if p.get('simultaneous') else ('solo',name)
-        current = {f for f,d in by_fp.items() if owner and d.get('location') == owner}
+        current = {piece for piece, d in by_piece.items() if owner and d.get('location') == owner}
         groups[group].append((dict(p, agentKey=owner), current))
     pool = [disc for disc in inputs.values() if disc and not disc['discarded']]
     inventory_hash = digest(z)
@@ -131,7 +141,8 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     pins = set(cfg['pins'])
     for d in ds:
         fp = fingerprint(d)
-        why = list(used_by[fp])
+        piece = d['id'] if stats_only else fp
+        why = list(used_by[piece])
         if d.get('location'):
             why.append('已装备 · '+d['location'])
         values = checked_values(d, base)
@@ -150,13 +161,15 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         row = dict(fp=fp, id=d['id'], set=set_key(d), slot=str(d['slotKey']), main=d['mainStatKey'],
                    level=d['level'], location=d.get('location',''), rolls={s['key']:1+s['upgrades']-base for s in d['substats']}, reasons=why, recommendations=[], explanation=[], review=[], ruleUses=[])
         row['pinKeys'] = pin_keys(d, names, reverse, fp)
+        if stats_only:
+            row['buildId'] = piece
         if is_pinned(row, pins):
             why.append('手动保护')
         row['marked'] = d.get('trash') is True
         if 'ownerState' in d:
             row['ownerState'] = d['ownerState']
             if d['ownerState'] == 'unknown':
-                row['review'].append('穿戴者头像待复核')
+                row['review'].append('穿戴者待核对' if stats_only else '穿戴者头像待复核')
         row['observedValues'] = values
         row['scannedLock'] = d.get('lockState', 'unknown')
         row['managedSpareLock'] = managed
@@ -168,7 +181,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
             row['explanation'].append('锁定来源 · OhMyZZZ 备用名额')
         if 'observedValues' in d and not row['observedValues']:
             row['review'].append('本次扫描未核实完整的主副词条数值')
-        if enabled and not row['marked'] and d['rarity'] == 'S' and fp in inputs and inputs[fp] is None:
+        if enabled and not row['marked'] and d['rarity'] == 'S' and piece in inputs and inputs[piece] is None:
             if d['setKey'] not in optimizer_names:
                 row['review'].append('配装器缺少套装译名 · '+d['setKey'])
             elif d.get('mainStatValue') is None and d['level'] < 15 and not values:

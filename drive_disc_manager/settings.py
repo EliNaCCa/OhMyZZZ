@@ -178,7 +178,9 @@ class ManagerInterface(BaseInterface):
         page = QWidget(); scroll.setWidget(page); box = QVBoxLayout(page); tabs.addTab(scroll,'运行设置')
         bar = QHBoxLayout(); box.addLayout(bar)
         bar.addWidget(BodyLabel('读取仓库')); self.reader = ComboBox()
-        self.reader.addItem('游戏画面（OCR）', userData='ocr'); self.reader.addItem('网络读取', userData='network')
+        self.reader.addItem('游戏画面（OCR）', userData='ocr')
+        self.reader.addItem('国服 · 读取导出文件', userData='cn_export')
+        self.reader.addItem('国际服 · 网络读取', userData='network')
         self.reader.currentIndexChanged.connect(lambda _:self.invoke(lambda:self.edit_cfg(inventorySource=self.reader.currentData())))
         bar.addWidget(self.reader)
         self.reader_open = self.button(bar, '打开读取器', self.open_reader)
@@ -307,7 +309,10 @@ class ManagerInterface(BaseInterface):
     def open_reader_guide(self):
         from PySide6.QtCore import QUrl
         from PySide6.QtGui import QDesktopServices
-        QDesktopServices.openUrl(QUrl('https://github.com/EliNaCCa/OhMyZZZ/blob/drive-disc-manager/docs/network-reader.md'))
+        url = 'https://github.com/EliNaCCa/OhMyZZZ/blob/drive-disc-manager/docs/network-reader.md'
+        if self.cfg['inventorySource'] == 'cn_export':
+            url = 'https://github.com/Treageer/zzz-drive-exporter/blob/v0.2.1/README.md'
+        QDesktopServices.openUrl(QUrl(url))
 
     def open_reader(self):
         import os
@@ -408,10 +413,15 @@ class ManagerInterface(BaseInterface):
         self.cfg=config(self.root); self.rules=read(self.root/'rules.json',{}); self.report=read(preview_path(self.root,self.cfg),{})
         with QSignalBlocker(self.reader):
             self.reader.setCurrentIndex(self.reader.findData(self.cfg['inventorySource']))
-        self.reader_help.setVisible(self.cfg['inventorySource'] == 'network')
+        self.reader_help.setVisible(self.cfg['inventorySource'] in ('network', 'cn_export'))
         self.reader_open.setVisible(self.cfg['inventorySource'] == 'network')
-        self.scan_button.setText('读取仓库' if self.cfg['inventorySource'] == 'network' else '扫描仓库')
-        self.import_button.setEnabled(self.cfg['inventorySource'] == 'ocr' and self.preview_job is None)
+        source = self.cfg['inventorySource']
+        cn_export = source == 'cn_export'
+        bound = cn_export and snapshot_path(self.root, self.cfg).is_file()
+        self.scan_button.setText(('刷新导出文件' if bound else '选择国服导出文件') if cn_export
+                                 else ('读取仓库' if source == 'network' else '扫描仓库'))
+        self.import_button.setText('更换导出文件' if cn_export else '导入扫描文件')
+        self.import_button.setEnabled(source != 'network' and self.preview_job is None)
         for key, spin in self.limits.items():
             with QSignalBlocker(spin): spin.setValue(self.cfg[key])
         self.config_hash = digest(self.cfg)
@@ -468,6 +478,8 @@ class ManagerInterface(BaseInterface):
         self.filter_rules()
         counts = self.report.get('counts', {})
         totals = [f'库存 {len(self.rows)} 张']
+        if cn_export and inventory.get('lastChange') and not self.preview_stale:
+            totals.append('上次变化 · ' + inventory['lastChange'])
         totals.extend(f'{name} {counts[name]}' for name in ('保留','弃置候选','已弃置','待复核') if counts.get(name))
         self.warehouse_summary.setText('    ·    '.join(totals))
         self.warehouse_summary.setVisible(bool(self.rows))
@@ -583,10 +595,12 @@ class ManagerInterface(BaseInterface):
         from .loadout import fielded_profiles
         lineup = fielded_profiles(self.cfg, selected['name']) if selected and selected.get('enabled', True) else []
         unbound = [p['name'] for p in lineup if not p.get('agentKey') or p['agentKey'] != self.preview_bindings.get(p['name'])]
-        self.apply_button.setEnabled(bool(ready or reviewing) and not unbound and not self.equip_busy and self.preview_job is None)
+        stats_only = self.cfg['inventorySource'] == 'cn_export'
+        self.apply_button.setEnabled(bool(ready or reviewing) and not stats_only and not unbound and not self.equip_busy and self.preview_job is None)
         binding_note = '请同步角色目标 · ' + '、'.join(unbound) if unbound else ''
         hint = '查看要换的盘' if ready else '先计算配装'
-        self.apply_button.setToolTip(binding_note or ('对照上次确认和游戏重扫的配装' if reviewing else hint))
+        self.apply_button.setToolTip('导出文件没有穿戴信息，切换到游戏画面扫描后可换装' if stats_only
+                                     else binding_note or ('对照上次确认和游戏重扫的配装' if reviewing else hint))
         self.fill(self.slots,[])
         self.fill(self.panel_stats,[])
         self.panel_note.setText('暂无面板对比'); self.panel_note.show()
@@ -605,8 +619,8 @@ class ManagerInterface(BaseInterface):
             status = '方案已停用' if not profile.get('enabled',True) else result.get('error') or '点击「计算配装」查看结果。'
             self.team_score.setText('　·　'.join(filter(None, (party, status))))
             return
-        by_fp = {r['fp']:r for r in self.rows}
-        rows = [by_fp[fp] for fp in result['ids'] if fp in by_fp]
+        pieces = {r.get('buildId', r['fp']): r for r in self.rows}
+        rows = [pieces[piece] for piece in result['ids'] if piece in pieces]
         from .reserve_presets import STAT_NAMES
         self.fill(self.slots,[(r['slot'],self.set_names.get(r['set'],r['set']),STAT_NAMES.get(r['main'],r['main']),r['level'],owner_label(r),
                                '、'.join(r['reasons'])) for r in rows])
@@ -937,9 +951,14 @@ class ManagerInterface(BaseInterface):
 
     def load_inventory(self):
         account = self.root
-        path,_=QFileDialog.getOpenFileName(self,'选择属于当前账号的 ZOD 扫描','','JSON (*.json)')
+        source = self.cfg['inventorySource']
+        title = (f'选择账号 {account.name} 的国服 ZOOD 导出文件' if source == 'cn_export'
+                 else '选择属于当前账号的 ZOD 扫描')
+        path,_=QFileDialog.getOpenFileName(self,title,'','JSON (*.json)')
         if path:
             self.check_account(account)
+            if config(account)['inventorySource'] != source:
+                raise ValueError('读取方式已切换，请重新选择文件')
             self.start_preview(import_path=path)
 
     def start_probe(self):
@@ -1125,6 +1144,9 @@ class ManagerInterface(BaseInterface):
         self.check_account(self.root)
         if self.preview_job is not None:
             return
+        if self.cfg['inventorySource'] == 'cn_export' and not snapshot_path(self.root, self.cfg).is_file():
+            self.load_inventory()
+            return
         if self.equip_busy or not self.ctx.run_context.is_context_stop:
             raise ValueError('请在一条龙空闲时扫描仓库')
         if self.cfg['inventorySource'] == 'ocr':
@@ -1139,7 +1161,9 @@ class ManagerInterface(BaseInterface):
         if self.preview_job is not None:
             return
         wiki = wiki_path()
-        network = from_game and self.cfg['inventorySource'] == 'network'
+        source = self.cfg['inventorySource']
+        network = from_game and source == 'network'
+        cn_import = source == 'cn_export' and (from_game or import_path is not None)
         self.preview_job = account
         self.scanning_game = from_game
         self.preview_refresh_accounts.discard(account)
@@ -1149,15 +1173,23 @@ class ManagerInterface(BaseInterface):
         def worker():
             error = ''
             try:
-                if network:
-                    from .network_reader import capture
+                if network or cn_import:
                     from .maintenance import exclusive
+                    from .service import rule_snapshot
                     def same_account():
-                        if self.ctx.current_instance_idx != int(account.name) or config(account)['inventorySource'] != 'network':
+                        if self.ctx.current_instance_idx != int(account.name) or config(account)['inventorySource'] != source:
                             raise ValueError('账号或读取方式已切换，请重新读取')
                     with exclusive(account.parent/'_maintenance'):
-                        capture(account, same_account)
-                        preview(account, wiki, refresh=False)
+                        pinned = rule_snapshot(account, refresh=False)
+                        if pinned[0]['inventorySource'] != source:
+                            raise ValueError('读取方式已切换，请重新读取')
+                        if cn_import:
+                            from .cn_export import refresh
+                            refresh(account, same_account, path=import_path)
+                        else:
+                            from .network_reader import capture
+                            capture(account, same_account)
+                        preview(account, wiki, snapshot=pinned)
                 elif from_game:
                     from .manual_equip import run_scan_preview
                     run_scan_preview(self.ctx, int(account.name))
@@ -1356,7 +1388,10 @@ class ManagerInterface(BaseInterface):
         self.inventory_filter.setVisible(has_rows)
         if not selected:
             self.empty_title.setText('没有匹配的驱动盘' if has_rows else ('仓库里没有驱动盘' if self.report else '还没有仓库预览'))
-            self.empty_hint.setText('换个筛选条件试试' if has_rows else ('下次扫描会更新库存' if self.report else '扫描游戏仓库，或从「更多」导入扫描文件'))
+            hint = '扫描游戏仓库，或从「更多」导入扫描文件'
+            if self.cfg['inventorySource'] == 'cn_export':
+                hint = '选择国服读取器生成的 zzz-drives-zood-v1.json'
+            self.empty_hint.setText('换个筛选条件试试' if has_rows else ('下次读取会更新库存' if self.report else hint))
         self.pin_button.setEnabled(selected and not self.rows[index]['marked'])
         self.quota_button.setEnabled(selected)
         self.detail_button.setEnabled(selected or self.probe_record.get('status')=='verified')

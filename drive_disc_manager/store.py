@@ -148,10 +148,14 @@ def defaults():
 
 
 def snapshot_path(root, cfg):
+    if cfg.get('inventorySource') == 'cn_export':
+        return root / 'cn-inventory.json'
     return root / ('network-inventory.json' if cfg.get('inventorySource') == 'network' else 'inventory.json')
 
 
 def preview_path(root, cfg):
+    if cfg.get('inventorySource') == 'cn_export':
+        return root / 'cn-preview.json'
     return root / ('network-preview.json' if cfg.get('inventorySource') == 'network' else 'preview.json')
 
 
