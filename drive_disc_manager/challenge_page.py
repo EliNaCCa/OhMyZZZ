@@ -1,8 +1,8 @@
 """Encounter-specific team suggestions inside the host settings page."""
 from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel, ComboBox, PushButton
+from qfluentwidgets import BodyLabel, CheckBox, ComboBox, PushButton, ScrollArea, ToggleButton
 
-from .challenge import MODES, account_pool, encounter_shortlist, reward_lineup
+from .challenge import DAMAGE_ROLES, MODES, account_pool, agent_labels, encounter_shortlist, preferred_agents, reward_lineup
 from .disc_detail_page import fill, table
 from .store import read
 from time import time
@@ -23,11 +23,26 @@ class ChallengePage(QWidget):
         self.goal = BodyLabel()
         top.addWidget(self.goal)
         top.addStretch()
+        self.choose_preferred = ToggleButton('常用代理人')
+        top.addWidget(self.choose_preferred)
         self.read_agents = PushButton('读取角色展柜')
         top.addWidget(self.read_agents)
         self.roster = BodyLabel()
         self.roster.setWordWrap(True)
         box.addWidget(self.roster)
+        self.preferred_panel = ScrollArea()
+        self.preferred_panel.setWidgetResizable(True)
+        self.preferred_panel.setMaximumHeight(210)
+        self.preferred_panel.setFrameShape(ScrollArea.Shape.NoFrame)
+        contents = QWidget()
+        self.preferred_panel.setWidget(contents)
+        self.preferred_grid = QGridLayout(contents)
+        self.preferred_grid.setContentsMargins(0, 0, 0, 0)
+        self.preferred_panel.hide()
+        box.addWidget(self.preferred_panel)
+        self.preferred_checks = {}
+        self.save_preferred = PushButton('保存', contents)
+        self.choose_preferred.toggled.connect(self.show_preferred)
         grid = QGridLayout()
         box.addLayout(grid)
         for column, title in enumerate(('关卡', '弱点', '抗性', '环境增益适用职业')):
@@ -67,6 +82,28 @@ class ChallengePage(QWidget):
         self.status.clear()
         self.result.setRowCount(0)
 
+    def show_preferred(self, opened):
+        if opened:
+            for name, check in self.preferred_checks.items():
+                check.setChecked(name in self.preferred)
+        self.preferred_panel.setVisible(opened)
+
+    def update_preferred(self, preferences, labels):
+        self.preferred = preferred_agents(preferences, labels)
+        self.choose_preferred.setEnabled(bool(self.pool))
+        if set(self.preferred_checks) == self.pool.keys():
+            return
+        for check in self.preferred_checks.values():
+            self.preferred_grid.removeWidget(check)
+            check.deleteLater()
+        self.preferred_checks.clear()
+        self.preferred_grid.removeWidget(self.save_preferred)
+        for index, name in enumerate(sorted(self.pool)):
+            check = CheckBox(name)
+            self.preferred_grid.addWidget(check, index // 5, index % 5)
+            self.preferred_checks[name] = check
+        self.preferred_grid.addWidget(self.save_preferred, (len(self.pool) + 4) // 5, 0, 1, 2)
+
     def switch_mode(self, *_):
         if self.shown_mode is not None:
             self.conditions[self.shown_mode] = [[combo.currentText() for combo in row] for row in self.controls]
@@ -91,8 +128,12 @@ class ChallengePage(QWidget):
         switched = root != self.root
         self.root = root
         preferences = read(root/'challenge-preferences.json', {})
-        self.pool = account_pool(root, snapshot, wiki)
-        self.familiar = preferences.get('parties', [])
+        labels = agent_labels(wiki)
+        from .roster import agent_id
+        self.pool = account_pool(root, snapshot, wiki, labels=labels)
+        self.familiar = [[labels.get(agent_id(name), name) for name in party] for party in preferences.get('parties', [])]
+        self.update_preferred(preferences, labels)
+        self.choose_preferred.setChecked(False)
         def label(item):
             name, stats = item
             if 'mindscape' in stats and 'engineRank' in stats:
@@ -142,11 +183,25 @@ class ChallengePage(QWidget):
         if not any(any(s.values()) for s in stages):
             self.status.setText('选择本期敌人的弱点、抗性或环境增益，再比较分队。')
             return
-        rows, clipped = encounter_shortlist(self.pool, stages, needed, self.familiar)
+        rows, clipped = encounter_shortlist(self.pool, stages, needed, self.familiar, preferred=self.preferred)
+        def team_order(name):
+            role = self.pool[name]['role']
+            return role not in DAMAGE_ROLES, role != '击破', name
+
         self.lineup = [dict(stage=originals[r['stage']]['name'] if originals else f"第 {r['stage']+1} 路",
-                            team=list(r['team']), conditions=stages[r['stage']]) for r in rows]
+                            team=sorted(r['team'], key=team_order), conditions=stages[r['stage']]) for r in rows]
         self.save_lineup.setEnabled(bool(rows))
-        fill(self.result, [(originals[r['stage']]['name'] if originals else f"第 {r['stage']+1} 路", ' / '.join(r['team']),
-                            '、'.join(note for yes,note in [(r['weak'],'命中弱点'),(r['buff'],'能用环境增益'),(r['resisted'],'敌人有抗性')] if yes) or '补齐分队') for r in rows])
-        self.status.setText(('按关卡条件初选 · 达标成绩待核' + (' · 已达搜索上限' if clipped else '')) if rows
+        display = []
+        for lane, row in zip(self.lineup, rows):
+            conditions = lane['conditions']
+            notes = []
+            if row['weak']:
+                notes.append(conditions['weak'] + '弱点')
+            if row['buff']:
+                notes.append(conditions['buffRole'] + '增益')
+            if row['resisted']:
+                notes.append(conditions['resist'] + '抗性')
+            display.append((lane['stage'], ' / '.join(lane['team']), '、'.join(notes) or '补齐分队'))
+        fill(self.result, display)
+        self.status.setText(('按本期关卡条件推荐' + (' · 已达搜索上限' if clipped else '')) if rows
                             else f'需要至少 {needed} 路关卡条件和 {3*needed} 位可分队的代理人。')

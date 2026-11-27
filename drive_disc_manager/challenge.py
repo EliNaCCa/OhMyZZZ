@@ -1,5 +1,6 @@
 """Compare this account's teams across the stages of a single rotation."""
 from itertools import combinations
+from typing import NamedTuple
 
 from .optimizer import number
 
@@ -72,13 +73,53 @@ def account_pool(root, snapshot, wiki, *, labels=None):
     return pool
 
 
-def encounter_shortlist(pool, stages, needed, familiar=(), budget=25000):
+def preferred_agents(preferences, labels):
+    from .roster import agent_id
+    names = preferences.get('preferred', preferences.get('agents', {}))
+    return {labels.get(agent_id(name), name) for name in names}
+
+
+class Lane(NamedTuple):
+    fit: int
+    surplus: int
+    balance: int
+    invested: int
+    levels: int
+    preferred: int
+    familiar: int
+    team: tuple
+    mask: int
+    weak: bool
+    buff: bool
+    resisted: bool
+
+    def sort_key(self):
+        return (-self.fit, self.surplus, -self.balance, -self.invested, -self.levels,
+                -self.preferred, -self.familiar, self.team)
+
+
+def relative_levels(pool):
+    # Only compare levels inside a group of known, like-for-like alternatives.
+    peers = {}
+    for name, agent in pool.items():
+        peers.setdefault((agent['role'], agent['element']), {})[name] = agent.get('level')
+    result = dict.fromkeys(pool, 0)
+    for group in peers.values():
+        if all(type(level) is int and 1 <= level <= 60 for level in group.values()):
+            highest = max(group.values())
+            result.update({name:level-highest for name, level in group.items()})
+    return result
+
+
+def encounter_shortlist(pool, stages, needed, familiar=(), budget=25000, *, preferred=()):
     """Rank by explicit stage conditions until a score or clear time is available."""
     if not 1 <= needed <= len(stages) <= 3:
         raise ValueError('请核对本期关卡数量')
     # A party may use more than one damage dealer. A main matching the enemy's
     # weakness and a character able to use the selected buff are separate facts.
     familiar = [frozenset(team) for team in familiar]
+    preferred = set(preferred)
+    levels = relative_levels(pool)
     parties = []
     bits = {name:1 << i for i, name in enumerate(sorted(pool))}
     for team in team_candidates(pool):
@@ -87,11 +128,12 @@ def encounter_shortlist(pool, stages, needed, familiar=(), budget=25000):
             roles = {pool[a]['role'] for a in team}
             investment = sum(pool[a].get('mindscape') == 6 and pool[a].get('engineRank') == 5 for a in team)
             links = max((len(ref.intersection(team)) for ref in familiar), default=0)
-            parties.append((team, sum(bits[a] for a in team), elements, roles, investment, max(0,links-1)))
+            parties.append((team, sum(bits[a] for a in team), elements, roles, investment,
+                            sum(levels[a] for a in team), len(preferred.intersection(team)), max(0,links-1)))
     options = []
     for stage in stages:
         rows = []
-        for team, mask, elements, roles, investment, links in parties:
+        for team, mask, elements, roles, investment, training, used_often, links in parties:
             if not stage.get('weak') and not stage.get('resist') and not stage.get('buffRole'):
                 continue
             weak = bool(stage.get('weak')) and stage['weak'] in elements
@@ -102,8 +144,9 @@ def encounter_shortlist(pool, stages, needed, familiar=(), budget=25000):
             # Triple carries are still available if the player's roster requires it.
             surplus = sum(pool[a]['role'] in DAMAGE_ROLES for a in team) - 1
             balance = int('击破' in roles) + int('支援' in roles)
-            rows.append((quality, -surplus, team, mask, weak, buff, resisted, balance, investment, links))
-        options.append(sorted(rows, key=lambda row:(-row[0],-row[1],-row[7],-row[8],-row[9],row[2])))
+            rows.append(Lane(quality, surplus, balance, investment, training, used_often, links,
+                             team, mask, weak, buff, resisted))
+        options.append(sorted(rows, key=Lane.sort_key))
     best = None
     selected = []
     clipped = False
@@ -113,8 +156,9 @@ def encounter_shortlist(pool, stages, needed, familiar=(), budget=25000):
         spent = 0
         tops = [options[i][0] for i in indexes]
         def rank(rows):
-            return (tuple(sorted(row[0] for row in rows)), sum(row[1] for row in rows),
-                    sum(row[7] for row in rows), tuple(sorted(row[8] for row in rows)), sum(row[9] for row in rows))
+            return (tuple(sorted(row.fit for row in rows)), -sum(row.surplus for row in rows),
+                    sum(row.balance for row in rows), tuple(sorted(row.invested for row in rows)),
+                    sum(row.levels for row in rows), sum(row.preferred for row in rows), sum(row.familiar for row in rows))
         def visit(rows, mask):
             nonlocal best, selected, spent, clipped
             depth = len(rows)
@@ -133,14 +177,14 @@ def encounter_shortlist(pool, stages, needed, familiar=(), budget=25000):
                 branch = [*rows, row]
                 if best is not None and rank(branch + tops[depth+1:]) <= best:
                     break
-                if mask & row[3]:
+                if mask & row.mask:
                     continue
-                visit(branch, mask | row[3])
+                visit(branch, mask | row.mask)
                 if depth + 1 == needed or rank(rows + tops[depth:]) == best:
                     return
         visit([], 0)
         budget -= spent
-    return [dict(stage=i, team=row[2], weak=row[4], buff=row[5], resisted=row[6]) for i,row in selected], clipped
+    return [dict(stage=i, team=row.team, weak=row.weak, buff=row.buff, resisted=row.resisted) for i,row in selected], clipped
 
 
 def reward_lineup(rotation, owned):

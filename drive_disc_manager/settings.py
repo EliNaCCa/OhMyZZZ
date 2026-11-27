@@ -266,6 +266,7 @@ class ManagerInterface(BaseInterface):
         self.optimizer_page.back.connect(lambda:tabs.open('我的配队'))
         from .challenge_page import ChallengePage
         self.challenge = ChallengePage()
+        self.challenge.save_preferred.clicked.connect(lambda:self.invoke(self.save_challenge_preferences))
         self.challenge.save_lineup.clicked.connect(lambda:self.invoke(self.save_challenge_lineup))
         tabs.addTab(self.challenge, '关卡分队')
         self.showcase_jobs = set()
@@ -311,6 +312,22 @@ class ManagerInterface(BaseInterface):
             self.finish_edit(token, dict(cfg, profiles=profiles))
         self.navigation.open('我的配队')
         self.refresh_teams(first)
+
+    def save_challenge_preferences(self):
+        from .challenge import agent_labels, preferred_agents
+        from .maintenance import exclusive
+        page = self.challenge
+        self.check_account(page.root)
+        path = page.root / 'challenge-preferences.json'
+        with exclusive(page.root.parent / '_maintenance'):
+            prefs = read(path, {})
+            if preferred_agents(prefs, agent_labels(read(wiki_path(), {}))) != page.preferred:
+                self.show_challenge()
+                raise ValueError('常用代理人已更新，请重新选择')
+            names = {name for name, check in page.preferred_checks.items() if check.isChecked()}
+            self.check_account(page.root)
+            save(path, dict(prefs, preferred=sorted(names | (page.preferred - page.pool.keys()))))
+        self.show_challenge()
 
     def read_showcase_agents(self):
         root = self.root
