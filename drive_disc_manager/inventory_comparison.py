@@ -71,7 +71,61 @@ def verify_cn_inventory(exported, game, readings, names):
     return snapshot
 
 
-def execution_plan(planned, inspected, snapshot, *, fielded=()):
+def fill_spare_gaps(planned, rows, cfg, names):
+    """An equipped or already discarded pick cannot fill an extra bag slot."""
+    from .reserve_policy import SELECTORS, apply_reserves, normalized_rule
+
+    def group(row):
+        return tuple(row[key] for key in SELECTORS)
+
+    def spare_reason(reason):
+        return reason.startswith('备用 · ') or reason == '插件备用锁'
+
+    affected = set()
+    for wanted in planned['discs']:
+        row = rows[wanted['exportUid']]
+        if any(spare_reason(reason) for reason in wanted['reasons']) and (
+                row['marked'] or row['review'] or any(not spare_reason(reason) for reason in row['reasons'])):
+            affected.add(group(row))
+    if not affected:
+        return planned['reserveCoverage']
+
+    candidates = []
+    for wanted in planned['discs']:
+        row = rows[wanted['exportUid']]
+        if group(row) in affected:
+            # Rank with the export's rolls and character preferences. Game state
+            # may add protection or require review, but cannot authorize a discard.
+            reasons = [reason for reason in row['reasons'] if not spare_reason(reason)]
+            candidates.append(dict(wanted, reasons=reasons, review=row['review'] or wanted['review'],
+                                   marked=row['marked'], managedSpareLock=row['managedSpareLock'], explanation=[]))
+    reverse = equipment_keys(names)
+    limits = [normalized_rule(rule, reverse) for rule in cfg['reserve_rules']]
+    coverage = apply_reserves(candidates, dict(cfg, reserve_rules=limits))
+    for candidate in candidates:
+        row = rows[candidate['exportUid']]
+        if any(not spare_reason(reason) for reason in row['reasons']):
+            row['reasons'] = [reason for reason in row['reasons'] if not spare_reason(reason)]
+        extra = [r for r in candidate['reasons'] if spare_reason(r) and r not in row['reasons']]
+        if extra:
+            row['reasons'].extend(extra)
+            row['decision'] = '保留'
+            row['explanation'] = [r for r in row['explanation'] if r != '超出同类备用名额']
+    by_group = {group(c):c for c in coverage}
+    result = []
+    for previous in planned['reserveCoverage']:
+        key = group(previous)
+        if key not in affected:
+            result.append(previous)
+        elif key in by_group:
+            result.append(by_group[key])
+        else:  # All discs in this group were already marked in the game.
+            result.append(dict(previous, eligible=0, kept=0, fixedExtra=0, shared=0,
+                               purposes=[dict(p, covered=0) for p in previous['purposes']]))
+    return result
+
+
+def execution_plan(planned, inspected, snapshot, *, cfg, names, fielded=()):
     """Translate the UID plan for the game UI. Game observations can add protection."""
     if (not planned.get('networkPreview') or planned['inventory'] != snapshot.get('exportInventory')
             or inspected['inventory'] != digest(snapshot) or inspected.get('networkPreview')
@@ -109,8 +163,9 @@ def execution_plan(planned, inspected, snapshot, *, fielded=()):
                                    or r['review'] for r in pieces):
             raise ValueError(f'「{name}」的方案用盘还缺穿戴或实物核对')
         assignments[name] = dict(result, ids=[r['fp'] for r in pieces])
+    coverage = fill_spare_gaps(planned, rows, cfg, names)
     inspected.update(assignments=assignments, traceTeams=planned['traceTeams'], previewBindings=planned['previewBindings'],
-                     reserveCoverage=planned['reserveCoverage'], counts=dict(Counter(r['decision'] for r in rows.values())),
+                     reserveCoverage=coverage, counts=dict(Counter(r['decision'] for r in rows.values())),
                      issues=list(dict.fromkeys([*planned['issues'], *inspected['issues']])))
     return inspected
 

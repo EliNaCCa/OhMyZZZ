@@ -75,8 +75,9 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
             if key and key != raw:
                 reader_owners[raw] = key
         ds = [dict(d, location=reader_owners[d['location']]) if d.get('location') in reader_owners else d for d in ds]
-    from .marks import marker_for, owns_spare, scanned_identities
+    from .marks import marker_for, owns_spare, receipts_by_uid, scanned_identities
     history = history or {}
+    uid_receipts = receipts_by_uid(history) if stats_only else {}
     keys, counts = scanned_identities(ds, names)
     reverse = equipment_keys(names)
     def set_key(disc):
@@ -195,9 +196,16 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
             label = owner_labels.get(d['location'], d['location'])
             why.append(('角色展柜 · ' if d.get('ownerSource') == 'showcase' else '已装备 · ') + label)
         values = checked_values(d, base)
-        entry = marker_for(history, fp, d['id'] if stats_only else d.get('exportUid'))
-        managed = (counts[fp] == 1 and owns_spare(entry, values) and d.get('lockState') == 'locked'
-                   and d.get('lock') is True and d.get('markState') == 'unmarked' and d.get('trash') is False)
+        uid = d['id'] if stats_only else d.get('exportUid')
+        entry = marker_for(history, fp, uid)
+        receipt = uid_receipts.get(uid, {}) if stats_only else entry
+        if stats_only and receipt:
+            entry = receipt  # Preserve the player's later manual unlock or mark reversal across translations.
+        has_spare_receipt = (counts[fp] == 1 and d.get('lockState') == 'locked' and d.get('lock') is True
+                             and owns_spare(receipt, values, uid=uid))
+        # The CN export can establish a lock's origin for ranking. Only game
+        # controls can authorize its release, through a separate inspection plan.
+        managed = has_spare_receipt and (stats_only or (d.get('markState') == 'unmarked' and d.get('trash') is False))
         if d.get('lock') is True and not managed:
             why.append('游戏内已锁定')
         manual_unlock = entry.get('state') == 'manual-unlock'

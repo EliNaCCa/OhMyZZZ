@@ -158,7 +158,7 @@ class Marker:
         elif mode == 'release':
             if (self.cfg.get('rotateSpareLocks') is not True or not row.get('managedSpareLock') or
                     row['decision'] != '弃置候选' or row['review'] or row['reasons'] or
-                    not owns_spare(entry, row['observedValues']) or equipped or action == 'manual-keep'):
+                    not owns_spare(entry, row['observedValues'], uid=row.get('exportUid')) or equipped or action == 'manual-keep'):
                 raise ValueError('换代条件已变化，请重新扫描')
             if lock != 'locked':
                 self.remember(fp, 'manual-unlock')

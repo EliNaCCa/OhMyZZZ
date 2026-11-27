@@ -56,6 +56,7 @@ def smoke(home, sample, temp):
     for record, source in zip(snapshot['discs'], original):
         assert record['observedValues'] == source['observedValues']
         assert record['ownerState'] == record['markState'] == 'unknown'
+    spare_rotation(temp/'reserve'/'1', exported, original)
     try:
         inventory(snapshot)
     except ValueError:
@@ -238,6 +239,77 @@ def smoke(home, sample, temp):
     assert widget.rows[0]['ownerSource'] == 'showcase' and widget.rows[0]['location'] == '1141'
     assert 'lastScanOwner' not in widget.rows[0] and '对上 1 张' in widget.warehouse_summary.text()
     widget.close()
+
+
+def spare_rotation(root, exported, original):
+    """Use three archived stat lines and simulated UID-bound locks in a temporary account."""
+    from drive_disc_manager.cn_export import normalize
+    from drive_disc_manager.inventory_comparison import verify_cn_inventory
+    from drive_disc_manager.live import Marker
+    from drive_disc_manager.marks import reconcile_scan
+    from drive_disc_manager.service import preview
+    from drive_disc_manager.store import defaults, equipment_names, fingerprint, save
+
+    cfg = dict(defaults(), inventorySource='cn_export', trimRecommended=True, reserve=1, rotateSpareLocks=True,
+               protect15=False, protectNaturalCrit=False, includeOwned=False)
+    save(root/'config.json', cfg)
+    save(root/'rules.json', dict(version='fixture', fields={'matrix/TheSkyAblaze/4':['crit_']}))
+    raws = [dict(d, lock=i != 1) for i, d in enumerate(exported['discs'][:3])]
+    current = normalize(dict(exported, discs=raws))
+    save(root/'cn-inventory.json', current)
+    manual, fresh, old = [r['id'] for r in raws]
+    observed = [dict(d, location='', ownerState='bag', observedGrade='S', lock=raw['lock'],
+                     lockState='locked' if raw['lock'] else 'unlocked', markState='unmarked', trash=False)
+                for d, raw in zip(original, raws)]
+    audit = dict(source='Zenless Optimizer', audit=dict(game_total=3, exported=3))
+    names = equipment_names({})
+    fp = fingerprint(observed[2])
+    assert fp != fingerprint(current['discs'][2])  # Same disc, CN title in the game and EN title in ZOOD.
+    receipt = dict(uid=old, state='locked', spareLock=dict(origin='verified-spare-lock-v1',
+                                                        values=observed[2]['observedValues']))
+
+    def select(report):
+        return {r['exportUid']:r for r in report['discs']}
+
+    save(root/'markers.json', {fp:receipt})
+    planned = preview(root, refresh=False)
+    rows = select(planned)
+    assert rows[old].get('checkForDiscard') and rows[old]['decision'] == '待复核'
+    assert rows[fresh]['reasons'] == ['备用 · 通用'] and rows[manual]['reasons'] == ['游戏内已锁定']
+    def inspect(readings):
+        game = verify_cn_inventory(current, audit, readings, names)
+        save(root/'inventory.json', game)
+        reconcile_scan(root, game, names)
+        return select(preview(root, refresh=False, verified_game=True, cn_plan=planned))
+    live = inspect(observed)
+    assert live[old]['managedSpareLock'] and live[old]['decision'] == '弃置候选'
+    assert live[fresh]['decision'] == live[manual]['decision'] == '保留'
+    for unavailable in (dict(ownerState='worn', location='Anton'), dict(markState='marked', trash=True)):
+        actual = inspect([observed[0], dict(observed[1], **unavailable), observed[2]])
+        assert actual[old]['decision'] == '保留' and '备用 · 通用' in actual[old]['reasons'], (
+            unavailable, [(r['reasons'], r['review'], r['decision']) for r in actual.values()])
+        assert actual[fresh]['decision'] == ('已弃置' if unavailable.get('trash') else '保留')
+        assert '备用 · 通用' not in actual[fresh]['reasons']
+        save(root/'markers.json', {fp:receipt})
+    worn = inspect([*observed[:2], dict(observed[2], ownerState='worn', location='Anton')])
+    assert worn[old]['decision'] == '保留' and worn[old]['location'] == 'Anton'
+    unlocked = inspect([*observed[:2], dict(observed[2], lock=False, lockState='unlocked')])
+    assert unlocked[old]['manualUnlock'] and select(preview(root, refresh=False))[old]['manualUnlock']
+    for invalid in ({fp:dict(receipt, uid='9')}, {fp:dict(receipt, uid=None)},
+                    {fp:dict(receipt, spareLock=dict(receipt['spareLock'], values=observed[0]['observedValues']))},
+                    {fp:receipt, 'older':receipt}):
+        save(root/'markers.json', invalid)
+        assert select(preview(root, refresh=False))[old]['reasons'] == ['游戏内已锁定']
+    save(root/'markers.json', {fp:receipt})
+    save(root/'config.json', dict(cfg, rotateSpareLocks=False))
+    fixed = select(preview(root, refresh=False))
+    assert fixed[old]['decision'] == '保留' and fixed[fresh].get('checkForDiscard')
+    try:
+        Marker(None, None, planned)
+    except ValueError as exc:
+        assert '游戏画面' in str(exc)
+    else:
+        raise AssertionError('network preview entered the game marker')
 
 
 if __name__ == '__main__':

@@ -5,10 +5,21 @@ def marker_for(history, fp, uid):
     return {} if uid and entry.get('uid') and uid != entry['uid'] else entry
 
 
-def owns_spare(entry, values):
+def owns_spare(entry, values, *, uid=None):
     receipt = entry.get('spareLock') if isinstance(entry, dict) else None
     return bool(values and isinstance(receipt, dict) and entry.get('state') == 'locked' and
+                (uid is None or entry.get('uid') == uid) and
                 receipt.get('values') == values and receipt.get('origin') == 'verified-spare-lock-v1')
+
+
+def receipts_by_uid(history):
+    """One receipt per physical disc, even if the scanner uses a translated set name."""
+    result = {}
+    for entry in history.values():
+        uid = entry.get('uid')
+        if uid:
+            result[uid] = {} if uid in result else entry
+    return result
 
 
 def scanned_identities(discs, names):

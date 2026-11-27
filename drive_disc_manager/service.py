@@ -67,7 +67,7 @@ def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=F
         from .inventory_comparison import execution_plan
         from .loadout import fielded_profiles
         fielded = [p['name'] for p in fielded_profiles(cfg, field)] if field else []
-        report = execution_plan(cn_plan, report, z, fielded=fielded)
+        report = execution_plan(cn_plan, report, z, cfg=cfg, names=names, fielded=fielded)
     if game_stamp is not None:
         report['gameStamp'] = game_stamp
         report['scanFile'] = game_file.name
