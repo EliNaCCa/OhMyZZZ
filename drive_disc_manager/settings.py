@@ -757,6 +757,8 @@ class ManagerInterface(BaseInterface):
         def row(index, p):
             result = self.report.get('assignments',{}).get(p['name'],{})
             reason = result.get('error') or result.get('reason') or '等待计算'
+            if not result and self.report.get('triageOnly') and self.report.get('keptBuildDiscs', {}).get(p['name']):
+                reason = '上次配装'
             if not p.get('enabled',True):
                 reason = '待选配装目标' if p.get('needsTarget') else '已停用'
                 result = {}
@@ -809,6 +811,7 @@ class ManagerInterface(BaseInterface):
         self.score_detail.clear()
         self.teams.setVisible(bool(profiles))
         self.build_tabs.setVisible(bool(selected))
+        self.build_tabs.selector.show()
         self.equip_status.setVisible(bool(profiles) and bool(self.equip_status.text()))
         self.team_score.show()
         self.team_score.setText('在「配装器」里保存角色目标，再点「导入方案」。')
@@ -816,6 +819,22 @@ class ManagerInterface(BaseInterface):
         profile = self.cfg['profiles'][index]
         result = self.report.get('assignments',{}).get(profile['name'],{})
         party = self.squad_text(profile)
+        def show_slots(rows):
+            from .reserve_presets import STAT_NAMES
+            self.fill(self.slots,[(r['slot'],self.set_names.get(r['set'],r['set']),STAT_NAMES.get(r['main'],r['main']),r['level'],
+                                   preview_owner(r), '、'.join(r['reasons'])) for r in rows])
+            self.slots.resizeColumnsToContents()
+
+        saved = self.report.get('keptBuildDiscs', {}).get(profile['name'], ())
+        if saved and not result and self.report.get('triageOnly') and profile.get('enabled', True) and not profile.get('needsTarget'):
+            keys = set(saved)
+            rows = [r for r in self.rows if '已保存配装用盘' in r['reasons'] and is_pinned(r, keys)]
+            show_slots(sorted(rows, key=lambda r: int(r['slot'])))
+            self.build_tabs.setCurrentIndex(0)
+            self.build_tabs.selector.hide()
+            status = f'上次配装 · 仓库记录里有 {len(rows)} 张方案用盘'
+            self.team_score.setText('　·　'.join(filter(None, (party, status))))
+            return
         if not profile.get('enabled',True) or not result.get('ids'):
             self.build_tabs.hide()
             status = '方案已停用' if not profile.get('enabled',True) else result.get('error') or '点击「计算配装」查看结果。'
@@ -825,11 +844,7 @@ class ManagerInterface(BaseInterface):
             return
         pieces = {r.get('buildId', r['fp']): r for r in self.rows}
         rows = [pieces[piece] for piece in result['ids'] if piece in pieces]
-        from .reserve_presets import STAT_NAMES
-        self.fill(self.slots,[(r['slot'],self.set_names.get(r['set'],r['set']),STAT_NAMES.get(r['main'],r['main']),r['level'],
-                               preview_owner(r),
-                               '、'.join(r['reasons'])) for r in rows])
-        self.slots.resizeColumnsToContents()
+        show_slots(rows)
         details = [profile['name']]
         gain_text = ''
         if binding_note:

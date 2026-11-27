@@ -40,13 +40,16 @@ def reassign_discards(root, wiki, pinned, planned, observed):
     return result
 
 
-def saved_build_discs(report, enabled):
-    builds = {name:keys for name, keys in report.get('keptBuildDiscs', {}).items() if name in enabled}
+def saved_build_discs(report, names):
+    saved = report.get('savedBuildDiscs', report.get('keptBuildDiscs', {}))
+    builds = {name:keys for name, keys in saved.items() if name in names}
     for name, result in report.get('assignments', {}).items():
-        if name in enabled and result.get('ids'):
+        if name in names and result.get('ids') and not result.get('error'):
             ids = set(result['ids'])
-            builds[name] = [r['pinKeys'][0] for r in report['discs']
-                            if r.get('buildId', r['fp']) in ids and r.get('pinKeys')]
+            keys = {r.get('buildId', r['fp']):r['pinKeys'][0] for r in report['discs']
+                    if r.get('buildId', r['fp']) in ids and r.get('pinKeys')}
+            if keys.keys() == ids:
+                builds[name] = [keys[i] for i in result['ids']]
     return builds
 
 
@@ -90,13 +93,14 @@ def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=F
             return candidate_pool(endpoint, profile, discs, current)
         # The UID plan applies each group's retain-all / quota setting. This pass adds game state.
         previous = read(preview_path(root, inputs), {}) if reuse_allocations or cfg['profiles'] else {}
-        kept_builds = {}
+        profiles = {p['name']:p for p in cfg['profiles']}
+        saved_builds = saved_build_discs(previous, profiles)
+        for source in (network_plan, cn_plan):
+            if source is not None:
+                saved_builds.update(saved_build_discs(source, profiles))
+        enabled = {name for name, profile in profiles.items() if profile.get('enabled', True)}
+        kept_builds = {name:keys for name, keys in saved_builds.items() if name in enabled}
         inspection_cfg = cfg
-        if cfg['profiles']:
-            enabled = {p['name'] for p in cfg['profiles'] if p.get('enabled', True)}
-            kept_builds = saved_build_discs(previous, enabled)
-            if network_plan is not None:
-                kept_builds.update(saved_build_discs(network_plan, enabled))
         if cn_plan is not None:
             inspection_cfg = dict(cfg, profiles=[], reserve=0, reserve_rules=[], trimRecommended=True)
         elif triage_only:
@@ -121,6 +125,12 @@ def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=F
         report['gameComparison'] = {key: value for key, value in comparison.items() if key != 'lastWorn'}
     if triage_only:
         report['triageOnly'] = True
+    # Keep the last computed gear while a profile is disabled. Only enabled
+    # profiles take part in today's locks, spares and per-disc team details.
+    saved_builds.update(saved_build_discs(report, profiles))
+    if saved_builds:
+        report['savedBuildDiscs'] = saved_builds
+    kept_builds = {name:keys for name, keys in saved_builds.items() if name in enabled}
     if kept_builds:
         report['keptBuildDiscs'] = kept_builds
         for profile in cfg['profiles']:

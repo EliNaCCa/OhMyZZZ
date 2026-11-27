@@ -256,6 +256,8 @@ def execution_plan(planned, inspected, snapshot, *, cfg, names, fielded=()):
     inspected.update(assignments=assignments, traceTeams=planned['traceTeams'], previewBindings=planned['previewBindings'],
                      reserveCoverage=kept_coverage(coverage, rows.values()), counts=dict(Counter(r['decision'] for r in rows.values())),
                      issues=list(dict.fromkeys([*planned['issues'], *inspected['issues']])))
+    if planned.get('keptBuildDiscs'):
+        inspected['keptBuildDiscs'] = planned['keptBuildDiscs']
     return inspected
 
 
