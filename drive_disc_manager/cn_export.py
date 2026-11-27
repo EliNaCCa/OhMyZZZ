@@ -13,6 +13,7 @@ from .subscriptions import SLOT_MAIN
 SOURCE = 'zzz-drive-exporter'
 FILE = 'cn-inventory.json'
 EXPORT_NAME = 'zzz-drives-zood-v1.json'
+FOLDER_FILE = 'cn-export-folder.json'
 LEVEL_CAP = {'S': 15, 'A': 12, 'B': 9}
 STAT_KEYS = {'impact_': 'impact', 'enerRegen_': 'energyRegen_'}
 SET_KEYS = {'BranchBladeSong': 'Branch&BladeSong', 'PhaethonsMelody': "Phaethon'sMelody",
@@ -100,29 +101,71 @@ def compare(previous, current):
     return '，'.join(changed) or '驱动盘没有变化'
 
 
+def source_path(root, previous):
+    last = previous.get('exportFile', '')
+    folder = read(root / FOLDER_FILE, {})
+    # A successful file import supersedes an older folder selection in the same commit as the snapshot.
+    if folder and folder['previousFile'] == last:
+        return Path(folder['file'])
+    return Path(last) if last else root / 'exports' / EXPORT_NAME
+
+
+def check_source_owner(root, path):
+    for other in root.parent.iterdir():
+        if not other.name.isdecimal() or other == root:
+            continue
+        snap = read(other / FILE, {})
+        claimed = [source_path(other, snap)]
+        if snap.get('exportFile'):
+            claimed.append(Path(snap['exportFile']))
+        for existing in claimed:
+            if existing.resolve() == path or (existing.is_file() and path.is_file() and existing.samefile(path)):
+                raise ValueError('这个导出文件已用于另一个一条龙账号')
+
+
+def select_folder(root, directory, check_account):
+    """Choose the reader folder, or its exports subfolder, even before the first export."""
+    folder = Path(directory).resolve()
+    if not folder.is_dir():
+        raise ValueError('请选择读取器所在的文件夹或它的 exports 文件夹')
+    if folder.name.casefold() != 'exports':
+        folder = folder / 'exports'
+    path = (folder / EXPORT_NAME).resolve()
+    check_source_owner(root, path)
+    previous = read(root / FILE, {})
+    check_account()
+    save(root / FOLDER_FILE, dict(file=str(path), previousFile=previous.get('exportFile', '')))
+    return path
+
+
+def file_stamp(stat):
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
+
+
+def same_export(path, stat, previous):
+    stamp = previous.get('exportStamp')
+    return (str(path) == previous.get('exportFile') and stat.st_mtime_ns == previous.get('exportWrittenNs')
+            and (stamp is None or tuple(stamp) == file_stamp(stat)))
+
+
 def refresh(root, check_account, path=None, *, showcase_uid='', wiki=None):
     """Under the maintenance lock, refresh only the file selected for this account."""
     previous = read(root / FILE, {})
     started = time.time()
     bound = previous.get('exportFile', '')
     manual = path is not None
-    path = Path(path if manual else bound or root/'exports'/EXPORT_NAME).resolve()
+    path = (Path(path) if manual else source_path(root, previous)).resolve()
     if not path.is_file():
-        if not manual and not bound:
-            raise ValueError('尚未收到本账号的国服仓库导出')
-        raise ValueError('找不到导出文件，请在仓库重新选择')
+        raise ValueError(f'尚未收到国服仓库文件。等待读取器导出到 {path}')
     if path.suffix.lower() != '.json':
         raise ValueError('请选择 ZOOD 的 JSON 文件')
-    if manual or not bound:
-        for other in root.parent.iterdir():
-            if other.name.isdecimal() and other != root:
-                other_file = read(other / FILE, {}).get('exportFile')
-                if other_file and Path(other_file) == path:
-                    raise ValueError('这个导出文件已用于另一个一条龙账号')
+    if manual or not bound or path != Path(bound):
+        check_source_owner(root, path)
     with path.open('rb') as stream:
-        written_ns = os.fstat(stream.fileno()).st_mtime_ns
+        original = os.fstat(stream.fileno())
+        written_ns = original.st_mtime_ns
         payload = stream.read(16_000_001)
-        if os.fstat(stream.fileno()).st_mtime_ns != written_ns:
+        if file_stamp(os.fstat(stream.fileno())) != file_stamp(original):
             raise ValueError('读取器正在写入库存，请稍后刷新')
     if len(payload) > 16_000_000:
         raise ValueError('导出文件过大，请选择 ZOOD 仓库文件')
@@ -134,8 +177,11 @@ def refresh(root, check_account, path=None, *, showcase_uid='', wiki=None):
         from .showcase import read_showcase
         snapshot['showcase'] = read_showcase(showcase_uid, after, wiki or {}, previous.get('showcase', {}))
     check_account()
-    if (bound and path == Path(bound) and before == after and previous.get('exportWrittenNs') == written_ns
+    if file_stamp(path.stat()) != file_stamp(original):
+        raise ValueError('读取器正在更新库存，请稍后刷新')
+    if (before == after and same_export(path, original, previous)
             and previous.get('showcase') == snapshot.get('showcase')):
+        (root / FOLDER_FILE).unlink(missing_ok=True)
         audit_export(root, previous, started)
         return '驱动盘没有变化'
     message = compare(before, after)
@@ -146,8 +192,9 @@ def refresh(root, check_account, path=None, *, showcase_uid='', wiki=None):
         if moved:
             change = f'展柜换装 {moved} 张'
             message = change if message == '驱动盘没有变化' else message + '，' + change
-    snapshot.update(exportFile=str(path), exportWrittenNs=written_ns, lastChange=message)
+    snapshot.update(exportFile=str(path), exportWrittenNs=written_ns, exportStamp=file_stamp(original), lastChange=message)
     save(root / FILE, snapshot)
+    (root / FOLDER_FILE).unlink(missing_ok=True)
     audit_export(root, snapshot, started)
     return message
 

@@ -189,6 +189,7 @@ class ManagerInterface(BaseInterface):
         self.reader.currentIndexChanged.connect(lambda _:self.invoke(lambda:self.edit_cfg(inventorySource=self.reader.currentData())))
         bar.addWidget(self.reader)
         self.reader_open = self.button(bar, '打开读取器', self.open_reader)
+        self.export_folder = self.button(bar, '选择导出目录', self.choose_export_folder)
         self.showcase_button = self.button(bar, '绑定角色展柜', self.edit_showcase)
         self.reader_help = self.button(bar, '读取器说明', self.open_reader_guide)
         bar.addStretch()
@@ -366,6 +367,7 @@ class ManagerInterface(BaseInterface):
         self.maintenance_dir = root.parent / '_maintenance'
         self.show_maintenance()
         self.reload()
+        self.refresh_new_export()
         if self.preview_job is None and root in self.preview_refresh_accounts:
             self.preview_refresh_accounts.discard(root)
             if self.preview_stale:
@@ -402,6 +404,37 @@ class ManagerInterface(BaseInterface):
         if self.cfg['inventorySource'] == 'cn_export':
             url = 'https://github.com/Treageer/zzz-drive-exporter/blob/v0.2.1/README.md'
         QDesktopServices.openUrl(QUrl(url))
+
+    def choose_export_folder(self):
+        from .cn_export import select_folder
+        from .maintenance import exclusive
+        account = self.root
+        folder = QFileDialog.getExistingDirectory(self, f'为账号 {account.name} 选择读取器目录或 exports 文件夹',
+                                                  str(self.cn_file.parent) if self.cn_file.parent.is_dir() else '')
+        if not folder:
+            return
+
+        def same_account():
+            self.check_account(account)
+            if config(account)['inventorySource'] != 'cn_export':
+                raise ValueError('读取方式已切换，请重新选择目录')
+
+        with exclusive(account.parent / '_maintenance'):
+            select_folder(account, folder, same_account)
+        self.reload()
+        self.refresh_new_export()
+
+    def refresh_new_export(self):
+        if (self.cfg['inventorySource'] != 'cn_export' or self.preview_job is not None or self.equip_busy
+                or not self.ctx.run_context.is_context_stop):
+            return
+        from .cn_export import same_export
+        try:
+            stamp = self.cn_file.stat()
+        except OSError:
+            return  # The first export may not exist yet. Manual refresh reports the actual path.
+        if not same_export(self.cn_file, stamp, self.cn_last_export):
+            self.start_preview(from_game=True)
 
     def edit_showcase(self, *, from_roster=False):
         from .showcase import valid_uid
@@ -524,6 +557,8 @@ class ManagerInterface(BaseInterface):
         self.reader_open.setVisible(self.cfg['inventorySource'] == 'network')
         source = self.cfg['inventorySource']
         cn_export = source == 'cn_export'
+        self.export_folder.setVisible(cn_export)
+        self.export_folder.setEnabled(self.preview_job is None)
         self.showcase_button.setText('更改展柜 UID' if self.cfg.get('showcaseUid') else '绑定角色展柜')
         self.scan_button.setText('读取仓库' if source in ('cn_export', 'network') else '扫描仓库')
         self.import_button.setVisible(source != 'network')
@@ -538,6 +573,11 @@ class ManagerInterface(BaseInterface):
                     or str(request['account']) != self.root.name):
                 self.equip_review = None
         inventory = read(snapshot_path(self.root,self.cfg), {})
+        if cn_export:
+            from .cn_export import source_path
+            self.cn_file = source_path(self.root, inventory)
+            self.cn_last_export = {k:inventory.get(k) for k in ('exportFile', 'exportStamp', 'exportWrittenNs')}
+            self.export_folder.setToolTip(str(self.cn_file.parent))
         wiki = read(wiki_path(), {})
         from .roster import preview_bindings
         self.preview_bindings = preview_bindings(self.cfg['profiles'], wiki)
@@ -1608,7 +1648,7 @@ class ManagerInterface(BaseInterface):
             self.empty_title.setText('没有匹配的驱动盘' if has_rows else ('仓库里没有驱动盘' if self.report else '还没有仓库预览'))
             hint = '扫描游戏仓库，或从「更多」导入扫描文件'
             if self.cfg['inventorySource'] == 'cn_export':
-                hint = '等待读取器生成仓库文件'
+                hint = '在「运行设置」选择导出目录，读取器生成文件后再来看仓库'
             elif self.cfg['inventorySource'] == 'network':
                 hint = '连接国际服读取器后，点「读取仓库」'
             self.empty_hint.setText('换个筛选条件试试' if has_rows else ('下次读取会更新库存' if self.report else hint))

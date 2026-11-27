@@ -22,8 +22,9 @@ def intent(row):
 
 
 def check_file(exported):
+    from .cn_export import same_export
     path = Path(exported['exportFile'])
-    if path.stat().st_mtime_ns != exported['exportWrittenNs'] or exported['exportWrittenNs'] > time_ns():
+    if not same_export(path, path.stat(), exported) or exported['exportWrittenNs'] > time_ns():
         raise ValueError('国服仓库导出已变化，请重新整理')
 
 
