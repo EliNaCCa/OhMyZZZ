@@ -73,20 +73,13 @@ def account_pool(root, snapshot, wiki, *, labels=None):
     return pool
 
 
-def preferred_agents(preferences, labels):
-    from .roster import agent_id
-    names = preferences.get('preferred', preferences.get('agents', {}))
-    return {labels.get(agent_id(name), name) for name in names}
-
-
 class Lane(NamedTuple):
     fit: int
     surplus: int
     balance: int
+    stunner_fit: int
     invested: int
     levels: int
-    preferred: int
-    familiar: int
     team: tuple
     mask: int
     weak: bool
@@ -94,8 +87,7 @@ class Lane(NamedTuple):
     resisted: bool
 
     def sort_key(self):
-        return (-self.fit, self.surplus, -self.balance, -self.invested, -self.levels,
-                -self.preferred, -self.familiar, self.team)
+        return (-self.fit, self.surplus, -self.balance, -self.stunner_fit, -self.invested, -self.levels, self.team)
 
 
 def relative_levels(pool):
@@ -111,14 +103,12 @@ def relative_levels(pool):
     return result
 
 
-def encounter_shortlist(pool, stages, needed, familiar=(), budget=25000, *, preferred=()):
+def encounter_shortlist(pool, stages, needed, *, budget=25000):
     """Rank by explicit stage conditions until a score or clear time is available."""
     if not 1 <= needed <= len(stages) <= 3:
         raise ValueError('请核对本期关卡数量')
     # A party may use more than one damage dealer. A main matching the enemy's
     # weakness and a character able to use the selected buff are separate facts.
-    familiar = [frozenset(team) for team in familiar]
-    preferred = set(preferred)
     levels = relative_levels(pool)
     parties = []
     bits = {name:1 << i for i, name in enumerate(sorted(pool))}
@@ -127,13 +117,12 @@ def encounter_shortlist(pool, stages, needed, familiar=(), budget=25000, *, pref
         if elements:
             roles = {pool[a]['role'] for a in team}
             investment = sum(pool[a].get('mindscape') == 6 and pool[a].get('engineRank') == 5 for a in team)
-            links = max((len(ref.intersection(team)) for ref in familiar), default=0)
             parties.append((team, sum(bits[a] for a in team), elements, roles, investment,
-                            sum(levels[a] for a in team), len(preferred.intersection(team)), max(0,links-1)))
+                            sum(levels[a] for a in team)))
     options = []
     for stage in stages:
         rows = []
-        for team, mask, elements, roles, investment, training, used_often, links in parties:
+        for team, mask, elements, roles, investment, training in parties:
             if not stage.get('weak') and not stage.get('resist') and not stage.get('buffRole'):
                 continue
             weak = bool(stage.get('weak')) and stage['weak'] in elements
@@ -144,7 +133,9 @@ def encounter_shortlist(pool, stages, needed, familiar=(), budget=25000, *, pref
             # Triple carries are still available if the player's roster requires it.
             surplus = sum(pool[a]['role'] in DAMAGE_ROLES for a in team) - 1
             balance = int('击破' in roles) + int('支援' in roles)
-            rows.append(Lane(quality, surplus, balance, investment, training, used_often, links,
+            stunner_elements = {pool[a]['element'] for a in team if pool[a]['role'] == '击破'}
+            stunner_fit = int(stage.get('weak') in stunner_elements) - int(stage.get('resist') in stunner_elements)
+            rows.append(Lane(quality, surplus, balance, stunner_fit, investment, training,
                              team, mask, weak, buff, resisted))
         options.append(sorted(rows, key=Lane.sort_key))
     best = None
@@ -157,8 +148,9 @@ def encounter_shortlist(pool, stages, needed, familiar=(), budget=25000, *, pref
         tops = [options[i][0] for i in indexes]
         def rank(rows):
             return (tuple(sorted(row.fit for row in rows)), -sum(row.surplus for row in rows),
-                    sum(row.balance for row in rows), tuple(sorted(row.invested for row in rows)),
-                    sum(row.levels for row in rows), sum(row.preferred for row in rows), sum(row.familiar for row in rows))
+                    sum(row.balance for row in rows), sum(row.stunner_fit for row in rows),
+                    tuple(sorted(row.invested for row in rows)),
+                    sum(row.levels for row in rows))
         def visit(rows, mask):
             nonlocal best, selected, spent, clipped
             depth = len(rows)
@@ -187,7 +179,7 @@ def encounter_shortlist(pool, stages, needed, familiar=(), budget=25000, *, pref
     return [dict(stage=i, team=row.team, weak=row.weak, buff=row.buff, resisted=row.resisted) for i,row in selected], clipped
 
 
-def reward_lineup(rotation, owned):
+def reward_lineup(rotation, owned, *, labels=None):
     """Compare per-encounter results in game units. Never reuse a score across buffs or bosses."""
     default_needed, rating = MODES[rotation['mode']]
     needed = rotation.get('needed', default_needed)
@@ -197,6 +189,8 @@ def reward_lineup(rotation, owned):
     if not rotation.get('period') or any(not s.get('name') for s in stages) or len({s['name'] for s in stages}) != len(stages):
         raise ValueError('需要期数和各路关卡名称')
     owned = set(owned)
+    from .roster import agent_id
+    labels = labels or {}
     choices = []
     for stage in stages:
         target = number(stage['target'])
@@ -204,8 +198,9 @@ def reward_lineup(rotation, owned):
             raise ValueError('请填写本关的目标分数或通关时限')
         rows = []
         for record in stage.get('results', []):
-            team = frozenset(record['team'])
-            if len(team) != 3 or len(record['team']) != 3 or not team <= owned:
+            actors = [labels.get(agent_id(name), name) for name in record['team']]
+            team = frozenset(actors)
+            if len(team) != 3 or len(actors) != 3 or not team <= owned:
                 continue
             value = number(record['value'])
             if value < 0 or (value == 0 and stage['unit'] == '秒'):
@@ -213,7 +208,7 @@ def reward_lineup(rotation, owned):
             progress = target / value if stage['unit'] == '秒' else value / target
             resources = frozenset(('agent', agent) for agent in team)
             resources |= frozenset(('equipment', item) for item in record.get('gear', []))
-            rows.append((resources, progress, record))
+            rows.append((resources, progress, dict(record, team=actors)))
         choices.append(rows)
 
     best_key = best = None
