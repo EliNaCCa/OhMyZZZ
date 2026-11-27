@@ -40,8 +40,18 @@ def reassign_discards(root, wiki, pinned, planned, observed):
     return result
 
 
+def saved_build_discs(report, enabled):
+    builds = {name:keys for name, keys in report.get('keptBuildDiscs', {}).items() if name in enabled}
+    for name, result in report.get('assignments', {}).items():
+        if name in enabled and result.get('ids'):
+            ids = set(result['ids'])
+            builds[name] = [r['pinKeys'][0] for r in report['discs']
+                            if r.get('buildId', r['fp']) in ids and r.get('pinKeys')]
+    return builds
+
+
 def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=False, verified_game=False,
-            cn_plan=None, field=None, game_discards=(), expected_inventory=None, triage_only=False):
+            cn_plan=None, field=None, game_discards=(), expected_inventory=None, triage_only=False, network_plan=None):
     cfg, rules, warnings = snapshot if snapshot is not None else rule_snapshot(root, refresh)
     warnings = list(warnings)
     inputs = dict(cfg, inventorySource='ocr') if verified_game else cfg
@@ -84,12 +94,9 @@ def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=F
         inspection_cfg = cfg
         if cfg['profiles']:
             enabled = {p['name'] for p in cfg['profiles'] if p.get('enabled', True)}
-            kept_builds = {k:v for k,v in previous.get('keptBuildDiscs', {}).items() if k in enabled}
-            for name, result in previous.get('assignments', {}).items():
-                if name in enabled and result.get('ids'):
-                    ids = set(result['ids'])
-                    kept_builds[name] = [r['pinKeys'][0] for r in previous['discs']
-                                         if r.get('buildId', r['fp']) in ids and r.get('pinKeys')]
+            kept_builds = saved_build_discs(previous, enabled)
+            if network_plan is not None:
+                kept_builds.update(saved_build_discs(network_plan, enabled))
         if cn_plan is not None:
             inspection_cfg = dict(cfg, profiles=[], reserve=0, reserve_rules=[], trimRecommended=True)
         elif triage_only:
@@ -104,6 +111,9 @@ def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=F
         from .loadout import fielded_profiles
         fielded = [p['name'] for p in fielded_profiles(cfg, field)] if field else []
         report = execution_plan(cn_plan, report, z, cfg=cfg, names=names, fielded=fielded)
+    if network_plan is not None:
+        from .inventory_comparison import network_marking_plan
+        report = network_marking_plan(report, z, network_plan, read(snapshot_path(root, cfg)), names)
     if game_stamp is not None:
         report['gameStamp'] = game_stamp
         report['scanFile'] = game_file.name
@@ -113,6 +123,11 @@ def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=F
         report['triageOnly'] = True
     if kept_builds:
         report['keptBuildDiscs'] = kept_builds
+        for profile in cfg['profiles']:
+            if profile['name'] in kept_builds:
+                report['traceTeams'].setdefault(profile['name'], dict(
+                    agent=(profile.get('request') or {}).get('characterName') or profile.get('agentKey'),
+                    group=profile.get('simultaneous') or ''))
     report.update(warnings=warnings,generated=time.time(), mode='preview')
     save(preview_path(root, inputs),report)
     return report

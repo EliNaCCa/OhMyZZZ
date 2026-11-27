@@ -21,8 +21,14 @@ def rule_book(rows, rules, overrides, conflicts):
 
 def teams_for_disc(report, row):
     teams = report.get('traceTeams', {})
-    return [(name, teams.get(name, {}), result) for name, result in report.get('assignments', {}).items()
-            if not result.get('error') and row.get('buildId', row['fp']) in result.get('ids', ())]
+    uses = {name:result for name, result in report.get('assignments', {}).items()
+            if not result.get('error') and row.get('buildId', row['fp']) in result.get('ids', ())}
+    if '已保存配装用盘' in row.get('reasons', ()):
+        keys = set(row.get('pinKeys') or [row['fp']])
+        for name, saved in report.get('keptBuildDiscs', {}).items():
+            if not keys.isdisjoint(saved) and name not in uses:
+                uses[name] = dict(reason='已保存配装用盘')
+    return [(name, teams.get(name, {}), result) for name, result in uses.items()]
 
 
 def probe_trace(record, cfg, rules, wiki, known_owned):

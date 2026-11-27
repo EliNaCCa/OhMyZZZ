@@ -3,6 +3,7 @@ from collections import Counter
 from contextlib import closing
 
 from .optimizer import exported_s_main
+from .inventory_comparison import match_export
 from .reserve_policy import development, matching_rules, normalized_rule, upgrade_advice
 from .stat_reading import checked_values
 from .potential import verdict
@@ -143,27 +144,6 @@ def execute(root, ui, row, before, snapshot, cfg, names, batch=None):
     save(root/RECEIPT, receipt)
     ui.confirm(current, goal)
     return finalize(root, receipt, ui.read_after())
-
-
-def match_export(snapshot, report, net, network_plan, names):
-    from .inventory_comparison import attribute_key
-    reverse = equipment_keys(names)
-    def key(d):
-        return attribute_key(d, 1, names, reverse)
-    if digest(net) != network_plan['inventory'] or network_plan['configuration'] != report['configuration']:
-        raise ValueError('网络库存已更新，请重新整理')
-    local_counts = Counter(key(d) for d in snapshot['discs'])
-    remote_counts = Counter(key(d) for d in net['discs'])
-    if local_counts != remote_counts:
-        raise ValueError('网络库存与游戏里的驱动盘不同，请刷新库存')
-    remote_rows = {r['id']:dict(r) for r in network_plan['discs']}
-    by_stats = {key(d):remote_rows[d['id']] for d in net['discs'] if remote_counts[key(d)] == 1}
-    matches = {}
-    for d in snapshot['discs']:
-        peer = by_stats.get(key(d))
-        if peer and (not d.get('exportUid') or not peer.get('exportUid') or peer['exportUid'] == d['exportUid']):
-            matches[d['id']] = peer
-    return remote_rows, matches
 
 
 def permit(row, *, export=False):

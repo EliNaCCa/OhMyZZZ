@@ -1,4 +1,4 @@
-"""Compare the CN export with this account's last complete game scan."""
+"""Match exported drive discs to this account's game readings."""
 from collections import Counter, defaultdict
 
 from .stat_reading import checked_values
@@ -9,6 +9,79 @@ def attribute_key(disc, base, names, reverse):
     return (equipment_key(disc['setKey'], names, reverse), str(disc['slotKey']),
             disc['mainStatKey'], disc['level'], disc['rarity'],
             tuple(sorted((s['key'], 1 + s['upgrades'] - base) for s in disc['substats'])))
+
+
+def match_export(snapshot, report, exported, planned, names):
+    """Bind unique physical stat lines across the two snapshots of this run."""
+    if (not exported.get('networkPreview') or not planned.get('networkPreview') or report.get('networkPreview')
+            or digest(snapshot) != report['inventory'] or digest(exported) != planned['inventory']
+            or planned['configuration'] != report['configuration'] or planned['rules'] != report['rules']):
+        raise ValueError('库存或规则已更新，请重新整理')
+    reverse = equipment_keys(names)
+    def groups(source, base):
+        result = defaultdict(list)
+        for disc in source['discs']:
+            result[attribute_key(disc, base, names, reverse)].append(disc)
+        return result
+    local_base, remote_base = roll_base(snapshot), roll_base(exported)
+    local, remote = groups(snapshot, local_base), groups(exported, remote_base)
+    if local.keys() != remote.keys() or any(len(group) != len(remote[key]) for key, group in local.items()):
+        raise ValueError('网络库存与游戏里的驱动盘不同，请刷新库存')
+    remote_rows = {row['id']:dict(row) for row in planned['discs']}
+    matches = {}
+    for key, group in local.items():
+        if len(group) != 1:
+            continue
+        disc, other = group[0], remote[key][0]
+        peer = remote_rows[other['id']]
+        if peer.get('exportUid') and disc.get('exportUid') != peer['exportUid']:
+            continue
+        measured = checked_values(disc, local_base)
+        if measured and measured == checked_values(other, remote_base):
+            matches[disc['id']] = peer
+    return remote_rows, matches
+
+
+def network_marking_plan(inspected, snapshot, planned, exported, names):
+    """Keep network protections while retaining the scan's live facts and marker fingerprints."""
+    _, matches = match_export(snapshot, inspected, exported, planned, names)
+    rows = []
+    for scanned in inspected['discs']:
+        row = dict(scanned)
+        rows.append(row)
+        if row['marked'] or row['review']:
+            continue
+        peer = matches.get(row['id'])
+        reason = ''
+        if not peer:
+            reason = '按词条和数值无法确认是哪张盘'
+        elif (peer['marked'] or peer['scannedLock'] != row['scannedLock'] or
+              (peer.get('ownerState'), peer.get('location')) != (row.get('ownerState'), row.get('location'))):
+            reason = '穿戴、锁定或弃置状态已变化'
+        elif peer['review'] or peer['decision'] == '待复核':
+            reason = '网络库存里这张盘待复核'
+        elif peer['decision'] == '保留':
+            row['decision'] = '保留'
+            row['reasons'] = list(dict.fromkeys([*peer['reasons'], *row['reasons']]))
+            for flag in ('manualUnlock', 'manualKeep', 'keptBeforeReserves'):
+                row[flag] = bool(row.get(flag) or peer.get(flag))
+            row.pop('outgrown', None)
+            if scanned['decision'] != '保留':
+                row['explanation'] = list(peer['explanation'])
+            protected = (row['manualUnlock'] or row['manualKeep'] or
+                         any(r in ('手动保护', '已保存配装用盘') or r.startswith('配队 · ') for r in row['reasons']))
+            if protected or not peer.get('upgrade') or 'upgradeFloor' not in peer:
+                row.pop('upgradeFloor', None)
+            if protected or not (peer.get('upgrade') and row.get('upgrade')):
+                row.pop('upgrade', None)
+                notes = {r['upgrade']['reason'] for r in (peer, scanned) if r.get('upgrade')}
+                row['explanation'] = [s for s in row['explanation'] if s not in notes]
+        if reason:
+            row.update(decision='待复核', review=[reason])
+            row.pop('upgrade', None)
+    return dict(inspected, discs=rows, counts=dict(Counter(r['decision'] for r in rows)),
+                issues=list(dict.fromkeys([*planned['issues'], *inspected['issues']])),
+                exportInventory=planned['inventory'])
 
 
 def bind_observations(disc, observations, export_base, game_base):

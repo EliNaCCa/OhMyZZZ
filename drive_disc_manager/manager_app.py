@@ -72,9 +72,12 @@ class ManagerApp(ZApplication):
                 verify_bindings(cfg, field, read(wiki_path(), {}))
             mark = not interactive and cfg.get('applyMarkers')
             upgrade = not interactive and cfg.get('autoUpgrade')
+            if (mark or upgrade) and not cfg['run_scanner']:
+                return self.round_fail('请开启「整理前刷新驱动仓库」再执行标记或试强化')
             source = cfg['inventorySource']
             network = source in ('cn_export', 'network')
             cn_inventory = cn_plan = network_plan = None
+            guard_export = None
             manual_cn = self.group == MANUAL_GROUP and source == 'cn_export'
             if manual_cn or (network and cfg['run_scanner'] and not interactive):
                 def same_account():
@@ -87,6 +90,9 @@ class ManagerApp(ZApplication):
                     from .network_reader import capture
                     capture(self.root, same_account)
                 if mark or field or upgrade:
+                    if source == 'network':
+                        from .network_reader import inventory_guard
+                        guard_export = inventory_guard(self.root)
                     if manual_cn:
                         from .store import preview_path
                         cn_inventory = read(self.root/'cn-inventory.json')
@@ -102,6 +108,8 @@ class ManagerApp(ZApplication):
                         if cn_inventory is None:
                             cn_inventory = read(self.root/'cn-inventory.json')
                         cn_plan = network_plan
+                        from .incremental_marks import check_file
+                        guard_export = lambda: check_file(cn_inventory)
             scanner = None
             if interactive or (cfg['run_scanner'] and (not network or mark or field or upgrade)):
                 from time import time
@@ -134,6 +142,12 @@ class ManagerApp(ZApplication):
                             raise ValueError('账号已切换或任务已停止')
                     refresh(self.root, current_account, showcase_uid=cfg.get('showcaseUid', ''), wiki=read(wiki_path(), {}))
                     cn_inventory = read(self.root/FILE)
+                    from .incremental_marks import check_file
+                    prior_guard = guard_export
+                    def guard_export():
+                        if prior_guard:
+                            prior_guard()
+                        check_file(cn_inventory)
                 # Suppress the scanner's optional browser launch for this invocation only.
                 from unittest.mock import patch
                 from .scan_marks import capture_marks
@@ -177,7 +191,8 @@ class ManagerApp(ZApplication):
             if scanner is None and not snapshot_path(self.root, cfg).is_file():
                 return self.round_fail('请先在仓库页读取库存')
             report = preview(self.root,wiki_path(),snapshot=pinned, verified_game=scanner is not None, cn_plan=cn_plan,
-                             field=field, triage_only=not manual_build)
+                             field=field, triage_only=not manual_build,
+                             network_plan=network_plan if source == 'network' else None)
             if scan_only:
                 resumed = f' · 复用 {text_cache.reused} 次词条识别' if text_cache and text_cache.reused else ''
                 return self.round_success(f"已扫描 {len(snapshot['discs'])} 张驱动盘{resumed} · 预览已保存")
@@ -197,18 +212,17 @@ class ManagerApp(ZApplication):
                 return self.round_fail('应用出场方案需要本轮重新扫描')
             messages = []
             if mark:
-                if scanner is None:
-                    return self.round_fail('请开启本轮重新扫描后再标记')
                 from .live import Marker
                 from .dismantle import handoff
                 marker = Marker(self, scanner, report, readings=scanner.ocr_worker.scanned_discs)
-                if cn_plan is not None:
-                    from .incremental_marks import check_file
-                    marker.guard_export = lambda: check_file(cn_inventory)
-                    marker.guard_export()
+                if guard_export:
+                    marker.guard_export = guard_export
+                    guard_export()
                 marker.batch = handoff(self, report)
                 observed = marker.run()
                 if marker.batch:
+                    if guard_export:
+                        guard_export()
                     handoff(self, report, observed, batch=marker.batch)
                 messages.append('标记完成')
             if field:
@@ -221,10 +235,8 @@ class ManagerApp(ZApplication):
                 checkpoint(self.root, cn_inventory, cn_plan, snapshot, report, marker)
             if upgrade:
                 from .upgrade import run_trials
-                from .incremental_marks import check_file
                 messages.append(run_trials(self, scanner, report, snapshot, cfg, names,
-                                           network_plan=cn_plan or network_plan,
-                                           guard_export=(lambda: check_file(cn_inventory)) if cn_inventory else None))
+                                           network_plan=cn_plan or network_plan, guard_export=guard_export))
             return self.round_success(' / '.join(messages) if messages else '预览 · '+str(report['counts']))
         except (KeyError,ValueError,OSError,TypeError) as exc:
             return self.round_fail(str(exc))

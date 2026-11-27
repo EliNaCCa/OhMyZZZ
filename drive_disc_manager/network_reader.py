@@ -91,3 +91,14 @@ def capture(root, check_account):
     save(root/'network-owned-agents.json', sorted(agents))
     save(root/'network-inventory.json', snapshot)
     return snapshot
+
+
+def inventory_guard(root):
+    from .cn_export import file_stamp
+    path = root/'network-inventory.json'
+    stamp = file_stamp(path.stat())
+
+    def check():
+        if not path.is_file() or file_stamp(path.stat()) != stamp:
+            raise ValueError('网络库存已更新，请重新整理')
+    return check
