@@ -1,5 +1,4 @@
 """Count identical-looking discs from the scanner's verified grid positions."""
-from bisect import bisect_left
 from collections import Counter, defaultdict
 
 from .stat_reading import checked_values
@@ -87,17 +86,84 @@ def scroll_band(cell, total):
     if (not 3 <= width <= 7 or not 0 <= x <= 20-width or not 0 < top < top+height < 633 or
             height < 8 or abs(height-expected) > max(2, expected * .08)):
         return None
-    # Extend both ends by half a viewport plus jitter. Only well separated
-    # pages can add physical copies; an overlapping row cannot increase the count.
+    # Extend both ends by half a viewport plus jitter for the disjoint-page check.
     margin = (height+1)//2 + 3
     return x, width, top-margin, top+height+margin
 
 
-def grid_copies(readings, total):
-    """Distinct grid columns, rows on one viewport, and disjoint scroll ranges."""
+def scroll_runs(readings, total):
+    """Split the scan at conflicting viewport evidence or a change of direction."""
+    pages = defaultdict(set)
+    stamps = defaultdict(lambda: defaultdict(set))
+    for disc in readings:
+        cell = disc['scanCell']
+        page, column = cell[:2]
+        band = scroll_band(cell, total)
+        pages[page].add(tuple(cell[4]) if band and isinstance(cell[3], str) and len(cell[3]) == 64 else None)
+        if band and isinstance(cell[3], str):
+            stamps[page][column].add(cell[3])
+
+    runs = {}
+    run = 0
+    track = None
+    first_height = furthest = 0
+    for page, thumbs in sorted(pages.items()):
+        if len(thumbs) != 1 or None in thumbs or any(len(seen) > 1 for seen in stamps[page].values()):
+            track = None
+            continue
+        x, top, width, height = next(iter(thumbs))
+        if track != (x, width) or abs(height - first_height) > 1 or top < furthest - 2:
+            run += 1
+            track, first_height, furthest = (x, width), height, top
+        runs[page] = run
+        furthest = max(furthest, top)
+    return runs
+
+
+def ordered_column(pages):
+    """Longest chain of provably distinct selected cards in a single column."""
+    pages = sorted(pages, key=lambda page: page[0])
+    sightings = [(page, start, end, d) for page, start, end, picks in pages for d in picks]
+    length, parent = [], []
+    for index, (page, start, _, disc) in enumerate(sightings):
+        cell = disc['scanCell']
+        best, previous = 1, None
+        for i in range(index):
+            if length[i] + 1 <= best:
+                continue
+            old_page, _, old_end, old = sightings[i]
+            old_cell = old['scanCell']
+            # During a downward scroll the same card moves up the screen. A
+            # later selection at the same height or below, with a clearly
+            # advanced thumb, is another physical copy even on overlapping pages.
+            if page == old_page:
+                distinct = cell[3] == old_cell[3] and cell[2] - old_cell[2] >= 150
+            else:
+                top, height = cell[4][1], cell[4][3]
+                old_top, old_height = old_cell[4][1], old_cell[4][3]
+                distinct = abs(height - old_height) <= 1 and (
+                    start > old_end or (top - old_top >= 8 and cell[2] >= old_cell[2] - 2))
+            if distinct:
+                best, previous = length[i] + 1, i
+        length.append(best)
+        parent.append(previous)
+    if not length:
+        return []
+    last = max(range(len(length)), key=length.__getitem__)
+    result = []
+    while last is not None:
+        result.append(sightings[last][3])
+        last = parent[last]
+    return result[::-1]
+
+
+def grid_copies(readings, total, runs=None):
+    """Count distinct cards using grid columns, selected rows and scroll direction."""
     by_col = defaultdict(list)
     for d in readings:
         by_col[d['scanCell'][1]].append(d)
+    if runs is None:
+        runs = scroll_runs((d for col in by_col.values() for d in col), total)
     result = []
     for observations in by_col.values():
         best = [observations[0]]
@@ -108,7 +174,6 @@ def grid_copies(readings, total):
                     isinstance(cell[3], str) and len(cell[3]) == 64):
                 groups[(cell[0], cell[3])].append((cell[2], disc))
         tracks = defaultdict(list)
-        page_bands = defaultdict(set)
         for (page, _), positions in groups.items():
             picks, last_y = [], -1000
             for y, disc in sorted(positions, key=lambda item:item[0]):
@@ -117,26 +182,13 @@ def grid_copies(readings, total):
                     last_y = y
             if len(picks) > len(best):
                 best = picks
-            bands = {scroll_band(d['scanCell'], total) for _, d in positions}
-            page_bands[page].update(bands)
-            if len(bands) == 1 and None not in bands:
-                x, width, start, end = bands.pop()
-                tracks[x, width].append((page, start, end, picks))
+            if page in runs:
+                _, _, start, end = scroll_band(picks[0]['scanCell'], total)
+                tracks[runs[page]].append((page, start, end, picks))
         for pages in tracks.values():
-            pages = [item for item in pages if len(page_bands[item[0]]) == 1]
-            pages.sort(key=lambda item: item[0])
-            if any(later[1] < earlier[1] - 2 for earlier, later in zip(pages, pages[1:])):
-                continue
-            # Weighted interval scheduling maximizes the proven count, as a
-            # stationary page may contain two or more copies in this column.
-            ends, choices = [], [[]]
-            for _, start, end, picks in sorted(pages, key=lambda item: item[2]):
-                previous = bisect_left(ends, start)
-                combined = choices[previous] + picks
-                choices.append(combined if len(combined) > len(choices[-1]) else choices[-1])
-                ends.append(end)
-            if len(choices[-1]) > len(best):
-                best = choices[-1]
+            chain = ordered_column(pages)
+            if len(chain) > len(best):
+                best = chain
         result.extend(best)
     return result
 
@@ -181,11 +233,15 @@ def with_copies(export, readings):
             or audit.get('delta') != len(discs)-total):
         return export  # The normal completeness check will reject an invalid export.
     groups = defaultdict(lambda: defaultdict(list))
+    positioned = []
     base = roll_base(export)
     for disc in readings:
         cell = disc.get('scanCell')
         if (not isinstance(cell, (list, tuple)) or len(cell) not in (2,3,4,5) or any(type(i) is not int for i in cell[:2])
-                or cell[0] < 0 or cell[1] not in range(9) or not checked_values(disc, base)):
+                or cell[0] < 0 or cell[1] not in range(9)):
+            continue
+        positioned.append(disc)
+        if not checked_values(disc, base):
             continue
         if disc.get('markState') not in ('marked', 'unmarked') or disc.get('lockState') not in ('locked', 'unlocked'):
             continue
@@ -193,16 +249,17 @@ def with_copies(export, readings):
 
     # Export IDs are temporary. A fingerprint may identify a group, never an individual copy.
     counts = Counter(scanner_key(d) for d in discs)
+    runs = scroll_runs(positioned, total)
     rebuilt, same_page, across_pages = [], 0, 0
     for disc in discs:
         key = scanner_key(disc)
         pages = groups.get(key, {})
-        readings_by_page = (grid_copies(rows, total) for rows in pages.values())
+        readings_by_page = (grid_copies(rows, total, runs) for rows in pages.values())
         cells = max((page for page in readings_by_page if len(page) > 1 and observed_siblings(disc, page)), key=len, default=[])
         on_one_page = max(1, len(cells))
         if len(pages) > 1:
             # Different columns stay disjoint as the nine-column grid moves vertically.
-            combined = grid_copies((d for rows in pages.values() for d in rows), total)
+            combined = grid_copies((d for rows in pages.values() for d in rows), total, runs)
             if len(combined) > on_one_page and observed_siblings(disc, combined):
                 cells = combined
         if cells and counts[key] == 1:

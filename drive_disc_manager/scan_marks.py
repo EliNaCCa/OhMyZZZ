@@ -95,8 +95,9 @@ def mark_hint(ocr, footer):
 
 
 @contextmanager
-def capture_marks(scanner, root=None):
+def capture_marks(scanner, root=None, guard=None):
     from threading import local
+    from .scan_cell import confirmed_frame, park_off_grid
     grid = scanner.drive_disk_scanner
     worker = scanner.ocr_worker
     save_image, submit = grid._save_screenshot, worker.submit
@@ -120,8 +121,8 @@ def capture_marks(scanner, root=None):
         worker.ctx = WorkerContext()
 
     def capture(row, col, image):
-        from .scan_copies import scroll_thumb, selected_position, viewport_stamp
-        selected = selected_position(image, grid.grid_rows[row][col])
+        from .scan_copies import scroll_thumb, viewport_stamp
+        image, selected = confirmed_frame(scanner, grid, row, col, image, guard)
         pending.cell = None
         if selected:
             column, y = selected
@@ -160,7 +161,8 @@ def capture_marks(scanner, root=None):
     worker.submit = enqueue
     cache.save_unique = sample
     try:
-        yield text_cache
+        with park_off_grid(grid):
+            yield text_cache
     finally:
         grid._save_screenshot = save_image
         worker.submit = submit

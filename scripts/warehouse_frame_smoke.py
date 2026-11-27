@@ -83,6 +83,7 @@ def smoke(home):
                 other = cv2.imdecode(np.frombuffer(other_bytes,np.uint8), cv2.IMREAD_COLOR_RGB)
                 other = cv2.resize(other[-900:],(1920,1080),interpolation=cv2.INTER_CUBIC)
                 assert viewport_stamp(other,3) != stamp
+                replay_scan_retry(frame, moved, other, ocr)
                 # Replay the same disc in one column at two recorded scroll positions.
                 # A nearby overlapping view must still count once. Header is 319 in these frames.
                 def position_at(name):
@@ -263,6 +264,36 @@ def replay_mark_positions(marker, sample, frame, moved, selected, stamp, thumb):
             assert set(todo) == {fp}
     finally:
         marker.grid = original_grid
+
+
+def replay_scan_retry(frame, moved, other_page, ocr):
+    from one_dragon.base.geometry.point import Point
+    from drive_disc_manager.scan_cell import confirmed_frame, park_off_grid
+    from drive_disc_manager.scan_copies import selected_position
+
+    calls = []
+    controller = SimpleNamespace(click=lambda p: calls.append(('click', p.x, p.y)) or True,
+                                 mouse_move=lambda p: calls.append(('move', p.x, p.y)))
+    ctx = SimpleNamespace(ocr=ocr, controller=controller)
+    scanner = SimpleNamespace(_disc_game_total=319, ctx=ctx)
+    target = Point(572, 841)
+    grid = SimpleNamespace(ctx=ctx, grid_rows=[[target]*4], _detect_points=lambda _: [target],
+                           screenshot=lambda: moved, _stable_screenshot=lambda: frame)
+    guard = lambda: None
+    with park_off_grid(grid):
+        grid.ctx.controller.mouse_move(Point(0, 0))
+        assert calls.pop() == ('move', 40, 182)
+        current, selected = confirmed_frame(scanner, grid, 0, 3, moved, guard)
+        assert calls == [('click', 572, 797), ('move', 40, 182)] and current is frame
+        assert selected == selected_position(frame, target)
+        calls.clear()
+        grid.screenshot = lambda: other_page
+        current, pos = confirmed_frame(scanner, grid, 0, 3, moved, guard)
+        assert current is moved and pos is None and not calls
+        grid.grid_rows[0][3] = Point(572, 858)
+        current, pos = confirmed_frame(scanner, grid, 0, 3, frame, guard)
+        assert current is frame and pos == selected and not calls
+    assert grid.ctx is ctx and ctx.controller is controller
 
 
 if __name__ == '__main__':

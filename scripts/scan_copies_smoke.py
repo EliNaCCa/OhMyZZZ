@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from drive_disc_manager.planner import plan
+from drive_disc_manager.scan_copies import with_copies
 from drive_disc_manager.store import defaults, import_inventory, read, save
 
 
@@ -17,6 +18,27 @@ def smoke():
     overlap = dict(copy, id='seen-again', scanCell=(1, 2))
     export = dict(format='ZOD', dbVersion=2, version=1, source='Zenless Optimizer',
                   discs=[disc], audit=dict(game_total=2, exported=1, delta=-1), characters=[], wengines=[])
+    # Replay two consecutive views of the same column. The second view can
+    # include the first view's bottom card, plus one otherwise identical card.
+    warehouse = dict(export, audit=dict(game_total=1302, exported=1, delta=-1301))
+    def sight(page, y, scroll, *, height=18, stamp=None, x=8):
+        stamp = stamp or str(page)*64
+        return dict(disc, scanCell=(page, 1, y, stamp, (x, scroll, 5, height)))
+    def count(*cells):
+        rebuilt = with_copies(warehouse, cells)
+        assert rebuilt['audit']['delta'] == len(rebuilt['discs']) - 1302
+        return len(rebuilt['discs'])
+    assert count(sight(0, 450, 100), sight(1, 450, 113)) == 2
+    assert count(sight(0, 798, 100), sight(1, 275, 113)) == 1
+    assert count(sight(0, 275, 100), sight(0, 798, 100), sight(1, 275, 113), sight(1, 798, 113)) == 3
+    for changed in (sight(1, 450, 100), sight(1, 450, 102), sight(1, 450, 92),
+                    sight(1, 450, 113, height=20), sight(1, 450, 113, x=7)):
+        assert count(sight(0, 450, 100), changed) == 1
+    # A viewport conflict on a different card also breaks the evidence chain.
+    other = dict(sight(1, 450, 110), setKey='Other')
+    inconsistent = dict(other, scanCell=(1, 1, 624, 'f'*64, (8, 110, 5, 18)))
+    assert count(sight(0, 450, 100), other, inconsistent, sight(2, 450, 120)) == 1
+    assert count(sight(0, 450, 100), dict(sight(1, 450, 130), setKey='Other'), sight(2, 450, 120)) == 1
     with TemporaryDirectory() as tmp:
         root = Path(tmp)
         source = root/'scanner.json'

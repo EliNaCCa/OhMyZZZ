@@ -156,8 +156,14 @@ class ManagerApp(ZApplication):
                 # Suppress the scanner's optional browser launch for this invocation only.
                 from unittest.mock import patch
                 from .scan_marks import capture_marks
+                def guard_scan_cell():
+                    if interactive:
+                        self.guard_game()
+                    if (self.ctx.current_instance_idx != self.account or not self.ctx.run_context.is_context_running or
+                            not self.ctx.controller.game_win.is_win_active):
+                        raise ValueError('补读盘位时账号或游戏窗口已变化')
                 try:
-                    with capture_marks(scanner, self.root) as text_cache, patch.object(scanner,'_open_export',lambda path: None):
+                    with capture_marks(scanner, self.root, guard_scan_cell) as text_cache, patch.object(scanner,'_open_export',lambda path: None):
                         result = checked_scan(scanner, self.guard_game) if interactive else scanner.execute()
                     if self.ctx.current_instance_idx != self.account:
                         return self.round_fail('当前账号已改变')
