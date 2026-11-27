@@ -11,6 +11,7 @@ from .warehouse_sort import newest_first
 
 def leave_disc_detail(scanner, guard):
     import re
+    from one_dragon.base.geometry.point import Point
     from .upgrade_ui import one, stage, tokens
     # The previous preview can leave the material picker open. Back out of
     # recognized disc screens only, leaving any selected materials unspent.
@@ -29,7 +30,19 @@ def leave_disc_detail(scanner, guard):
             return
         visited.add(page)
         guard()
-        scanner.ctx.controller.keyboard_controller.tap('esc')
+        if page == 'upgrade':
+            # The material picker ignores Escape. Its close button is an
+            # orange X, distinct from both buttons that select or spend XP.
+            x, y = 1657, 210
+            if (not all(max(shot[y+dy, x+dx]) < 65 for dx, dy in ((0,0), (6,6), (-6,6))) or
+                    not all(int(shot[y+dy, x+dx, 0]) > int(shot[y+dy, x+dx, 1])+75
+                            for dx, dy in ((8,0), (0,-8), (-8,0)))):
+                raise ValueError('没找到强化预览右上角的关闭按钮')
+            if not scanner.ctx.controller.click(Point(x, y)):
+                raise ValueError('强化预览没有关闭')
+        else:
+            if not scanner.ctx.controller.click(Point(112, 50)):
+                raise ValueError('驱动盘详情没有关闭')
         sleep(.7)
 
 
