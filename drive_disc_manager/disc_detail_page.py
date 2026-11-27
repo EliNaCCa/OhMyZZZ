@@ -124,7 +124,7 @@ class DiscDetails(QWidget):
         self.empty_hint = ('旧预览中没有逐字段来源，可返回仓库重新计算。' if 'traceRules' not in report else
                            '已标记弃置' if row['marked'] else '没有匹配的订阅规则')
         self.rule_keys, self.team_names = set(rule_keys), set(team_names)
-        title = f"{set_name} · {row['slot']} 号位 +{row['level']}　{row['decision']}"
+        title = f"{set_name} · {row['slot']} 号位 +{row['level']}　{row.get('probeAdvice', row['decision'])}"
         self.title.setText(title)
         self.pin.setText('取消个人保护' if pinned else '始终保留这张')
         self.pin.setEnabled(not row['marked'])

@@ -31,6 +31,29 @@ def teams_for_disc(report, row):
     return [(name, teams.get(name, {}), result) for name, result in uses.items()]
 
 
+def main_stat_miss(row, fields, overrides):
+    from .roster import stat_parts
+    from .stat_reading import MAIN_STAT_NAMES
+    uses = {}
+    slot = row['slot']
+    for key, agent, outcome in row['ruleUses']:
+        if not agent or outcome != '主属性不符' or not key.endswith('/slot' + slot):
+            continue
+        values = effective(fields.get(key), overrides.get(key))
+        stats, unknown = stat_parts('slot' + slot, values or [])
+        if unknown or not stats.issubset(MAIN_STAT_NAMES):
+            return ''
+        if stats:
+            uses.setdefault(agent, set()).update(stats)
+    details = [agent + '推荐' + '、'.join(MAIN_STAT_NAMES[s] for s in sorted(stats))
+               for agent, stats in uses.items()]
+    if details:
+        return f"{slot} 号位 · " + ' / '.join(details)
+    if any(not agent and outcome in ('主属性不符', '个人「只接受」规则排除此主属性') for _, agent, outcome in row['ruleUses']):
+        return '这项主属性不在当前套装规则里'
+    return ''
+
+
 def probe_trace(record, cfg, rules, wiki, known_owned, *, comparison=None):
     """Explain the last verified observation without fabricating an inventory or allocation."""
     from .optimizer import STATS
@@ -102,12 +125,19 @@ def probe_trace(record, cfg, rules, wiki, known_owned, *, comparison=None):
             elif comparison and upgrade_advice(row, limits):
                 row['probeAdvice'] = '暂缓强化'
                 row['explanation'].append(f'对照{comparison[1]}，暂缓强化')
+            elif not row['recommendations'] and not row['reasons']:
+                miss = main_stat_miss(row, fields, cfg['overrides'])
+                if miss:
+                    row['probeAdvice'] = '不建议试强化'
+                    row['explanation'].append(miss)
     if row['marked']:
         row['probeAdvice'] = '已弃置'
     elif disc.get('location'):
         row['probeAdvice'] = '已装备'
     elif disc['lockState'] == 'locked':
         row['probeAdvice'] = '已锁定'
+    elif '手动保护' in row['reasons']:
+        row['probeAdvice'] = '手动保留'
     elif row['review']:
         row['probeAdvice'] = '待核对'
     return row, dict(rules=rules.get('version'), traceRules=rule_book([row], rules, cfg['overrides'],

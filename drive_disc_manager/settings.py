@@ -77,6 +77,9 @@ class ManagerInterface(BaseInterface):
         self.observation_button = self.menu_action(actions, '上次单盘读数', lambda:self.open_disc_detail(probe=True))
         self.probe_note = BodyLabel(); self.probe_note.setWordWrap(True); box.addWidget(self.probe_note)
         self.recent_table = self.grid(['驱动盘', '建议', '主属性', '副属性'])
+        self.recent_record = None
+        self.detail_recent_index = None
+        self.recent_table.itemActivated.connect(lambda item:self.invoke(lambda:self.open_recent_detail(item.row())))
         self.recent_table.setWordWrap(False)
         for col, width in enumerate((175, 130, 120)):
             self.recent_table.setColumnWidth(col, width)
@@ -265,7 +268,7 @@ class ManagerInterface(BaseInterface):
         self.reserve_presets.edit.connect(self.edit_preset)
         from .disc_detail_page import DiscDetails
         self.detail = DiscDetails(); self.detail_tab = tabs.addTab(self.detail, '盘详情')
-        self.detail.back.connect(lambda:tabs.open('仓库预览'))
+        self.detail.back.connect(self.back_from_disc)
         self.detail.rule.connect(self.open_detail_rule)
         self.detail.team.connect(self.open_detail_team)
         self.detail.edit_policy.connect(self.edit_detail_policy)
@@ -377,6 +380,7 @@ class ManagerInterface(BaseInterface):
         root = self.ctx.get_plugin_data_dir(APP_ID) / str(self.ctx.current_instance_idx)
         if root != getattr(self, 'root', None):
             self.equip_review = None
+            self.detail_recent_index = None
             self.tabs.setCurrentIndex(0)
         self.root = root
         self.sync_button.setEnabled(root not in self.rule_updates)
@@ -1215,6 +1219,7 @@ class ManagerInterface(BaseInterface):
             record = read(self.root/'recent-discs.json', {})
         if record.get('status') != 'verified' or str(record.get('account')) != self.root.name:
             raise ValueError('当前账号还没有新盘记录')
+        self.recent_record = record
         rows = record.get('rows')
         if rows is None:
             rows = describe(self.root, record, read(wiki_path(), {}))
@@ -1223,6 +1228,7 @@ class ManagerInterface(BaseInterface):
         self.probe_note.setText(f'{stamp} · 当前筛选下最近获得的 {len(rows)} 张' + basis)
         self.probe_note.show()
         table = self.recent_table
+        table.horizontalHeaderItem(1).setText('读取时的建议' if record.get('rows') is not None else '当前建议')
         self.fill(table, [(f"{r['name']} {r['slot']} 号 +{r['level']}", r['suggestion'], r['main'], r['subs']) for r in rows])
         for index, row in enumerate(rows):
             reasons = [row['advice'], row.get('reference')]
@@ -1235,6 +1241,25 @@ class ManagerInterface(BaseInterface):
     def clear_recent_table(self):
         self.recent_table.hide()
         self.recent_table.setRowCount(0)
+        self.recent_record = None
+
+    def open_recent_detail(self, index):
+        self.check_account(self.root)
+        record = self.recent_record
+        if record and 0 <= index < len(record['discs']):
+            self.present_detail(None, recent=record, index=index)
+
+    def back_from_disc(self):
+        self.navigation.open('仓库预览')
+        index = self.detail_recent_index
+        self.detail_recent_index = None
+        if index is None or self.detail_selection[0] != self.root or self.root.name != str(self.ctx.current_instance_idx):
+            return
+        record = read(self.root/'recent-discs.json', {})
+        if record.get('status') == 'verified' and str(record.get('account')) == self.root.name:
+            self.show_recent(record)
+            if index < len(record['discs']) and self.detail_observation == (record['finished'], digest(record['discs'][index])):
+                self.recent_table.selectRow(index)
 
     def show_probe(self, record):
         self.clear_recent_table()
@@ -1617,7 +1642,15 @@ class ManagerInterface(BaseInterface):
         account, previous, probe = self.detail_selection
         tab = self.detail.tabs.currentIndex()
         if account == self.root and account.name == str(self.ctx.current_instance_idx):
-            if probe and self.detail_observation == digest(self.probe_record):
+            if probe and self.detail_recent_index is not None:
+                record = read(self.root/'recent-discs.json', {})
+                index = self.detail_recent_index
+                if (record.get('status') == 'verified' and str(record.get('account')) == self.root.name
+                        and index < len(record['discs']) and self.detail_observation == (record['finished'], digest(record['discs'][index]))):
+                    self.present_detail(None, recent=record, index=index)
+                    self.detail.tabs.setCurrentIndex(tab)
+                    return
+            elif probe and self.detail_observation == digest(self.probe_record):
                 self.present_detail(None)
                 self.detail.tabs.setCurrentIndex(tab)
                 return
@@ -1643,16 +1676,23 @@ class ManagerInterface(BaseInterface):
         self.tabs.setCurrentIndex(0)
         self.set_status('原盘读数已变化，请重新选择。')
 
-    def present_detail(self, row):
+    def present_detail(self, row, *, recent=None, index=None):
         from .disc_trace import probe_trace
         probe = row is None
+        self.detail_recent_index = index
         report = self.report
         if probe:
             wiki = read(wiki_path(), {})
             from .potential import saved_comparison
             comparison = saved_comparison(self.root, self.cfg, self.rules)
-            row, report = probe_trace(self.probe_record, self.cfg, self.rules, wiki, known_agents(self.root), comparison=comparison)
-            self.detail_observation = digest(self.probe_record)
+            observation = dict(status='verified', disc=recent['discs'][index]) if recent else self.probe_record
+            row, report = probe_trace(observation, self.cfg, self.rules, wiki, known_agents(self.root), comparison=comparison)
+            self.detail_observation = (recent['finished'], digest(observation['disc'])) if recent else digest(observation)
+            if row.get('trialUse') and not comparison:
+                from .recent_discs import observed_peer
+                example = observed_peer(row, read(self.root/'scan-observations.json', {}), self.set_names)
+                if example:
+                    row['explanation'].append(example)
         self.detail_selection = (self.root, row, probe)
         self.detail.present(row, report, set_name=self.set_names.get(row['set'],row['set']), probe=probe, pinned=is_pinned(row, self.cfg['pins']),
                             set_names=self.set_names,

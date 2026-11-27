@@ -123,11 +123,36 @@ def smoke(home, sample):
         assert '参考国服导出' in page.probe_note.text()
         table = page.recent_table
         assert table.rowCount() == len(compared) and not table.isHidden()
+        assert table.horizontalHeaderItem(1).text() == '读取时的建议'
         assert all(r['name'] in table.item(i, 0).text() and r['suggestion'] == table.item(i, 1).text()
                    for i, r in enumerate(compared))
         page.show_recent(original)
         assert original['rows'][0]['reference'] in table.item(0, 1).toolTip()
         three_rows_height = table.height()
+        # Open the real DEF% disc, adjust a personal rule, and return to the same drop.
+        from drive_disc_manager.store import known_agents
+        save(root/'owned-agents.json', sorted(known_agents(src)))
+        save(root/'config.json', cfg)
+        save(root/'recent-discs.json', original)
+        page.on_interface_shown()
+        page.recent_result.trigger()
+        table.itemActivated.emit(table.item(2, 0))
+        assert page.tabs.currentWidget() is page.detail and '月光骑士颂' in page.detail.title.text()
+        assert ('不建议试强化' in page.detail.title.text() and '耀嘉音推荐攻击力百分比' in page.detail.summary.toPlainText()), (page.detail.title.text(), page.detail.summary.toPlainText())
+        assert any(key == 'build/Astra Yao/slot5' for key, _, _ in page.detail.uses)
+        with patch.object(page, 'edit_quota', return_value=None) as edit:
+            page.detail.quota.click()
+            edit.assert_called_once_with(dict(set='MoonlightLullaby', slot='5', main='def_'), '通用')
+        with patch.object(page, 'refresh_saved_preview', side_effect=page.reload):
+            page.detail.pin.click()
+        assert config(root)['pins'] and '手动保留' in page.detail.title.text()
+        page.detail.back.emit()
+        assert table.currentRow() == 2 and not table.isHidden() and table.rowCount() == 3
+        table.itemActivated.emit(table.item(2, 0))
+        save(root/'recent-discs.json', dict(original, discs=discs[:1], rows=original['rows'][:1]))
+        page.reload()
+        assert page.tabs.currentWidget() is page.navigation.pages['仓库预览'] and table.isHidden()
+        print('PASS recent disc opens main-stat sources and spare settings, refreshes after pin, restores selection and handles replaced readings')
         if len(observed['discs']) >= 4:
             from drive_disc_manager.manager_app import wiki_path
             from drive_disc_manager.recent_discs import describe

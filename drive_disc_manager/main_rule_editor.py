@@ -2,14 +2,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QGridLayout, QLabel, QVBoxLayout
 from .subscriptions import SLOT_EXTRA
-
-
-NAMES = {'hp_':'生命值百分比', 'atk_':'攻击力百分比', 'def_':'防御力百分比',
-         'crit_':'暴击率', 'crit_dmg_':'暴击伤害', 'anomProf':'异常精通', 'pen_':'穿透率',
-         'impact':'冲击力', 'energyRegen_':'能量自动回复', 'anomMas_':'异常掌控',
-         'physical_dmg_':'物理伤害', 'fire_dmg_':'火属性伤害', 'ice_dmg_':'冰属性伤害',
-         'electric_dmg_':'电属性伤害', 'ether_dmg_':'以太伤害', 'wind_dmg_':'风属性伤害',
-         'lumiflux_dmg_':'流光伤害'}
+from .stat_reading import MAIN_STAT_NAMES as NAMES
 
 
 class MainRuleEditor(QDialog):
