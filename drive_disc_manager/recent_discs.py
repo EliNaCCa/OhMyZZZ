@@ -47,6 +47,7 @@ def leave_disc_detail(scanner, guard):
 
 
 def read_front_row(scanner, total, guard, count):
+    from one_dragon.base.geometry.point import Point
     if type(count) is not int or not 1 <= count <= 9:
         raise ValueError('一次可以看 1 到 9 张盘')
     if total == 0:
@@ -77,7 +78,9 @@ def read_front_row(scanner, total, guard, count):
             if not grid._ensure_selected(point, 0, col):
                 raise ValueError('没能选中第 %d 张盘' % (col + 1))
             grid._stable_screenshot()
-            disc = read_selected(scanner, total, guard, target=point)
+            # The scanner fits clicks to the colored strip, sometimes at the
+            # bottom edge. Verify the selection at the first row's card center.
+            disc = read_selected(scanner, total, guard, target=Point(167 + 135*col, 275))
             if not checked_values(disc, 1):
                 raise ValueError('第 %d 张盘的词条没读清' % (col + 1))
             discs.append(disc)

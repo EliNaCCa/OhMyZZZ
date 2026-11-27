@@ -66,7 +66,8 @@ def read_selected(scanner, total, guard, *, target=None):
     if area is None:
         raise ValueError('仓库扫描器缺少驱动盘属性区域')
     first = None
-    for _ in range(2):
+    deadline = time.monotonic() + 6
+    while first is None or time.monotonic() < deadline:
         guard()
         screen = scanner.screenshot()
         if screen is None or screen.shape[:2] != (1080,1920) or warehouse_header(ctx.ocr, screen) != ('驱动仓库', total):
@@ -74,7 +75,10 @@ def read_selected(scanner, total, guard, *, target=None):
         if target is not None:
             from .scan_copies import selected_position
             if selected_position(screen, target) is None:
-                raise ValueError('选中的盘位已变化')
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(.15)
+                continue
         crop = cv2_utils.crop_image_only(screen, area.rect)
         items = [dict(text=text, confidence=b.confidence, position=(b.x,b.y,b.x+b.w,b.y+b.h))
                  for text, boxes in (ctx.ocr.run_ocr(crop) or {}).items() for b in boxes]
@@ -98,6 +102,7 @@ def read_selected(scanner, total, guard, *, target=None):
             return reading
         first = reading
         time.sleep(.35)
+    raise ValueError('没读清当前盘位的选中框')
 
 
 def game_guard(ctx, session, check_display):
