@@ -239,3 +239,33 @@ with TemporaryDirectory() as tmp:
     picked = plan(stock([fresh, tied]), trial_cfg, rules, {})['discs'][0]
     assert picked['upgrade']['purpose'] == '异常精通' and picked['upgrade']['target'] == 3
     print('PASS split-purpose thresholds, retained without a spend, tied spare, stale comparison')
+
+    # Same three raw substats as the saved 4-slot Dawn's Bloom. Compare
+    # two possible fourth lines against one six-roll proficiency spare.
+    fresh = dict(fresh, setKey="Dawn'sBloom")
+    expert = dict(expert, setKey="Dawn'sBloom")
+    rules = dict(version='sample', fields={"matrix/Dawn'sBloom/4":['atk_']})
+    just_trials = dict(trial_cfg, trimRecommended=True,
+                       reserve_rules=[dict(purpose='异常输出', stats=['anomProf', 'pen'], count=1),
+                                      dict(purpose='偏暴击', count=None)])
+    def test_fourth(stat):
+        after = dict(piece('31', 3, {'def':1, 'def_':1, 'anomProf':1, stat:1}), setKey=fresh['setKey'])
+        trial_row = plan(stock([fresh, expert]), just_trials, rules, {})['discs'][0]
+        assert eligible(trial_row) and trial_row['upgrade']['target'] == 3
+        receipt = dict(before=fresh, row=trial_row, limits=just_trials, names={}, label='拂晓生花 4号盘', previousMatches=[])
+        finalize(root, receipt, after)
+        result = read(root/RECEIPT)
+        replanned = plan(stock([after,expert]), just_trials, rules, {})['discs'][0]
+        return result, replanned
+    missed, row = test_fourth('hp')
+    assert missed['outgrown'] and '最多 5 档' in missed['note'] and row['decision'] == '弃置候选', missed['note']
+    hit, row = test_fourth('crit_')
+    assert not hit['outgrown'] and not hit['nextUpgrade'] and row['decision'] == '保留', hit['note']
+    # A sole, unlimited crit quota still needs crit once all four lines are known.
+    crit_only = dict(just_trials, reserve_rules=[dict(purpose='偏暴击', count=None)])
+    miss = missed['after']
+    only = plan(stock([miss]), crit_only, rules, {})['discs'][0]
+    assert only['decision'] == '弃置候选' and '出不了' in only['explanation'][-1]
+    general = plan(stock([miss]), dict(crit_only, reserve=1), rules, {})['discs'][0]
+    assert general['decision'] == '保留' and '备用 · 通用' in general['reasons']
+    print('PASS +3 without crit misses both spare uses; +3 with crit stays as a spare')

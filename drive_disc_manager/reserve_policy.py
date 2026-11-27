@@ -41,9 +41,10 @@ def spare_uses(row, limits):
             continue
         if purpose == '通用' and stats is DEFAULT_STATS and row.get('roleStats'):
             for role, preferred in row['roleStats'].items():
-                yield role, count, preferred
+                yield role, count, preferred, False
         else:
-            yield purpose, count, stats
+            # apply_reserves only assigns named uses to discs with a matching substat.
+            yield purpose, count, stats, purpose != '通用'
 
 
 def max_useful_rolls(level, rolls, stats):
@@ -71,7 +72,7 @@ def upgrade_advice(row, limits, floor=()):
             or not row['recommendations']):
         return None
     targets = []
-    for purpose, _, stats in spare_uses(row, limits):
+    for purpose, _, stats, _ in spare_uses(row, limits):
         keys = usable_stats(row, stats)
         if any(use['label'] == purpose and tuple(use['stats']) == keys and
                max_useful_rolls(row['level'], row['rolls'], keys) < use['minimum'] for use in floor):

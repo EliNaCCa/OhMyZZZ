@@ -20,13 +20,14 @@ def comparable(row):
 def spare_floor(row, limits, ranked_scores, exclude):
     from itertools import islice
     floor = []
-    for label, count, stats in spare_uses(row, limits):
+    for label, count, stats, needs_substat in spare_uses(row, limits):
         keys = usable_stats(row, stats)
-        if count is None:
-            floor.append(dict(label=label, stats=keys, minimum=0))
-        elif keys:
+        minimum = 0
+        if count is not None and keys:
             peers = list(islice((score for score, fp in ranked_scores(keys) if fp not in exclude), count))
-            floor.append(dict(label=label, stats=keys, minimum=peers[count-1] if len(peers) >= count else 0))
+            minimum = peers[-1] if len(peers) == count else 0
+        if keys or needs_substat or count is None:
+            floor.append(dict(label=label, stats=keys, minimum=minimum, needsSubstat=needs_substat))
     return floor
 
 
@@ -106,9 +107,13 @@ def verdict(level, rolls, floor):
     margins = []
     for use in floor:
         maximum = max_useful_rolls(level, rolls, use['stats'])
+        if maximum == 0 and use.get('needsSubstat'):
+            continue
         if maximum >= use['minimum']:
             return ''
         margins.append((use['minimum']-maximum, use['label'], maximum, use['minimum']))
+    if not margins:
+        return '这张盘升满也出不了所选的备用副词条'
     _, label, maximum, minimum = min(margins)
     return f'{label}最多 {maximum} 档有效词条，同类备用已有 {minimum} 档'
 
