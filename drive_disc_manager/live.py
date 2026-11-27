@@ -249,7 +249,8 @@ class Marker:
 
     def visit_position(self, mode, fp, pos, grid, row):
         from .mark_positions import page_grid_point
-        from .scan_copies import selected_position, viewport_stamp
+        from .scan_cell import selected_card
+        from .scan_copies import viewport_stamp
         match = page_grid_point(grid, pos)
         if match is None:
             return False
@@ -261,7 +262,7 @@ class Marker:
             return False
         self.grid._stable_screenshot()
         screen = self.frame()
-        selected = selected_position(screen, pt)
+        selected = selected_card(screen, pt)
         if not selected or selected[0] != pos.column or abs(selected[1]-pos.center_y) > 4:
             return False
         detail = self.detail(screen)

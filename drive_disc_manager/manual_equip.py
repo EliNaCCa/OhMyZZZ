@@ -107,6 +107,7 @@ def verify_targets(request, current, targets):
 def guarded_grid(grid, guard):
     """Check the current game session before grid navigation or input."""
     from unittest.mock import patch
+    from .scan_cell import park_off_grid
     ctx = grid.ctx
 
     class GridController:
@@ -120,8 +121,8 @@ def guarded_grid(grid, guard):
         def __getattr__(self, key):
             return getattr(ctx, key)
 
-    with (patch.object(grid, 'ctx', GridContext()), patch.object(grid, 'need_check_game_win', False),
-          patch.object(grid, 'run_record', None)):
+    with (patch.object(grid, 'ctx', GridContext()), park_off_grid(grid),
+          patch.object(grid, 'need_check_game_win', False), patch.object(grid, 'run_record', None)):
         yield grid
 
 

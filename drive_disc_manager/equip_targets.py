@@ -58,7 +58,8 @@ def match_targets(exported, targets, names, observations):
 
 def warehouse_observations(scanner, total, guard, *, by_acquisition=False):
     from one_dragon.utils import cv2_utils
-    from .scan_copies import selected_position, scroll_thumb, viewport_stamp
+    from .scan_cell import selected_card
+    from .scan_copies import scroll_thumb, viewport_stamp
     from .scan_marks import MarkReader
     from .warehouse import enter_warehouse, warehouse_header
 
@@ -83,7 +84,7 @@ def warehouse_observations(scanner, total, guard, *, by_acquisition=False):
         return screen
 
     def read_disc(screen, point, page):
-        selected = selected_position(screen, point)
+        selected = selected_card(screen, point)
         if selected is None:
             return None
         crop = cv2_utils.crop_image_only(screen, area.rect)

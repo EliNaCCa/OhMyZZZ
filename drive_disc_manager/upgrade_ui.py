@@ -27,6 +27,24 @@ def stage(words):
     return add, confirm
 
 
+def back_button(words, shot, title=None):
+    """Identify the material picker's close button or the disc detail's back button."""
+    if title and not one(words, {title}):
+        return None
+    if stage(words):
+        x, y = 1657, 210
+        dark_cross = all(max(shot[y+dy, x+dx]) < 65 for dx, dy in ((0, 0), (6, 6), (-6, 6)))
+        orange = all(int(shot[y+dy, x+dx, 0]) > int(shot[y+dy, x+dx, 1]) + 75
+                     for dx, dy in ((8, 0), (0, -8), (-8, 0)))
+        if not dark_cross or not orange:
+            raise ValueError('没找到强化窗口右上角的关闭按钮')
+        return x, y
+    if (one(words, {'套装效果'}) and one(words, {'副属性'}) and
+            any(re.fullmatch(r'.+\[[1-6]\]', text) and x < 800 and y < 190 for text, x, y in words)):
+        return 112, 50
+    return None
+
+
 def materials(words):
     buttons = stage(words)
     if not buttons:
@@ -171,14 +189,17 @@ class UpgradeUI:
             if warehouse_header(self.ocr, shot) == ('驱动仓库', self.total):
                 return read_selected(self.scanner, self.total, self.guard)
             words = tokens(self.ocr, shot)
-            page = 'stage' if stage(words) else 'detail' if self.is_detail(words) else ''
             if any('升级成功' in t or '强化成功' in t for t, _, _ in words):
-                page = 'success'
-            if page and page not in left:
-                left.add(page)
-                self.guard()
-                self.controller.keyboard_controller.tap('esc')
-                sleep(.55)
-            else:
+                if 'success' not in left:
+                    left.add('success')
+                    self.guard()
+                    self.controller.keyboard_controller.tap('esc')
                 sleep(.25)
+            else:
+                back = back_button(words, shot, self.title)
+                if back and back not in left:
+                    left.add(back)
+                    self.click(back)
+                else:
+                    sleep(.25)
         raise ValueError('强化已提交，等下次整理核对等级')

@@ -10,9 +10,8 @@ from .warehouse_sort import newest_first
 
 
 def leave_disc_detail(scanner, guard):
-    import re
     from one_dragon.base.geometry.point import Point
-    from .upgrade_ui import one, stage, tokens
+    from .upgrade_ui import back_button, tokens
     # The previous preview can leave the material picker open. Back out of
     # recognized disc screens only, leaving any selected materials unspent.
     visited = set()
@@ -22,27 +21,13 @@ def leave_disc_detail(scanner, guard):
         if shot is None or shot.shape[:2] != (1080, 1920) or warehouse_header(scanner.ctx.ocr, shot)[0]:
             return
         words = tokens(scanner.ctx.ocr, shot)
-        page = 'upgrade' if stage(words) else ''
-        if (not page and one(words, {'套装效果'}) and one(words, {'副属性'}) and
-                any(re.fullmatch(r'.+\[[1-6]\]', title) and x < 800 and y < 190 for title, x, y in words)):
-            page = 'detail'
-        if not page or page in visited:
+        back = back_button(words, shot)
+        if not back or back in visited:
             return
-        visited.add(page)
+        visited.add(back)
         guard()
-        if page == 'upgrade':
-            # The material picker ignores Escape. Its close button is an
-            # orange X, distinct from both buttons that select or spend XP.
-            x, y = 1657, 210
-            if (not all(max(shot[y+dy, x+dx]) < 65 for dx, dy in ((0,0), (6,6), (-6,6))) or
-                    not all(int(shot[y+dy, x+dx, 0]) > int(shot[y+dy, x+dx, 1])+75
-                            for dx, dy in ((8,0), (0,-8), (-8,0)))):
-                raise ValueError('没找到强化预览右上角的关闭按钮')
-            if not scanner.ctx.controller.click(Point(x, y)):
-                raise ValueError('强化预览没有关闭')
-        else:
-            if not scanner.ctx.controller.click(Point(112, 50)):
-                raise ValueError('驱动盘详情没有关闭')
+        if not scanner.ctx.controller.click(Point(*back)):
+            raise ValueError('驱动盘页面没有关闭')
         sleep(.7)
 
 

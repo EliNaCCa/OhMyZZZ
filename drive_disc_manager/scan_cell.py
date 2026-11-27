@@ -32,17 +32,21 @@ def park_off_grid(grid):
         grid.ctx = ctx
 
 
-def confirmed_frame(scanner, grid, row, col, frame, guard):
+def selected_card(frame, target):
     from one_dragon.base.geometry.point import Point
-
-    target = grid.grid_rows[row][col]
     # Upstream detects the colored strip below the art. A low hit on that
     # strip can land just outside the selected border's inner margin.
-    center = Point(target.x, target.y - 44)
-    selected = selected_position(frame, target) or selected_position(frame, center)
+    return selected_position(frame, target) or selected_position(frame, Point(target.x, target.y - 44))
+
+
+def confirmed_frame(scanner, grid, row, col, frame, guard):
+    from one_dragon.base.geometry.point import Point
+    target = grid.grid_rows[row][col]
+    selected = selected_card(frame, target)
     if selected is not None or guard is None:
         return frame, selected
 
+    center = Point(target.x, target.y - 44)
     total = getattr(scanner, '_disc_game_total', None)
     if (type(total) is not int or total <= 0 or frame.shape[:2] != (1080, 1920) or
             col not in range(9) or abs(center.x - (167 + 135 * col)) > 20 or not 220 <= center.y <= 900):
