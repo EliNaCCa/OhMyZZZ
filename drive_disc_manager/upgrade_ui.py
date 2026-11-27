@@ -96,6 +96,40 @@ def stage_reading(ocr, shot):
     return preview_levels(words), buttons
 
 
+def picker_values(ocr, shot, parser):
+    """The material picker shows one main stat and a 2×2 grid of substats."""
+    from .stat_reading import compact, label_maps, read_row
+    main_labels, sub_labels = label_maps(parser)
+    words = tokens(ocr, shot[320:515, 870:1700])
+
+    def cell(left, top, labels, *, main=False):
+        entries = sorted((x, compact(t)) for t, x, y in words if left <= x < left+410 and top <= y < top+44)
+        if [t for _, t in entries] == ['empty']:
+            return {}
+        # The yellow preview increment follows the white current main stat.
+        # OCR may return the two values as one token or separately.
+        if main and entries:
+            if len(entries) == 3 and re.fullmatch(r'[+][0-9.]+%?', entries[-1][1]):
+                entries.pop()
+            x, value = entries[-1]
+            entries[-1] = x, re.sub(r'[+][0-9.]+%?$', '', value)
+        parsed = read_row([(0, x, x, t, 1) for x, t in entries], labels)
+        if parsed is None:
+            return None
+        key, value, _ = parsed
+        return {key:float(value)}
+
+    main = cell(0, 4, main_labels, main=True)
+    subs = {}
+    for top in (94, 144):
+        for left in (0, 420):
+            stat = cell(left, top, sub_labels)
+            if stat is None or subs.keys() & stat.keys():
+                return None
+            subs.update(stat)
+    return dict(main=main, subs=subs) if main else None
+
+
 class UpgradeUI:
     def __init__(self, scanner, guard, total, names):
         self.scanner = scanner
@@ -142,6 +176,7 @@ class UpgradeUI:
         if button is None:
             raise ValueError('没找到选中驱动盘的「查看」')
         self.expected_set = self.names.get(before['setKey'], before['setKey'])
+        self.expected_values = before['observedValues']
         self.title = self.expected_set + '[' + str(before['slotKey']) + ']'
         self.click((1580 + button[0], 800 + button[1]))
         shot = self.frame()
@@ -167,17 +202,28 @@ class UpgradeUI:
     def preview(self):
         end = monotonic() + 6
         while monotonic() < end:
-            pair, _ = stage_reading(self.ocr, self.frame())
+            shot = self.frame()
+            pair, _ = stage_reading(self.ocr, shot)
             if pair:
+                self.check_piece(shot)
                 return pair
             sleep(.2)
         raise ValueError('没读清升级前后的等级')
 
-    def confirm(self, current, goal):
+    def check_piece(self, shot):
+        if not one(tokens(self.ocr, shot[155:270,215:1020]), {self.title}):
+            raise ValueError('强化窗口的套装或号位与选中盘不符')
+        if picker_values(self.ocr, shot, self.scanner.drive_disk_scanner.parser) != self.expected_values:
+            raise ValueError('强化窗口的主副属性与选中盘未对上')
+
+    def confirm(self, current, goal, before_click):
         shot = self.frame()
         pair, buttons = stage_reading(self.ocr, shot)
-        if pair != (current, goal) or not one(tokens(self.ocr, shot[155:270,215:1020]), {self.title}):
+        if pair != (current, goal):
             raise ValueError('强化预览已变化')
+        self.check_piece(shot)
+        self.guard()
+        before_click()
         self.click(buttons[1])
 
     def read_after(self):

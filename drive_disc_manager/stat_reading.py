@@ -57,6 +57,13 @@ def valid_slot_main(disc):
     return disc['mainStatKey'] in SLOT_MAIN.get(str(disc['slotKey']), ())
 
 
+def label_maps(parser):
+    main = {compact(k):v for k,v in parser.MAIN_STAT_MAP.items()}
+    main.update({k+'属性伤害加成':v+'_dmg_' for k,v in
+                 [('物理','physical'),('火','fire'),('冰','ice'),('电','electric'),('以太','ether'),('风','wind')]})
+    return main, {compact(k):v for k,v in parser.SUB_STAT_MAP.items()}
+
+
 def measure(items, disc, parser):
     from .optimizer import STATS
     if not valid_slot_main(disc):
@@ -72,10 +79,7 @@ def measure(items, disc, parser):
     headers = [y for y, _, _, t, c in entries if t in ('副属性','sub-stats','substats') and c >= .85]
     if len(mains) != 1 or len(headers) != 1 or mains[0] >= headers[0]:
         return None
-    main_map = {compact(k):v for k,v in parser.MAIN_STAT_MAP.items()}
-    main_map.update({k+'属性伤害加成':v+'_dmg_' for k,v in
-                     [('物理','physical'),('火','fire'),('冰','ice'),('电','electric'),('以太','ether'),('风','wind')]})
-    sub_map = {compact(k):v for k,v in parser.SUB_STAT_MAP.items()}
+    main_map, sub_map = label_maps(parser)
     rows = []
     for entry in sorted(entries):
         if entry[0] <= mains[0] or entry[0] == headers[0]:

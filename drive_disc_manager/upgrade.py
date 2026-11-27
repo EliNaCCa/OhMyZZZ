@@ -159,8 +159,7 @@ def execute(root, ui, row, before, snapshot, cfg, names, batch=None):
     receipt = dict(status='pending', before=before, target=target, uid=row.get('exportUid'), batch=batch, managedBefore=row.get('managedSpareLock', False),
                    row=row, label=label, limits={k:cfg[k] for k in ('reserve','reserve_rules','protect15','protectNaturalCrit')}, names=names,
                    previousMatches=[fingerprint(d) for d in snapshot['discs'] if advanced(before, d)])
-    save(root/RECEIPT, receipt)
-    ui.confirm(current, goal)
+    ui.confirm(current, goal, before_click=lambda: save(root/RECEIPT, receipt))
     return finalize(root, receipt, ui.read_after())
 
 

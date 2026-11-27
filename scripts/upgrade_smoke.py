@@ -73,6 +73,7 @@ with TemporaryDirectory() as tmp:
           patch('drive_disc_manager.live.Marker',return_value=marker),
           patch('drive_disc_manager.upgrade_ui.UpgradeUI') as adapter):
         ui=adapter.return_value; ui.preview.return_value=(0,6)
+        ui.confirm.side_effect = lambda current, goal, before_click: before_click()
         try: run_trials(app,None,report,snap,cfg,{})
         except ValueError as exc: assert '+6' in str(exc)
         else: raise AssertionError('accepted a second tier')
@@ -146,8 +147,9 @@ with TemporaryDirectory() as tmp:
         # Replay the uninterrupted path from immediately after the confirmed plugin lock.
         game_disc.update(lock=True,lockState='locked')
         ui=adapter.return_value; ui.preview.return_value=(0,3); ui.read_after.return_value=grown
+        ui.confirm.side_effect = lambda current, goal, before_click: before_click()
         note = run_trials(app,None,report,protected,cfg,{})
-        ui.confirm.assert_called_once_with(0,3)
+        assert ui.confirm.call_count == 1 and ui.confirm.call_args.args == (0,3)
         assert '暴击伤害 4.8% → 9.6%' in note and owns_spare(read(root/'markers.json')[fingerprint(grown)],grown['observedValues'])
     print('PASS newly locked natural double crit, manual lock and manual unlock, +3 with lock retained')
 
@@ -188,6 +190,7 @@ with TemporaryDirectory() as tmp:
           patch('drive_disc_manager.disc_probe.read_selected', side_effect=lambda *_:current[0]),
           patch('drive_disc_manager.upgrade_ui.UpgradeUI') as adapter):
         ui = adapter.return_value
+        ui.confirm.side_effect = lambda current, goal, before_click: before_click()
         ui.preview.side_effect = lambda:(current[0]['level'], current[0]['level']+3)
         ui.read_after.side_effect = read_after
         note = run_trials(app,None,report,snap,cfg,{},network_plan=remote)
