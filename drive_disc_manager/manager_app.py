@@ -65,7 +65,8 @@ class ManagerApp(ZApplication):
                 from .store import digest
                 if digest(cfg) != request['configuration'] or request['rules'] != pinned[1].get('version'):
                     return self.round_fail('配队配置或规则已更新，请重新计算')
-            field = None if scan_only else (request['name'] if request else cfg.get('fieldProfile'))
+            manual_build = self.group == MANUAL_GROUP
+            field = request['name'] if manual_build else None
             if field:
                 from .loadout import verify_bindings
                 verify_bindings(cfg, field, read(wiki_path(), {}))
@@ -89,10 +90,11 @@ class ManagerApp(ZApplication):
                         from .store import preview_path
                         cn_inventory = read(self.root/'cn-inventory.json')
                         saved = read(preview_path(self.root, cfg), {})
-                        if (saved.get('fullCritPriority') and saved.get('networkPreview') and saved.get('inventory') == digest(cn_inventory)
+                        if (not saved.get('triageOnly') and saved.get('fullCritPriority') and saved.get('networkPreview') and saved.get('inventory') == digest(cn_inventory)
                                 and saved.get('configuration') == request['configuration'] and saved.get('rules') == request['rules']):
                             cn_plan = saved
-                    network_plan = cn_plan or preview(self.root, wiki_path(), snapshot=pinned, reuse_allocations=manual_cn)
+                    network_plan = cn_plan or preview(self.root, wiki_path(), snapshot=pinned, reuse_allocations=manual_cn,
+                                                      triage_only=not manual_build)
                     if network_plan['issues']:
                         return self.round_fail('配装待复核 · '+' / '.join(network_plan['issues']))
                     if source == 'cn_export':
@@ -173,7 +175,8 @@ class ManagerApp(ZApplication):
             from .store import snapshot_path
             if scanner is None and not snapshot_path(self.root, cfg).is_file():
                 return self.round_fail('请先在仓库页读取库存')
-            report = preview(self.root,wiki_path(),snapshot=pinned, verified_game=scanner is not None, cn_plan=cn_plan, field=field)
+            report = preview(self.root,wiki_path(),snapshot=pinned, verified_game=scanner is not None, cn_plan=cn_plan,
+                             field=field, triage_only=not manual_build)
             if scan_only:
                 resumed = f' · 复用 {text_cache.reused} 次词条识别' if text_cache and text_cache.reused else ''
                 return self.round_success(f"已扫描 {len(snapshot['discs'])} 张驱动盘{resumed} · 预览已保存")

@@ -41,7 +41,7 @@ def reassign_discards(root, wiki, pinned, planned, observed):
 
 
 def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=False, verified_game=False,
-            cn_plan=None, field=None, game_discards=(), expected_inventory=None):
+            cn_plan=None, field=None, game_discards=(), expected_inventory=None, triage_only=False):
     cfg, rules, warnings = snapshot if snapshot is not None else rule_snapshot(root, refresh)
     warnings = list(warnings)
     inputs = dict(cfg, inventorySource='ocr') if verified_game else cfg
@@ -79,11 +79,25 @@ def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=F
                 endpoint = stack.enter_context(managed(root))
             return candidate_pool(endpoint, profile, discs, current)
         # The UID plan applies each group's retain-all / quota setting. This pass adds game state.
-        inspection_cfg = dict(cfg, profiles=[], reserve=0, reserve_rules=[], trimRecommended=True) if cn_plan is not None else cfg
+        previous = read(preview_path(root, inputs), {}) if reuse_allocations or cfg['profiles'] else {}
+        kept_builds = {}
+        inspection_cfg = cfg
+        if cfg['profiles']:
+            enabled = {p['name'] for p in cfg['profiles'] if p.get('enabled', True)}
+            kept_builds = {k:v for k,v in previous.get('keptBuildDiscs', {}).items() if k in enabled}
+            for name, result in previous.get('assignments', {}).items():
+                if name in enabled and result.get('ids'):
+                    ids = set(result['ids'])
+                    kept_builds[name] = [r['pinKeys'][0] for r in previous['discs']
+                                         if r.get('buildId', r['fp']) in ids and r.get('pinKeys')]
+        if cn_plan is not None:
+            inspection_cfg = dict(cfg, profiles=[], reserve=0, reserve_rules=[], trimRecommended=True)
+        elif triage_only:
+            inspection_cfg = dict(cfg, profiles=[])
         report = plan(z,inspection_cfg,rules,names,candidates,
                       wiki=dictionary, known_owned=known_agents(root), history=history, comparison=comparison,
-                      previous_preview=read(preview_path(root, inputs), {}) if reuse_allocations else None,
-                      game_discards=game_discards)
+                      previous_preview=previous if reuse_allocations else None,
+                      game_discards=game_discards, kept_builds=kept_builds if triage_only else None)
     report['configuration'] = digest(cfg)
     if cn_plan is not None:
         from .inventory_comparison import execution_plan
@@ -95,6 +109,10 @@ def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=F
         report['scanFile'] = game_file.name
     if comparison is not None:
         report['gameComparison'] = {key: value for key, value in comparison.items() if key != 'lastWorn'}
+    if triage_only:
+        report['triageOnly'] = True
+    if kept_builds:
+        report['keptBuildDiscs'] = kept_builds
     report.update(warnings=warnings,generated=time.time(), mode='preview')
     save(preview_path(root, inputs),report)
     return report

@@ -5,7 +5,7 @@ from .allocation import assign_group, group_conflict, reusable_assignments
 from .drive_disc_manager_const import PLUGIN_VERSION
 from .store import digest, equipment_keys, fingerprint, inventory, is_pinned, pin_keys, roll_base
 from .subscriptions import effective, current_conflicts, SLOT_MAIN
-from .reserve_policy import apply_reserves, assess_growth, normalized_rule
+from .reserve_policy import apply_reserves, assess_growth, matching_rules, normalized_rule, upgrade_advice
 from .roster import compile_roster, explain, parse_main, preview_bindings, roster_catalog, scanner_agent_key
 from .stat_reading import checked_values
 
@@ -60,7 +60,7 @@ def assess_rules(row, cfg, fields, reverse, by_set, unresolved, excluded):
         row['review'].append('缺少明确规则')
 
 
-def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_owned=(),history=None,previous_preview=None,comparison=None,game_discards=()):
+def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_owned=(),history=None,previous_preview=None,comparison=None,game_discards=(),kept_builds=None):
     ds, _ = inventory(z, preview_only=True)
     stats_only = z.get('networkPreview') is True and z.get('source') == 'zzz-drive-exporter'
     if game_discards:
@@ -105,17 +105,17 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
                     for agent in (wiki or {}).get('character', {}).values() if agent.get('CHS')}
     by_piece = {}
     inputs = {}
+    enabled = [p for p in cfg['profiles'] if p.get('enabled',True)]
     for d in ds:
         fp = fingerprint(d)
         piece = d['id'] if stats_only else fp
         by_piece[piece] = d
         usable = counts[fp] == 1 and d.get('markState') != 'unknown' and d.get('ownerState') != 'unknown'
-        if not d.get('trash') and (stats_only or usable):
+        if enabled and not d.get('trash') and (stats_only or usable):
             candidate = as_disc(d, optimizer_names, base)
             if candidate and stats_only:
                 candidate['id'] = piece
             inputs[piece] = candidate
-    enabled = [p for p in cfg['profiles'] if p.get('enabled',True)]
     assignments, groups, issues = {}, defaultdict(list), []
     used_by = defaultdict(list)
     if len({p['name'] for p in enabled}) != len(enabled):
@@ -194,6 +194,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
                 assignments[profile['name']] = {'error':str(exc)}
     rows = []
     pins = set(cfg['pins'])
+    saved_build_keys = {key for keys in (kept_builds or {}).values() for key in keys}
     for d in ds:
         fp = fingerprint(d)
         piece = d['id'] if stats_only else fp
@@ -238,6 +239,8 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
             row['ownerLabel'] = owner_labels.get(d['location'], d['location'])
         if is_pinned(row, pins):
             why.append('手动保护')
+        if is_pinned(row, saved_build_keys):
+            why.append('已保存配装用盘')
         row['marked'] = d.get('trash') is True
         if 'ownerState' in d:
             row['ownerState'] = d['ownerState']
@@ -301,10 +304,19 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
             row['review'].append('有启用配队尚未完成计算')
     quotas = [normalized_rule(rule, reverse) for rule in cfg['reserve_rules']]
     coverage = apply_reserves(rows, dict(cfg, reserve_rules=quotas))
+    limits_by_group = {}
     for row in rows:
         if row['marked']:
             continue
         row['decision'] = '保留' if row['reasons'] else ('待复核' if row['review'] else '弃置候选')
+        if row['decision'] == '保留' and row['level'] < 15:
+            key = (row['set'], row['slot'], row['main'])
+            if key not in limits_by_group:
+                limits_by_group[key], _ = matching_rules(row, dict(cfg, reserve_rules=quotas))
+            advice = upgrade_advice(row, limits_by_group[key])
+            if advice:
+                row['upgrade'] = advice
+                row['explanation'].append(advice['reason'])
         if stats_only and row['decision'] == '弃置候选':
             row['checkForDiscard'] = True
             row['decision'] = '待复核'

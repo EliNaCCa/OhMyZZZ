@@ -158,9 +158,8 @@ class ManagerInterface(BaseInterface):
         self.menu_action(menu,'分组与优先级',self.edit_allocation)
         self.window_action = self.menu_action(menu,'输出窗口',self.edit_windows)
         self.menu_action(menu,'启用 / 停用',self.toggle_profile)
-        self.menu_action(menu,'设为出场 / 取消',self.set_field_profile)
         engine_bar.addStretch()
-        self.calculate_buttons.append(self.button(engine_bar,'计算配装',self.start_preview,primary=True))
+        self.calculate_buttons.append(self.button(engine_bar,'计算配装',lambda:self.start_preview(builds=True),primary=True))
         self.apply_button = self.button(engine_bar,'一键换装',self.apply_current)
         self.equip_busy = False
         self.equip_review = None
@@ -201,7 +200,7 @@ class ManagerInterface(BaseInterface):
         bar.addStretch()
         self.flags = {}
         for key, icon, title, hint in [
-            ('run_scanner', FluentIcon.SEARCH, '整理前刷新驱动仓库', '关闭后按上次的库存配装，日常任务也会关闭标记和换装。'),
+            ('run_scanner', FluentIcon.SEARCH, '整理前刷新驱动仓库', '关闭后用上次读取的库存生成筛选结果。'),
             ('applyMarkers', FluentIcon.FILTER, '自动标记驱动盘', '要留的锁定，要拆的标记为弃置。'),
             ('protect15', FluentIcon.ACCEPT, '保留满级盘（+15）', None),
             ('protectNaturalCrit', FluentIcon.TILES, '保留四词条双暴胚子', '掉落时就有四条副属性，同时带暴击率和暴击伤害。强化后也保留。'),
@@ -603,7 +602,7 @@ class ManagerInterface(BaseInterface):
                 changed_inputs.append('订阅规则')
             if not inventory or self.report.get('inventory') != digest(inventory):
                 changed_inputs.append('库存')
-            if self.report.get('previewBindings', {}) != self.preview_bindings:
+            if not self.report.get('triageOnly') and self.report.get('previewBindings', {}) != self.preview_bindings:
                 changed_inputs.append('配队角色对应关系')
             selected = {a['key'] for a in self.agents if a['selected']}
             if selected != {a['key'] for a in self.report.get('roster', [])}:
@@ -677,10 +676,9 @@ class ManagerInterface(BaseInterface):
         except Exception:
             ready, note = False, '请检查仓库扫描器是否已启用'
         self.scanner_note.setText('' if ready else note)
-        self.scanner_note.setVisible(not ready and self.cfg['run_scanner'] and (self.cfg['inventorySource']=='ocr' or self.cfg['applyMarkers'] or bool(self.cfg['fieldProfile'])))
-        field = self.cfg.get('fieldProfile')
+        self.scanner_note.setVisible(not ready and self.cfg['run_scanner'] and (self.cfg['inventorySource']=='ocr' or self.cfg['applyMarkers']))
         receipt = read(self.root/'equip-result.json', {})
-        parts = [f'日常换装 · {field}'] if field else []
+        parts = []
         if receipt.get('status')=='verified':
             parts.append(f"上次已核对 · {receipt['profile']} · {len(receipt['verified'])} 个号位")
         elif receipt.get('status') in ('checking','interrupted'):
@@ -745,7 +743,7 @@ class ManagerInterface(BaseInterface):
             if not p.get('enabled',True):
                 reason = '待选配装目标' if p.get('needsTarget') else '已停用'
                 result = {}
-            title = ('出场 · ' if p['name']==self.cfg.get('fieldProfile') else '')+p['name']
+            title = p['name']
             group = p.get('simultaneous')
             label = f"{group} · 第 {group_indices(profiles, index).index(index)+1} 位" if group else '可借盘'
             return (title,label,crit_rate_text(result),pct(result.get('relativeLossPct')),reason)
@@ -1092,23 +1090,6 @@ class ManagerInterface(BaseInterface):
         else:
             self.on_interface_shown()
 
-    def set_field_profile(self):
-        index = self.teams.currentRow()
-        if index < 0: return
-        profile = self.cfg['profiles'][index]
-        name = profile['name']
-        if self.cfg.get('fieldProfile') == name:
-            self.edit_cfg(fieldProfile='')
-        else:
-            from .loadout import missing_target_note
-            note = missing_target_note(self.cfg, profile)
-            if note:
-                raise ValueError(note)
-            if not profile.get('enabled',True) or not profile.get('agentKey'):
-                raise ValueError('请选择已启用且已关联代理人的方案')
-            self.edit_cfg(fieldProfile=name, run_scanner=True)
-        self.refresh_teams(name)
-
     def save_text(self):
         self.check_account(self.editor_account)
         value = json.loads(self.editor.toPlainText())
@@ -1351,7 +1332,7 @@ class ManagerInterface(BaseInterface):
         self.edit_profile_fields(token, index, updated)
 
     @staticmethod
-    def build_preview(account, wiki, import_path, reuse_allocations):
+    def build_preview(account, wiki, import_path, reuse_allocations, *, builds=False):
         from .maintenance import Deferred, exclusive
         try:
             # The game worker holds this same lock from its fresh scan through marking/equip.
@@ -1361,7 +1342,7 @@ class ManagerInterface(BaseInterface):
                 elif config(account)['inventorySource'] == 'ocr' and not (account/'inventory.json').is_file():
                     from .store import recount_inventory
                     recount_inventory(account)
-                preview(account,wiki,refresh=False,reuse_allocations=reuse_allocations)
+                preview(account,wiki,refresh=False,reuse_allocations=reuse_allocations,triage_only=not builds)
         except Deferred as exc:
             raise ValueError('插件任务或维护正在运行，请结束后再计算仓库预览。') from exc
 
@@ -1404,7 +1385,7 @@ class ManagerInterface(BaseInterface):
                 raise ValueError(reason)
         self.start_preview(from_game=True)
 
-    def start_preview(self, *, import_path=None, reuse_allocations=False, from_game=False):
+    def start_preview(self, *, import_path=None, reuse_allocations=False, from_game=False, builds=False):
         account = self.root
         self.check_account(account)
         if self.preview_job is not None:
@@ -1438,12 +1419,12 @@ class ManagerInterface(BaseInterface):
                         else:
                             from .network_reader import capture
                             capture(account, same_account)
-                        preview(account, wiki, snapshot=pinned)
+                        preview(account, wiki, snapshot=pinned, triage_only=True)
                 elif from_game:
                     from .manual_equip import run_scan_preview
                     run_scan_preview(self.ctx, int(account.name))
                 else:
-                    self.build_preview(account, wiki, import_path, reuse_allocations)
+                    self.build_preview(account, wiki, import_path, reuse_allocations, builds=builds)
             except Exception as exc:
                 error = str(exc) or type(exc).__name__
             try:

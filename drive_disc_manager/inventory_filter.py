@@ -19,7 +19,7 @@ class InventoryFilter(QWidget):
         self.search.setPlaceholderText('搜索套装、号位、主属性或保留理由')
         self.search.setClearButtonEnabled(True)
         self.kind = ComboBox()
-        self.kind.addItems(['全部', '配队用盘', '额外备用', '保留', '弃置候选', '已标记弃置', '待复核'])
+        self.kind.addItems(['全部', '建议强化', '弃置候选', '保留', '额外备用', '配队用盘', '已标记弃置', '待复核'])
         self.total = BodyLabel()
         bar = QHBoxLayout(self)
         bar.setContentsMargins(0, 0, 0, 0)
@@ -59,14 +59,17 @@ class InventoryFilter(QWidget):
             headline = items[0] if items else '未命中保留规则'
             if len(items) > 1:
                 headline += f'  ·  +{len(items) - 1}'
+            if row.get('upgrade'):
+                headline = row['upgrade']['reason']
             suit = names.get(row['set'], row['set'])
             main = STAT_NAMES.get(row['main'],row['main'])
             slot = str(row['slot'])+' 号位'
             formatted.append((suit,row['slot'],main,f"+{row['level']}",row['decision'],headline))
             tooltips.append(notes)
             kinds = {row['decision']}
+            if row.get('upgrade'): kinds.add('建议强化')
             if row['marked']: kinds.add('已标记弃置')
-            if any(reason.startswith('配队 · ') for reason in reasons): kinds.add('配队用盘')
+            if '已保存配装用盘' in reasons or any(reason.startswith('配队 · ') for reason in reasons): kinds.add('配队用盘')
             if '插件备用锁' in reasons or any(reason.startswith('备用 · ') for reason in reasons): kinds.add('额外备用')
             keywords = ' '.join((suit, row['set'], slot, main, row['main'], owner_label(row), notes, *kinds))
             self.index.append((keywords.casefold().replace(' ',''), kinds))

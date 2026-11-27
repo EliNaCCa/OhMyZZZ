@@ -34,6 +34,29 @@ def quota(value):
     return value
 
 
+def upgrade_advice(row, limits):
+    """Suggest one three-level step on a kept S disc, using its current rolls."""
+    growth = row.get('development')
+    if (not growth or row['level'] >= 15 or row['marked'] or row['review']
+            or not row['reasons'] or not row['recommendations']):
+        return None
+    targets = [(agent, rolls) for agent, rolls in row.get('roleRolls', {}).items()]
+    for purpose, (_, count, stats) in limits.items():
+        if count != 0 and (not targets or stats is not DEFAULT_STATS):
+            targets.append((purpose, sum(row['rolls'].get(k, 0) for k in stats)))
+    if not targets:
+        return None
+    use, good = max(targets, key=lambda item: item[1])
+    # Reveal a fourth line on a promising three-liner. On developed pieces require
+    # more useful rolls before spending materials on the next tier.
+    minimum = (1 if len(row['rolls']) == 3 else 2) + row['level'] // 6
+    if good < minimum:
+        return None
+    target = 3 * (row['level'] // 3 + 1)
+    return dict(target=target, purpose=use, rolls=good,
+                reason=f'{use}有效副词条 {good} 档，建议试到 +{target}')
+
+
 def rule_selectors(rule):
     return {k: str(rule[k]) for k in SELECTORS if rule.get(k) not in (None, '', '*')}
 

@@ -40,7 +40,7 @@ def checkpoint(root, exported, planned, view, report, marker):
     cfg = config(root)
     if digest(cfg) != report['configuration']:
         raise ValueError('留盘设置已变化，请重新整理')
-    fielded = fielded_profiles(cfg, cfg['fieldProfile']) if cfg.get('fieldProfile') else []
+    fielded = fielded_profiles(cfg, cfg['fieldProfile']) if not planned.get('triageOnly') and cfg.get('fieldProfile') else []
     equipped = {uid for p in fielded for uid in planned['assignments'][p['name']]['ids']}
     wearers = {planned['previewBindings'][p['name']] for p in fielded}
     for item in view['discs']:
