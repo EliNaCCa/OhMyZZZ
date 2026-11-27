@@ -1,6 +1,7 @@
 """Try one tier at a time and reconcile the selected disc before spending again."""
 from collections import Counter
 from contextlib import closing
+from time import time_ns
 
 from .optimizer import exported_s_main
 from .inventory_comparison import attribute_key, match_export
@@ -144,11 +145,12 @@ def recover(root, receipt, snapshot):
     names = receipt['names']
     reverse = equipment_keys(names)
     observed = receipt.get('observedCopy')
-    if observed:
-        if uid and receipt.get('exportFile') and (snapshot.get('source') != 'OhMyZZZ CN' or
-                snapshot.get('exportFile') != receipt['exportFile'] or
-                (snapshot.get('exportWrittenNs') or 0) <= receipt['exportWrittenNs']):
+    if uid and receipt.get('exportFile'):
+        newer_than = max(receipt['exportWrittenNs'], receipt.get('submittedNs', 0))
+        if (snapshot.get('source') != 'OhMyZZZ CN' or snapshot.get('exportFile') != receipt['exportFile']
+                or (snapshot.get('exportWrittenNs') or 0) <= newer_than):
             raise ValueError('这次强化等同一份国服仓库导出更新后再核对')
+    if observed:
         line = attribute_key(observed, 1, names, reverse)
         copies = [d for d in snapshot['discs'] if attribute_key(d, 1, names, reverse) == line]
         # A bound export can identify the result even when the warehouse UI
@@ -166,8 +168,21 @@ def recover(root, receipt, snapshot):
     after = [d for d in pool if advanced(before, d) and (uid or
              (fingerprint(d) not in receipt['previousMatches'] and digest(attribute_key(d, 1, names, reverse)) not in prior_lines))]
     same = [d for d in pool if fingerprint(d) == fingerprint(before) and d.get('observedValues') == before['observedValues']]
+    if not uid and not same and not after and receipt.get('otherPeers') and not snapshot['audit'].get('incremental'):
+        # The client may have closed before even one post-upgrade frame was read.
+        # Removing the actual result must leave exactly the original same-family discs.
+        tried = set()
+        for disc in pool:
+            if not advanced(before, disc) or not bag_disc(disc) or disc['lockState'] != before['lockState']:
+                continue
+            key = attribute_key(disc, 1, names, reverse)
+            if key in tried:
+                continue
+            tried.add(key)
+            if peers_digest(snapshot['discs'], disc, names, reverse) == receipt['otherPeers']:
+                return finalize(root, receipt, disc, copy_verified=True)
     if len(after) == 1 and not same:
-        if observed and not uid and receipt.get('otherPeers') != peers_digest(snapshot['discs'], after[0], names, reverse):
+        if not uid and receipt.get('otherPeers') and receipt['otherPeers'] != peers_digest(snapshot['discs'], after[0], names, reverse):
             raise ValueError('还有其他同类盘发生了变化，这次强化结果待核对')
         return finalize(root, receipt, after[0], copy_verified=bool(uid))
     if len(same) == 1 and not after and bag_disc(same[0]) and same[0]['lockState'] == before['lockState']:
@@ -202,7 +217,10 @@ def execute(root, ui, row, before, snapshot, cfg, names, batch=None):
                    previousMatches=[fingerprint(d) for d in snapshot['discs'] if advanced(before, d)])
     if snapshot.get('source') == 'OhMyZZZ CN' and snapshot.get('exportFile') and snapshot.get('exportWrittenNs'):
         receipt.update(exportFile=snapshot['exportFile'], exportWrittenNs=snapshot['exportWrittenNs'])
-    ui.confirm(current, goal, before_click=lambda: save(root/RECEIPT, receipt))
+    def record_submission():
+        receipt['submittedNs'] = time_ns()
+        save(root/RECEIPT, receipt)
+    ui.confirm(current, goal, before_click=record_submission)
     return finalize(root, receipt, ui.read_after())
 
 

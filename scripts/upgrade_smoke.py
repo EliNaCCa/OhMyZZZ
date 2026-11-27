@@ -117,6 +117,12 @@ with TemporaryDirectory() as tmp:
         assert read(root/'dismantle-preview.json') == batch and read(root/'markers.json',{}) == history
         assert '仍是原等级' in recover(root,duplicate,stock([before,old_copy]))
         assert read(root/'dismantle-preview.json') == batch
+        interrupted = {k:v for k,v in duplicate.items() if k not in ('observedCopy', 'note')}
+        assert '停在 +3' in recover(root,dict(interrupted, batch=None),stock([old_copy,good]))
+        for changed in ([old_copy,good,spare], [bad,old_copy,spare]):
+            try: recover(root,interrupted,stock(changed))
+            except ValueError: pass
+            else: raise AssertionError('attributed a tier despite other unexplained same-family changes')
         # The actual trial may have gained a different fourth stat.
         try:
             recover(root,duplicate,stock([bad,old_copy,spare]))
@@ -133,6 +139,7 @@ with TemporaryDirectory() as tmp:
         # With a bound UID a second, unrelated drop does not obscure the target's level.
         bound_disc = dict(good, exportUid=good['id'], ownerState='unknown', markState='unknown', observedValues=None)
         bound = dict(stock([bound_disc,old_copy,spare]), source='OhMyZZZ CN', exportFile='account-1.json', exportWrittenNs=2)
+        bound['exportWrittenNs'] = duplicate['submittedNs'] + 2
         cn_receipt = dict(duplicate, uid=good['id'], batch=None, exportFile=bound['exportFile'], exportWrittenNs=1)
         stale_before = dict(bound, discs=[dict(before, exportUid=before['id']),old_copy,spare], exportWrittenNs=1)
         for other in (dict(bound, exportFile='other-account.json'), dict(bound, exportWrittenNs=1), stale_before):
@@ -140,6 +147,12 @@ with TemporaryDirectory() as tmp:
             except ValueError: pass
             else: raise AssertionError('used an unrelated or stale export to settle the trial')
         assert '停在 +3' in recover(root, cn_receipt, bound)
+        blind = {k:v for k,v in cn_receipt.items() if k != 'observedCopy'}
+        for wrong in (stale_before, dict(stale_before, exportWrittenNs=blind['submittedNs']),
+                      dict(stale_before, exportWrittenNs=bound['exportWrittenNs'], exportFile='unrelated.json')):
+            try: recover(root,blind,wrong)
+            except ValueError as exc: assert '国服仓库导出更新' in str(exc)
+            else: raise AssertionError('closed a submitted tier using an export from before the click or another file')
         assert trial_ui.confirm.call_count == 1
         print('PASS old +3 in warehouse, unchanged level, different fourth stat, exact copy count and bound UID')
         assert ui.confirm.call_count==1
