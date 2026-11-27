@@ -75,8 +75,10 @@ def read_front_row(scanner, total, guard, count):
             # Do not click an extrapolated empty cell past the end of this filter.
             if not any(abs(hit.x-point.x) < 20 and abs(hit.y-point.y) < 20 for hit in points):
                 break
-            if not grid._ensure_selected(point, 0, col):
+            if not grid.ctx.controller.click(point):
                 raise ValueError('没能选中第 %d 张盘' % (col + 1))
+            grid.ctx.controller.mouse_move(Point(40, 182))
+            sleep(.35)
             grid._stable_screenshot()
             # The scanner fits clicks to the colored strip, sometimes at the
             # bottom edge. Verify the selection at the first row's card center.
