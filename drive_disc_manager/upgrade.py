@@ -57,7 +57,7 @@ def after_advice(row, after, cfg, names):
     revised = revised_stats(row, after)
     reverse = equipment_keys(names)
     limits, _ = matching_rules(revised, dict(cfg, reserve_rules=[normalized_rule(r, reverse) for r in cfg['reserve_rules']]))
-    return upgrade_advice(revised, limits)
+    return upgrade_advice(revised, limits, row.get('spendingFloors', row.get('upgradeFloor', ())))
 
 
 def finalize(root, receipt, after):
@@ -255,14 +255,18 @@ def run_trials(app, scanner, report, snapshot, cfg, names, *, guard_export=None,
             if row['fp'] in excluded or counts[row['fp']] != 1 or not eligible(row):
                 continue
             floor = floors.get(row['fp'], []) if 'upgradeFloor' in row else []
+            spending_floors = floor
             if peers is not None:
                 peer = peers.get(ident)
                 if not peer or not permit(peer, export=True):
                     continue
                 remote = remote_floors.get(peer['fp'], []) if 'upgradeFloor' in peer else []
+                spending_floors = [*floor, *remote]
                 floor = [*floor, *remote] if floor and remote else []
-            if not verdict(row['level'], row['rolls'], floor):
-                candidates.append(dict(row, upgradeFloor=floor))
+            uses, _ = matching_rules(row, limits)
+            advice = upgrade_advice(row, uses, spending_floors)
+            if advice and not verdict(row['level'], row['rolls'], floor):
+                candidates.append(dict(row, upgrade=advice, upgradeFloor=floor, spendingFloors=spending_floors))
         if not candidates:
             break
         def priority(row):

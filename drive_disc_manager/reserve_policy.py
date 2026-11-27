@@ -46,14 +46,37 @@ def spare_uses(row, limits):
             yield purpose, count, stats
 
 
-def upgrade_advice(row, limits):
+def max_useful_rolls(level, rolls, stats):
+    keys = set(stats)
+    good = sum(rolls.get(k, 0) for k in keys)
+    remaining = 5 - level // 3
+    if len(rolls) == 3:
+        # The fourth line must be a different stat. Only subsequent tiers
+        # can improve an existing line.
+        if keys.difference(rolls):
+            good += 1
+        remaining -= 1
+    return good + remaining if good else 0
+
+
+def usable_stats(row, stats):
+    from .optimizer import STATS
+    return tuple(sorted(k for k in set(stats) if k != row['main'] and STATS.get(k, (None, None))[1]))
+
+
+def upgrade_advice(row, limits, floor=()):
     """Rate one S disc's next three-level step from its own stats and matching uses."""
     growth = row.get('development')
     if (not growth or row['level'] >= 15 or row['marked'] or row['review']
             or not row['recommendations']):
         return None
-    targets = [(purpose, sum(row['rolls'].get(k, 0) for k in stats))
-               for purpose, _, stats in spare_uses(row, limits)]
+    targets = []
+    for purpose, _, stats in spare_uses(row, limits):
+        keys = usable_stats(row, stats)
+        if any(use['label'] == purpose and tuple(use['stats']) == keys and
+               max_useful_rolls(row['level'], row['rolls'], keys) < use['minimum'] for use in floor):
+            continue
+        targets.append((purpose, sum(row['rolls'].get(k, 0) for k in keys)))
     if not targets:
         return None
     use, good = max(targets, key=lambda item: item[1])
@@ -71,13 +94,13 @@ def rule_selectors(rule):
     return {k: str(rule[k]) for k in SELECTORS if rule.get(k) not in (None, '', '*')}
 
 
-def refresh_upgrade(row, cfg):
+def refresh_upgrade(row, cfg, floor=()):
     old = row.pop('upgrade', None)
     if old and old['reason'] in row['explanation']:
         row['explanation'].remove(old['reason'])
     if row['decision'] == '保留' and not row['ambiguous']:
         limits, _ = matching_rules(row, cfg)
-        advice = upgrade_advice(row, limits)
+        advice = upgrade_advice(row, limits, floor)
         if advice:
             row['upgrade'] = advice
             row['explanation'].append(advice['reason'])

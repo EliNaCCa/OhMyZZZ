@@ -31,7 +31,7 @@ def teams_for_disc(report, row):
     return [(name, teams.get(name, {}), result) for name, result in uses.items()]
 
 
-def probe_trace(record, cfg, rules, wiki, known_owned):
+def probe_trace(record, cfg, rules, wiki, known_owned, *, comparison=None):
     """Explain the last verified observation without fabricating an inventory or allocation."""
     from .optimizer import STATS
     from .planner import assess_rules
@@ -87,9 +87,16 @@ def probe_trace(record, cfg, rules, wiki, known_owned):
             from .reserve_policy import matching_rules, normalized_rule, upgrade_advice
             quotas = [normalized_rule(rule, reverse) for rule in cfg['reserve_rules']]
             limits, _ = matching_rules(row, dict(cfg, reserve_rules=quotas))
-            advice = upgrade_advice(row, limits)
+            from .potential import probe_floor, verdict
+            floor = probe_floor(row, limits, comparison) if comparison else []
+            advice = upgrade_advice(row, limits, floor)
             if advice:
                 suffix = '，看第四条副词条' if len(rolls) == 3 else ''
-                row['explanation'].append(advice['reason'] + suffix)
+                source = '按单盘词条' if comparison is None else f'对照 {comparison[1]} 仓库预览'
+                row['explanation'].append(source + '，' + advice['reason'] + suffix)
+            elif comparison and (reason := verdict(row['level'], rolls, floor)):
+                row['explanation'].append(f'对照 {comparison[1]} 仓库预览，{reason}，跳过试强化')
+            elif comparison and upgrade_advice(row, limits):
+                row['explanation'].append(f'对照 {comparison[1]} 仓库预览，暂缓强化')
     return row, dict(rules=rules.get('version'), traceRules=rule_book([row], rules, cfg['overrides'],
                                                                      current_conflicts(rules,cfg['overrides'])))

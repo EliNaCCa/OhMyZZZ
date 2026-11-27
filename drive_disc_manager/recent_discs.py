@@ -93,13 +93,15 @@ def read_front_row(scanner, total, guard, count):
 
 def describe(root, record, wiki):
     from .disc_trace import probe_trace
+    from .potential import saved_comparison
     from .store import config, equipment_names, known_agents, read
     cfg, rules = config(root), read(root/'rules.json', {})
     names = equipment_names(wiki) | cfg.get('aliases', {})
     agents = known_agents(root)
+    comparison = saved_comparison(root, cfg, rules)
     rows = []
     for disc in record['discs']:
-        row, _ = probe_trace(dict(status='verified', disc=disc), cfg, rules, wiki, agents)
+        row, _ = probe_trace(dict(status='verified', disc=disc), cfg, rules, wiki, agents, comparison=comparison)
         notes = row['reasons'] + row['explanation'] + row['review']
         rows.append(dict(name=names.get(row['set'], row['set']), slot=row['slot'], level=row['level'],
                          main=format_stats(row['observedValues']['main']), subs=format_stats(row['observedValues']['subs']),

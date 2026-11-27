@@ -200,3 +200,39 @@ with TemporaryDirectory() as tmp:
         assert '暴击伤害 4.8% → 9.6%' in last['note']
         assert read(root/'dismantle-preview.json') == batch
     print('PASS two trials, updated spare floors, three-tier budget, hand lock and replayable UID ledger')
+
+    # A copy of a three-line +0 observed on CN. Other pieces and quotas are fixtures.
+    from drive_disc_manager.potential import saved_comparison
+    from drive_disc_manager.disc_trace import probe_trace
+    fresh = piece('31', 0, {'def':1, 'def_':1, 'anomProf':1})
+    expert = piece('32', 15, {'anomProf':6, 'crit_':1, 'hp':1, 'def':1})
+    snapshot = stock([fresh, expert])
+    trial_cfg = dict(cfg, reserve=0, autoUpgrade=True, inventorySource='ocr', trimRecommended=False,
+                     reserve_rules=[dict(purpose='异常精通', stats=['anomProf'], count=1),
+                                    dict(purpose='偏暴击', count=None)])
+    trial_report = plan(snapshot, trial_cfg, rules, {})
+    item = trial_report['discs'][0]
+    assert item['decision'] == '保留' and not item.get('upgrade')
+    read_only = plan(snapshot, dict(trial_cfg, autoUpgrade=False), rules, {})['discs'][0]
+    assert read_only['decision'] == '保留' and not read_only.get('upgrade')
+    save(root/'config.json', trial_cfg)
+    probe = dict(status='verified', disc=dict(fresh, fingerprint=fingerprint(fresh)))
+    result = run_trials(app, None, trial_report, snapshot, trial_cfg, {})
+    assert result == '没有适合试强化的盘'
+    # At +9 three useful rolls would normally qualify, but only two upgrades remain.
+    developed = piece('31', 9, {'def':1, 'def_':1, 'anomProf':3, 'hp':2})
+    assert after_advice(dict(item, upgradeFloor=[]), developed, trial_cfg, {})['target'] == 12
+    assert after_advice(item, developed, trial_cfg, {}) is None
+    save(root/'inventory.json', snapshot)
+    save(root/'preview.json', dict(trial_report, generated=1_795_780_000))
+    comparison = saved_comparison(root, trial_cfg, rules)
+    notes = probe_trace(probe, trial_cfg, rules, {}, (), comparison=comparison)[0]['explanation']
+    assert any('暂缓强化' in note for note in notes) and not any('建议试到' in note for note in notes)
+    assert saved_comparison(root, trial_cfg, dict(rules, version='next')) is None
+    assert saved_comparison(root, dict(trial_cfg, reserve=1), rules) is None
+    tied = piece('32', 15, {'anomProf':5, 'crit_':1, 'hp':2, 'def':1})
+    save(root/'inventory.json', stock([fresh, tied]))
+    assert saved_comparison(root, trial_cfg, rules) is None
+    picked = plan(stock([fresh, tied]), trial_cfg, rules, {})['discs'][0]
+    assert picked['upgrade']['purpose'] == '异常精通' and picked['upgrade']['target'] == 3
+    print('PASS split-purpose thresholds, retained without a spend, tied spare, stale comparison')

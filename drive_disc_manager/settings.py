@@ -1596,7 +1596,9 @@ class ManagerInterface(BaseInterface):
         report = self.report
         if probe:
             wiki = read(wiki_path(), {})
-            row, report = probe_trace(self.probe_record,self.cfg,self.rules,wiki,known_agents(self.root))
+            from .potential import saved_comparison
+            comparison = saved_comparison(self.root, self.cfg, self.rules)
+            row, report = probe_trace(self.probe_record, self.cfg, self.rules, wiki, known_agents(self.root), comparison=comparison)
             self.detail_observation = digest(self.probe_record)
         self.detail_selection = (self.root, row, probe)
         self.detail.present(row, report, set_name=self.set_names.get(row['set'],row['set']), probe=probe, pinned=is_pinned(row, self.cfg['pins']),
