@@ -69,6 +69,7 @@ class ManagerInterface(BaseInterface):
         actions = RoundMenu(parent=more); more.setMenu(actions)
         self.import_button = self.menu_action(actions, '导入扫描文件', self.load_inventory)
         self.probe_button = self.menu_action(actions, '读一张盘', self.start_probe)
+        self.recent_button = self.menu_action(actions, '看最近获得的盘', lambda:self.start_probe(recent_count=3))
         actions.addSeparator()
         self.pin_button = self.menu_action(actions, '切换个人保护', self.pin)
         self.quota_button = self.menu_action(actions, '同类备用数量', self.set_quota)
@@ -1149,24 +1150,36 @@ class ManagerInterface(BaseInterface):
                 raise ValueError('读取方式已切换，请重新选择文件')
             self.start_preview(import_path=path)
 
-    def start_probe(self):
+    def start_probe(self, *, recent_count=None):
         from .disc_probe import probe
         account, root = self.ctx.current_instance_idx, self.root
         if int(root.name) != account or not self.ctx.run_context.is_context_stop:
             raise ValueError('请在当前账号的一条龙空闲时读盘')
         self.probe_button.setEnabled(False)
-        self.probe_note.setText('正在读取这张盘…'); self.probe_note.show()
+        self.recent_button.setEnabled(False)
+        self.probe_note.setText('正在按获得顺序读盘…' if recent_count else '正在读取这张盘…'); self.probe_note.show()
         def worker():
             try:
-                record = probe(self.ctx, root, account)
+                record = probe(self.ctx, root, account, recent_count=recent_count)
             except Exception as exc:
                 record = dict(status='failed', error=str(exc))
-            self.probe_finished.emit(record, str(root))
+            self.probe_finished.emit(dict(record, recent=recent_count is not None), str(root))
         Thread(target=worker, name='OhMyZZZ single disc', daemon=True).start()
 
     def finish_probe(self, record, root):
         self.probe_button.setEnabled(True)
+        self.recent_button.setEnabled(True)
         if str(self.root) == root and self.root.name == str(self.ctx.current_instance_idx):
+            if record.get('recent'):
+                if record.get('status') != 'verified':
+                    self.probe_note.setText(record.get('error', '读取中断')); self.probe_note.show()
+                    return
+                from .recent_discs import describe
+                rows = describe(self.root, record, read(wiki_path(), {}))
+                self.probe_note.setText('当前筛选 · 最近获得\n' + ('\n'.join(
+                    f"{r['name']} {r['slot']} 号 +{r['level']}　{r['main']}　｜　{r['subs']}　｜　{r['advice']}" for r in rows) or '仓库为空'))
+                self.probe_note.show()
+                return
             self.show_probe(record)
             self.show_reserve()
             if self.tabs.currentWidget() is self.detail and self.detail_selection[2]:

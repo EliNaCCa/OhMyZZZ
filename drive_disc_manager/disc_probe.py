@@ -56,7 +56,7 @@ def interactive_slot():
         lock.Close()
 
 
-def read_selected(scanner, total, guard):
+def read_selected(scanner, total, guard, *, target=None):
     from one_dragon.utils import cv2_utils
     from .scan_marks import MarkReader
     if total == 0:
@@ -71,6 +71,10 @@ def read_selected(scanner, total, guard):
         screen = scanner.screenshot()
         if screen is None or screen.shape[:2] != (1080,1920) or warehouse_header(ctx.ocr, screen) != ('驱动仓库', total):
             raise ValueError('复读时仓库标题、数量或画面尺寸变化')
+        if target is not None:
+            from .scan_copies import selected_position
+            if selected_position(screen, target) is None:
+                raise ValueError('选中的盘位已变化')
         crop = cv2_utils.crop_image_only(screen, area.rect)
         items = [dict(text=text, confidence=b.confidence, position=(b.x,b.y,b.x+b.w,b.y+b.h))
                  for text, boxes in (ctx.ocr.run_ocr(crop) or {}).items() for b in boxes]
@@ -121,7 +125,7 @@ def game_guard(ctx, session, check_display):
     return guard, pid
 
 
-def probe(ctx, root, account):
+def probe(ctx, root, account, *, recent_count=None):
     from .maintenance import exclusive
     record = dict(account=account, started=time.time(), route=[])
     def idle():
@@ -139,12 +143,23 @@ def probe(ctx, root, account):
                 scanner = ctx.run_context.get_application('inventory_scan', account, 'one_dragon')
                 scanner._ensure_screen_areas()
                 ctx.controller.game_win.active()
+                if recent_count is not None:
+                    from .recent_discs import leave_disc_detail
+                    leave_disc_detail(scanner, guard)
                 total = enter_warehouse(scanner, guard, trace=record['route'])
                 record['warehouseCount'] = total
-                record['disc'] = read_selected(scanner, total, guard)
+                if recent_count is None:
+                    record['disc'] = read_selected(scanner, total, guard)
+                else:
+                    from .recent_discs import read_front_row
+                    record['discs'] = read_front_row(scanner, total, guard, recent_count)
+                guard()
                 record['status'] = 'verified'
         except Exception as exc:
             record.update(status='failed', error=str(exc))
         record['finished'] = time.time()
-        save(root/'single-disc.json', record)
+        if recent_count is None:
+            save(root/'single-disc.json', record)
+        elif record['status'] == 'verified':
+            save(root/'recent-discs.json', record)
         return record
