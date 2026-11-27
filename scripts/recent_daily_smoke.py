@@ -47,13 +47,13 @@ def smoke(home, sample):
               patch('drive_disc_manager.warehouse.enter_warehouse', return_value=observed['warehouseCount']),
               patch('drive_disc_manager.recent_discs.read_front_row', return_value=discs) as front):
             result = manager.manage_inventory()
-            assert f'已记录最近获得的 {len(discs)} 张盘' in result, result
+            assert f'已记录当前筛选下最近的 {len(discs)} 张盘' in result, result
             assert front.call_count == 1 and front.call_args.args[-1] == 3
             original = read(root/'recent-discs.json')
             assert original['discs'] == discs and all(r['suggestion'] for r in original['rows'])
             save(root/'config.json', dict(cfg, inventorySource='network'))
             with patch('drive_disc_manager.network_reader.socket.create_connection', side_effect=ConnectionRefusedError()):
-                assert '已记录最近获得的' in manager.manage_inventory()
+                assert '已记录当前筛选下最近的' in manager.manage_inventory()
             saved = read(root/'recent-discs.json')
             assert saved['rows'] == original['rows'] and front.call_count == 2
             with patch('drive_disc_manager.network_reader.capture', side_effect=ValueError('账号不符')):
@@ -61,6 +61,36 @@ def smoke(home, sample):
             assert read(root/'recent-discs.json') == saved
             for f in ('inventory.json', 'cn-inventory.json', 'network-inventory.json', 'markers.json', 'upgrade-result.json'):
                 assert not (root/f).exists(), f
+
+            # First CN export, no checkpoint. Replay only the grid entry and the three observed drops.
+            from contextlib import nullcontext
+            from unittest.mock import Mock
+            import numpy as np
+            from one_dragon.base.operation.operation_base import OperationResult
+            sample_disc = {k:discs[0][k] for k in ('slotKey', 'level', 'rarity', 'setKey', 'mainStatKey', 'substats')}
+            sample_disc.update(id='101', location='', lock=False, trash=False)
+            save(root/'config.json', cfg)
+            save(root/'exports/zzz-drives-zood-v1.json', dict(format='ZOOD', version=1, source='zzz-drive-exporter', discs=[sample_disc]))
+            total = observed['warehouseCount']
+            ctx.ocr = NS(run_ocr=Mock(return_value={f'驱动仓库 [ {total} / {total + 1} ]':[NS(confidence=.99)]}))
+            scanner.ctx = ctx
+            grid = NS(execute=Mock(return_value=OperationResult(False, '正常进入逐盘核对')))
+            scanner.drive_disk_scanner = grid
+            scanner.execute = lambda: grid.execute()
+            scanner._open_export = lambda _: None
+            scanner.screenshot = lambda: np.zeros((1080,1920,3), dtype=np.uint8)
+            with (patch('drive_disc_manager.scan_marks.capture_marks', return_value=nullcontext(None)),
+                  patch('drive_disc_manager.scan_observations.save_interrupted_scan')):
+                mismatch = manager.manage_inventory()
+                assert f'游戏仓库有 {total} 张，国服导出有 1 张' in mismatch and front.call_count == 3, mismatch
+                assert grid.execute.call_count == 0 and not (root/'inventory.json').exists()
+                before = (root/'recent-discs.json').read_bytes()
+                with patch('drive_disc_manager.upgrade.pending_trial', return_value={'uid':'101'}):
+                    assert '已记录' not in manager.manage_inventory()
+                assert front.call_count == 3 and (root/'recent-discs.json').read_bytes() == before
+                ctx.ocr.run_ocr.return_value = {'驱动仓库 [ 1 / 2000 ]':[NS(confidence=.99)]}
+                assert manager.manage_inventory() == '正常进入逐盘核对'
+                assert grid.execute.call_count == 1 and not (root/'inventory.json').exists()
         ctx.run_context.is_context_running = False
         ctx.run_context.is_context_stop = True
         page = ManagerInterface(ctx)
@@ -71,7 +101,7 @@ def smoke(home, sample):
         ctx.current_instance_idx = 2
         page.on_interface_shown()
         assert not page.recent_result.isEnabled() and not page.probe_note.text()
-        print('PASS missing CN file, offline reader, account mismatch, saved rows in embedded UI; other account empty')
+        print('PASS missing/offline reader, stale CN count before grid, pending trial, matching count enters grid, saved rows in UI')
         print([(r['name'],r['slot'],r['suggestion']) for r in saved['rows']])
 
 

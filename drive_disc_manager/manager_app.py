@@ -174,13 +174,26 @@ class ManagerApp(ZApplication):
                         raise ValueError('补读盘位时账号或游戏窗口已变化')
                 try:
                     with capture_marks(scanner, self.root, guard_scan_cell) as text_cache, patch.object(scanner,'_open_export',lambda path: None):
-                        result = checked_scan(scanner, self.guard_game) if interactive else scanner.execute()
+                        if interactive:
+                            result = checked_scan(scanner, self.guard_game)
+                        elif source == 'cn_export' and cn_inventory is not None:
+                            from .warehouse import scan_with_export_count
+                            def guard_cn_scan():
+                                guard_scan_cell()
+                                guard_export()
+                            result = scan_with_export_count(scanner, len(cn_inventory['discs']), guard_cn_scan)
+                        else:
+                            result = scanner.execute()
                     if self.ctx.current_instance_idx != self.account:
                         return self.round_fail('当前账号已改变')
                     if not result.success:
                         raise ValueError(getattr(result, 'status', None) or '扫描中断')
                     if interactive:
                         self.guard_game()
+                except InventoryUnavailable as exc:
+                    if pending or interactive:
+                        raise
+                    return self.recent_when_waiting(pinned, exc)
                 except Exception:
                     if self.ctx.current_instance_idx == self.account:
                         from .scan_observations import save_interrupted_scan
@@ -279,4 +292,4 @@ class ManagerApp(ZApplication):
             count = daily_read(self, pinned, wiki_path())
         except (ValueError, OSError) as read_error:
             return self.round_fail(f'{reason} · {read_error}')
-        return self.round_fail(f'{reason} · 已记录最近获得的 {count} 张盘，完整仓库更新后可继续整理')
+        return self.round_fail(f'{reason} · 已记录当前筛选下最近的 {count} 张盘，库存更新后继续整理')

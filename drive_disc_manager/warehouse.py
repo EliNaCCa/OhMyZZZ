@@ -16,6 +16,43 @@ def warehouse_header(ocr, frame):
     return '', None
 
 
+def scan_with_export_count(scanner, expected, guard):
+    """Check the title after normal scanner navigation, before the first grid click."""
+    from unittest.mock import patch
+    from one_dragon.base.operation.operation_base import OperationResult
+    from .store import InventoryUnavailable
+
+    grid = scanner.drive_disk_scanner
+    scan_grid = grid.execute
+    failure = None
+
+    def checked_grid():
+        nonlocal failure
+        try:
+            guard()
+            frame = scanner.screenshot()
+            if frame is None or frame.shape[:2] != (1080, 1920):
+                raise ValueError('驱动仓库需要 1920×1080 游戏画面')
+            page, count = warehouse_header(scanner.ctx.ocr, frame)
+            if page != '驱动仓库':
+                raise ValueError('没读清驱动仓库的盘数')
+            if count != expected:
+                raise InventoryUnavailable(f'游戏仓库有 {count} 张，国服导出有 {expected} 张')
+            guard()
+        except (ValueError, OSError) as exc:
+            # Return through the scanner so it shuts down its OCR worker normally.
+            failure = exc
+            return OperationResult(False, str(exc))
+        scanner._disc_game_total = count
+        return scan_grid()
+
+    with patch.object(grid, 'execute', checked_grid):
+        result = scanner.execute()
+    if failure is not None:
+        raise failure
+    return result
+
+
 def enter_warehouse(operation, guard, *, timeout=16, trace=None):
     from one_dragon.base.screen.screen_utils import is_target_screen
     from one_dragon.base.geometry.point import Point
