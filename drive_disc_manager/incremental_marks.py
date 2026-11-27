@@ -5,7 +5,7 @@ from pathlib import Path
 from time import time_ns
 
 from .inventory_comparison import attribute_key, bind_observations, execution_plan
-from .store import digest, equipment_keys, fingerprint, read, save
+from .store import InventoryUnavailable, digest, equipment_keys, fingerprint, read, save
 
 
 FILE = 'mark-checkpoint.json'
@@ -101,7 +101,7 @@ def find_readings(exported, names, groups, wanted, observations):
     for sample, repeat in observations:
         key = attribute_key(sample, 1, names, reverse)
         if key not in groups:
-            raise ValueError('游戏里有国服导出未收录的盘，请刷新仓库导出')
+            raise InventoryUnavailable('游戏里有国服导出未收录的盘，请刷新仓库导出')
         if key not in waiting:
             continue
         uid = waiting[key]
@@ -144,7 +144,7 @@ def daily(app, scanner, exported, planned, pinned, wiki, field):
         return None
     check_file(exported)
     if exported['exportWrittenNs'] <= baseline['finished']:
-        raise ValueError('请刷新国服仓库导出，下次整理会接着扫新增盘')
+        raise InventoryUnavailable('国服仓库导出还没有更新')
     cfg, rules, _warnings = pinned
     dictionary = read(wiki, {})
     names = equipment_names(dictionary) | cfg.get('aliases', {})
@@ -201,7 +201,7 @@ def daily(app, scanner, exported, planned, pinned, wiki, field):
     if not dirty - copies:
         scanner._ensure_screen_areas()
         if enter_warehouse(scanner, guard) != total:
-            raise ValueError('仓库盘数有变化，请刷新国服仓库导出')
+            raise InventoryUnavailable('仓库盘数有变化，请刷新国服仓库导出')
     inspect(dirty)
     recovered = None
     if pending:

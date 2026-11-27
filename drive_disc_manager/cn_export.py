@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from .optimizer import STATS, exported_s_main
-from .store import fingerprint, inventory, read, save
+from .store import InventoryUnavailable, fingerprint, inventory, read, save
 from .subscriptions import SLOT_MAIN
 
 
@@ -155,8 +155,8 @@ def refresh(root, check_account, path=None, *, showcase_uid='', wiki=None):
     bound = previous.get('exportFile', '')
     manual = path is not None
     path = (Path(path) if manual else source_path(root, previous)).resolve()
-    if not path.is_file():
-        raise ValueError(f'尚未收到国服仓库文件。等待读取器导出到 {path}')
+    if not path.exists():
+        raise InventoryUnavailable(f'尚未收到国服仓库文件。等待读取器导出到 {path}')
     if path.suffix.lower() != '.json':
         raise ValueError('请选择 ZOOD 的 JSON 文件')
     if manual or not bound or path != Path(bound):

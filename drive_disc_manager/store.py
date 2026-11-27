@@ -7,6 +7,10 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 
+class InventoryUnavailable(ValueError):
+    """No current reader export is available for this run."""
+
+
 def digest(value):
     raw = json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
     return hashlib.sha256(raw.encode()).hexdigest()

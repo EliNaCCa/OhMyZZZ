@@ -70,6 +70,7 @@ class ManagerInterface(BaseInterface):
         self.import_button = self.menu_action(actions, '导入扫描文件', self.load_inventory)
         self.probe_button = self.menu_action(actions, '读一张盘', self.start_probe)
         self.recent_button = self.menu_action(actions, '看最近获得的盘', lambda:self.start_probe(recent_count=3))
+        self.recent_result = self.menu_action(actions, '上次读到的新盘', self.show_recent)
         actions.addSeparator()
         self.pin_button = self.menu_action(actions, '切换个人保护', self.pin)
         self.quota_button = self.menu_action(actions, '同类备用数量', self.set_quota)
@@ -623,6 +624,7 @@ class ManagerInterface(BaseInterface):
         self.editor_account = self.root
         self.editor_base, text = self.editor_drafts.get(self.root, (deepcopy(self.cfg), pretty(self.cfg)))
         self.show_probe(read(self.root/'single-disc.json', {}))
+        self.recent_result.setEnabled((self.root/'recent-discs.json').is_file())
         if text != self.editor.toPlainText(): self.editor.setPlainText(text)
         self.rows=self.report.get('discs',[])
         from .scan_observations import show_observations
@@ -1174,16 +1176,30 @@ class ManagerInterface(BaseInterface):
                 if record.get('status') != 'verified':
                     self.probe_note.setText(record.get('error', '读取中断')); self.probe_note.show()
                     return
-                from .recent_discs import describe
-                rows = describe(self.root, record, read(wiki_path(), {}))
-                self.probe_note.setText('当前筛选 · 最近获得\n' + ('\n'.join(
-                    f"{r['name']} {r['slot']} 号 +{r['level']}　{r['main']}　｜　{r['subs']}　｜　{r['advice']}" for r in rows) or '仓库为空'))
-                self.probe_note.show()
+                self.recent_result.setEnabled(True)
+                self.show_recent(record)
                 return
             self.show_probe(record)
             self.show_reserve()
             if self.tabs.currentWidget() is self.detail and self.detail_selection[2]:
                 self.refresh_open_detail()
+
+    def show_recent(self, record=None):
+        from datetime import datetime
+        from .recent_discs import describe
+        self.check_account(self.root)
+        if record is None:
+            record = read(self.root/'recent-discs.json', {})
+        if record.get('status') != 'verified' or str(record.get('account')) != self.root.name:
+            raise ValueError('当前账号还没有新盘记录')
+        rows = record.get('rows')
+        if rows is None:
+            rows = describe(self.root, record, read(wiki_path(), {}))
+        stamp = datetime.fromtimestamp(record['finished']).strftime('%m-%d %H:%M')
+        lines = [f"{r['name']} {r['slot']} 号 +{r['level']}　{r['main']}　｜　{r['subs']}　｜　{r['suggestion']}" for r in rows]
+        self.probe_note.setText(f'{stamp} · 当前筛选下最近获得的 {len(rows)} 张' + ('\n' + '\n'.join(lines) if lines else ''))
+        self.probe_note.setToolTip('\n'.join(r['advice'] for r in rows))
+        self.probe_note.show()
 
     def show_probe(self, record):
         self.probe_record = record
@@ -1191,6 +1207,7 @@ class ManagerInterface(BaseInterface):
         self.observation_button.setEnabled(verified)
         self.detail_button.setEnabled(verified or self.table.currentRow() >= 0)
         error = record.get('error', '')
+        self.probe_note.setToolTip('')
         self.probe_note.setText(error)
         self.probe_note.setVisible(bool(error))
 

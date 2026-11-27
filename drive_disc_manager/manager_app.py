@@ -4,7 +4,7 @@ from one_dragon.utils import os_utils
 from zzz_od.application.zzz_application import ZApplication
 from .drive_disc_manager_const import APP_ID, APP_NAME
 from .service import preview, rule_snapshot
-from .store import import_inventory, read
+from .store import InventoryUnavailable, import_inventory, read
 from .manual_equip import MANUAL_GROUP, SCAN_GROUP, SelectionChanged, checked_scan, manual_request, verify_selection
 
 
@@ -86,12 +86,17 @@ class ManagerApp(ZApplication):
                 def same_account():
                     if self.ctx.current_instance_idx != self.account or not self.ctx.run_context.is_context_running:
                         raise ValueError('账号已切换或任务已停止')
-                if source == 'cn_export':
-                    from .cn_export import refresh
-                    refresh(self.root, same_account, showcase_uid=cfg.get('showcaseUid', ''), wiki=read(wiki_path(), {}))
-                else:
-                    from .network_reader import capture
-                    capture(self.root, same_account)
+                try:
+                    if source == 'cn_export':
+                        from .cn_export import refresh
+                        refresh(self.root, same_account, showcase_uid=cfg.get('showcaseUid', ''), wiki=read(wiki_path(), {}))
+                    else:
+                        from .network_reader import capture
+                        capture(self.root, same_account)
+                except InventoryUnavailable as exc:
+                    if interactive or pending:
+                        raise
+                    return self.recent_when_waiting(pinned, exc)
                 if mark or field or upgrade:
                     if source == 'network':
                         from .network_reader import inventory_guard
@@ -131,7 +136,12 @@ class ManagerApp(ZApplication):
                     return equip_cn_targets(self, scanner, cfg, cn_plan, cn_inventory, field, names, wiki, request)
                 if mark and cn_plan is not None:
                     from .incremental_marks import daily, FILE as CHECKPOINT
-                    delta = daily(self, scanner, cn_inventory, cn_plan, pinned, wiki_path(), field)
+                    try:
+                        delta = daily(self, scanner, cn_inventory, cn_plan, pinned, wiki_path(), field)
+                    except InventoryUnavailable as exc:
+                        if pending:
+                            raise
+                        return self.recent_when_waiting(pinned, exc)
                     if delta is not None:
                         return delta
                     (self.root/CHECKPOINT).unlink(missing_ok=True)
@@ -262,3 +272,11 @@ class ManagerApp(ZApplication):
             return self.round_success(' / '.join(messages) if messages else '预览 · '+str(report['counts']))
         except (KeyError,ValueError,OSError,TypeError) as exc:
             return self.round_fail(str(exc))
+
+    def recent_when_waiting(self, pinned, reason):
+        from .recent_discs import daily_read
+        try:
+            count = daily_read(self, pinned, wiki_path())
+        except (ValueError, OSError) as read_error:
+            return self.round_fail(f'{reason} · {read_error}')
+        return self.round_fail(f'{reason} · 已记录最近获得的 {count} 张盘，完整仓库更新后可继续整理')

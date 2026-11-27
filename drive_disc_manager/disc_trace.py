@@ -91,12 +91,23 @@ def probe_trace(record, cfg, rules, wiki, known_owned, *, comparison=None):
             floor = probe_floor(row, limits, comparison) if comparison else []
             advice = upgrade_advice(row, limits, floor)
             if advice:
+                row['probeAdvice'] = f"可试到 +{advice['target']} · {advice['purpose']}"
                 suffix = '，看第四条副词条' if len(rolls) == 3 else ''
                 source = '按单盘词条' if comparison is None else f'对照 {comparison[1]} 仓库预览'
                 row['explanation'].append(source + '，' + advice['reason'] + suffix)
             elif comparison and (reason := verdict(row['level'], rolls, floor)):
+                row['probeAdvice'] = '跳过试强化'
                 row['explanation'].append(f'对照 {comparison[1]} 仓库预览，{reason}，跳过试强化')
             elif comparison and upgrade_advice(row, limits):
+                row['probeAdvice'] = '暂缓强化'
                 row['explanation'].append(f'对照 {comparison[1]} 仓库预览，暂缓强化')
+    if row['marked']:
+        row['probeAdvice'] = '已弃置'
+    elif disc.get('location'):
+        row['probeAdvice'] = '已装备'
+    elif disc['lockState'] == 'locked':
+        row['probeAdvice'] = '已锁定'
+    elif row['review']:
+        row['probeAdvice'] = '待核对'
     return row, dict(rules=rules.get('version'), traceRules=rule_book([row], rules, cfg['overrides'],
                                                                      current_conflicts(rules,cfg['overrides'])))

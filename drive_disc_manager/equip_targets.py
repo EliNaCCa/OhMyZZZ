@@ -6,7 +6,7 @@ from .inventory_comparison import attribute_key
 from .loadout import apply_checked_targets, target_loadout
 from .manual_equip import SelectionChanged, guarded_grid, target_confirmation, verify_targets
 from .stat_reading import checked_values
-from .store import equipment_keys, fingerprint, roll_base
+from .store import InventoryUnavailable, equipment_keys, fingerprint, roll_base
 
 
 def reading_identity(disc):
@@ -67,7 +67,7 @@ def warehouse_observations(scanner, total, guard, *, by_acquisition=False):
     scanner._ensure_screen_areas()
     observed_total = enter_warehouse(scanner, guard)
     if observed_total != total:
-        raise ValueError(f'游戏仓库有 {observed_total} 张，国服导出有 {total} 张，请更新导出文件')
+        raise InventoryUnavailable(f'游戏仓库有 {observed_total} 张，本轮库存有 {total} 张，请刷新库存')
     if by_acquisition:
         from .warehouse_sort import newest_first
         newest_first(scanner, total, guard)

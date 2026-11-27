@@ -1,5 +1,5 @@
 """Read the first row of the current warehouse filter in acquisition order."""
-from time import sleep
+from time import sleep, time
 
 from .disc_probe import read_selected
 from .manual_equip import guarded_grid
@@ -76,19 +76,52 @@ def read_front_row(scanner, total, guard, count):
         return discs
 
 
-def describe(root, record, wiki):
+def daily_read(app, pinned, wiki):
+    from .scanner_status import scanner_status
+    from .store import read, save
+    from .warehouse import enter_warehouse
+
+    ctx = app.ctx
+    def guard():
+        if ctx.current_instance_idx != app.account or not ctx.run_context.is_context_running:
+            raise ValueError('任务已停止或账号已切换')
+        if not ctx.controller.game_win.is_win_active:
+            raise ValueError('游戏窗口已失去焦点')
+
+    guard()
+    ready, reason = scanner_status(ctx, app.account)
+    if not ready:
+        raise ValueError(reason)
+    scanner = ctx.run_context.get_application('inventory_scan', app.account, app.group)
+    scanner._ensure_screen_areas()
+    started = time()
+    leave_disc_detail(scanner, guard)
+    total = enter_warehouse(scanner, guard)
+    discs = read_front_row(scanner, total, guard, 3)
+    guard()
+    record = dict(account=app.account, started=started, finished=time(), status='verified',
+                  warehouseCount=total, discs=discs, rules=pinned[1].get('version'))
+    record['rows'] = describe(app.root, record, read(wiki, {}), pinned=pinned, single_disc_only=True)
+    guard()
+    save(app.root/'recent-discs.json', record)
+    return len(discs)
+
+
+def describe(root, record, wiki, *, pinned=None, single_disc_only=False):
     from .disc_trace import probe_trace
     from .potential import saved_comparison
     from .store import config, equipment_names, known_agents, read
-    cfg, rules = config(root), read(root/'rules.json', {})
+    cfg, rules = pinned[:2] if pinned else (config(root), read(root/'rules.json', {}))
     names = equipment_names(wiki) | cfg.get('aliases', {})
     agents = known_agents(root)
-    comparison = saved_comparison(root, cfg, rules)
+    # When the reader was unavailable this run, only the single-disc advice is current.
+    comparison = None if single_disc_only else saved_comparison(root, cfg, rules)
     rows = []
     for disc in record['discs']:
         row, _ = probe_trace(dict(status='verified', disc=disc), cfg, rules, wiki, agents, comparison=comparison)
         notes = row['reasons'] + row['explanation'] + row['review']
         rows.append(dict(name=names.get(row['set'], row['set']), slot=row['slot'], level=row['level'],
                          main=format_stats(row['observedValues']['main']), subs=format_stats(row['observedValues']['subs']),
+                         suggestion=row.get('probeAdvice', '待比较同类盘'),
                          advice='、'.join(dict.fromkeys(notes)) or '留盘要和仓库里的同类盘比较'))
     return rows

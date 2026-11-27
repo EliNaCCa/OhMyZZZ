@@ -3,7 +3,7 @@ import json
 import socket
 from contextlib import closing
 
-from .store import inventory, network_agents, observed_agents, save
+from .store import InventoryUnavailable, inventory, network_agents, observed_agents, save
 
 
 def reader_process(conn):
@@ -31,10 +31,14 @@ def fetch_export(port=23313, *, identify=reader_process):
             with closing(websocket.create_connection(f'ws://127.0.0.1:{port}/ws', socket=conn, redirect_limit=0,
                                                       timeout=8, suppress_origin=True)) as ws:
                 payload = ws.recv()
+    except ConnectionRefusedError as exc:
+        raise InventoryUnavailable('国际服读取器尚未开启 Live export') from exc
     except (OSError, websocket.WebSocketException) as exc:
         raise ValueError('请先打开网络读取器，在登录前开启 Live export。') from exc
-    if not isinstance(payload, str) or not payload or len(payload) > 16_000_000:
-        raise ValueError('网络读取器还没有可用的库存')
+    if payload == '':
+        raise InventoryUnavailable('网络读取器还没有可用的库存')
+    if not isinstance(payload, str) or len(payload) > 16_000_000:
+        raise ValueError('网络读取器返回的库存格式有误')
     return identity, json.loads(payload)
 
 
