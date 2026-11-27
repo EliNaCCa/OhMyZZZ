@@ -75,5 +75,14 @@ def probe_trace(record, cfg, rules, wiki, known_owned):
         fields = rules.get('fields', {})
         catalog = roster_catalog({'discs':[disc]}, fields, cfg, wiki, known_owned)
         assess_rules(row, cfg, fields, reverse, *compile_roster(catalog, fields, cfg['overrides'], reverse))
+        if (disc.get('ownerState') == 'bag' and disc['lockState'] == 'unlocked' and not disc.get('location')
+                and disc.get('markState') == 'unmarked' and not row['reasons'] and not row['review']):
+            from .reserve_policy import matching_rules, normalized_rule, upgrade_advice
+            quotas = [normalized_rule(rule, reverse) for rule in cfg['reserve_rules']]
+            limits, _ = matching_rules(row, dict(cfg, reserve_rules=quotas))
+            advice = upgrade_advice(row, limits)
+            if advice:
+                suffix = '，看第四条副词条' if len(rolls) == 3 else ''
+                row['explanation'].append(f"建议试到 +{advice['target']}{suffix}")
     return row, dict(rules=rules.get('version'), traceRules=rule_book([row], rules, cfg['overrides'],
                                                                      current_conflicts(rules,cfg['overrides'])))

@@ -35,10 +35,10 @@ def quota(value):
 
 
 def upgrade_advice(row, limits):
-    """Suggest one three-level step on a kept S disc, using its current rolls."""
+    """Rate one S disc's next three-level step from its own stats and matching uses."""
     growth = row.get('development')
     if (not growth or row['level'] >= 15 or row['marked'] or row['review']
-            or not row['reasons'] or not row['recommendations']):
+            or not row['recommendations']):
         return None
     targets = [(agent, rolls) for agent, rolls in row.get('roleRolls', {}).items()]
     for purpose, (_, count, stats) in limits.items():

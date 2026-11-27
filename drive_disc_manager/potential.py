@@ -95,7 +95,7 @@ def evaluate(rows, cfg, names):
             if (row['level'] < 15 and row['decision'] != '保留' and not row['reasons'] and floor
                     and '超出同类备用名额' in row['explanation'] and row['recommendations']):
                 limits, _ = matching_rules(row, limits_cfg)
-                advice = upgrade_advice(dict(row, reasons=['试强化']), limits)
+                advice = upgrade_advice(row, limits)
                 if advice or row['level'] == 3:
                     row.update(decision='保留', reasons=['试强化'] if advice else ['+3 胚子留作备用'])
                     row.pop('checkForDiscard', None)

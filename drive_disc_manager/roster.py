@@ -1,6 +1,7 @@
 """Join explicitly identified scanner characters, build sets and guide recommendations."""
 import re
 from collections import defaultdict
+from functools import lru_cache
 
 from .guide_sets import UNKNOWN as UNKNOWN_ICON
 from .subscriptions import ELEMENTS, STATS, effective
@@ -74,6 +75,21 @@ def preview_bindings(profiles, wiki):
     return result
 
 
+@lru_cache(maxsize=1)
+def host_guide_names():
+    """The host updates its Chinese roster independently of the scanner dictionary."""
+    try:
+        from zzz_od.game_data.agent import AgentEnum
+    except ModuleNotFoundError as exc:
+        if exc.name != 'zzz_od':
+            raise
+        return ()
+    # OneDragon includes the protagonist variant in this key. Both sheets use Pyrois.
+    sheet_names = {'pyrois_wise': 'Pyrois'}
+    return tuple((a.value.agent_name, a.value.agent_id, sheet_names.get(a.value.agent_id, a.value.agent_id))
+                 for a in AgentEnum if a.value.agent_type.name != 'UNKNOWN')
+
+
 def roster_catalog(z, fields, cfg, wiki, known_owned=()):
     """A stable list for both settings and planning. Unknown identities remain visible."""
     entries = {}
@@ -103,6 +119,19 @@ def roster_catalog(z, fields, cfg, wiki, known_owned=()):
         for alias in (uid, name, agent.get('code'), agent.get('CHS')):
             if isinstance(alias,str) and alias:
                 scan_keys[agent_id(alias)] = item['key']
+
+    # Join host names only to a published role. Physical wearer IDs still come from the scanner.
+    for label, code, sheet_name in host_guide_names():
+        key = agent_id(sheet_name)
+        item = entries.get(key)
+        if not item or not (item['guides'] or item['builds']):
+            continue
+        aliases = {agent_id(label), agent_id(code), key}
+        if any(scan_keys.get(alias, key) != key for alias in aliases):
+            continue
+        if item['label'] == item['name']:
+            item['label'] = label
+        scan_keys.update(dict.fromkeys(aliases, key))
 
     from .store import observed_agents
     for raw in [*known_owned, *observed_agents(z)]:
@@ -261,7 +290,10 @@ def explain(row, by_set, unresolved, excluded):
                 row.setdefault('roleRolls',{})[label] = rolls
                 row.setdefault('roleStats',{})[label] = sorted(preferred)
                 row.setdefault('roleHits',{})[label] = len(preferred.intersection(row['rolls']))
-                row['explanation'].append(f'{label}适用副词条合计 {rolls} 档')
+                from .stat_reading import format_stats
+                matched_values = {k:v for k,v in ((row.get('observedValues') or {}).get('subs') or {}).items() if k in preferred}
+                details = format_stats(matched_values)
+                row['explanation'].append(f'{label}可用副词条 · {details}' if details else f'{label}可用副词条 {rolls} 档')
                 rules.extend((field, label, '用于备用盘副词条排序') for field in sub_fields)
         elif any(unknown for _, _, unknown in slots.get(row['slot'], ())):
             row['review'].append('角色主词条待核 · '+label)
