@@ -49,6 +49,7 @@ def smoke(home):
             marker.rows = {row['fp']:row for row in marker.report['discs']}
             marker.seen_counts = Counter(row['fp'] for row in marker.report['discs'])
             marker.observed, marker.released = {}, set()
+            marker.confirmed_locks = {}
             return marker
 
         def visit(marker, mode, d):

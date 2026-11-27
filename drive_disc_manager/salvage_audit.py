@@ -54,17 +54,24 @@ def prepare_batch(z, report, observed, grade, *, include_marked=True, before_mar
           type(z.get('exportWrittenNs')) is int and 0 < z['exportWrittenNs'] <= time_ns())
     if z.get('source') == 'OhMyZZZ CN' and not cn:
         raise ValueError('请先刷新国服导出文件，再核对拆解清单')
+    delta = cn and z['audit'].get('incremental') is True
+    fresh = set(z['audit'].get('verifiedUids', ())) if delta else set()
     for disc in discs:
         fp = fingerprint(disc)
+        cached = delta and disc['id'] not in fresh
+        if cached and disc['lock'] is True:
+            continue  # This run's CN export confirms that the native selector cannot take it.
+        if cached and include_marked:
+            raise ValueError('拆解前需核对未锁盘的弃置状态，请重新整理')
         mark = observed.get(fp, disc.get('markState')) if counts[fp]==1 else disc.get('markState')
-        if existing_only and ((disc.get('lockState') == 'locked' and disc.get('lock') is True)
+        if existing_only and not cached and ((disc.get('lockState') == 'locked' and disc.get('lock') is True)
                               or (disc.get('ownerState') == 'worn' and disc.get('location'))):
             continue
         if include_marked and mark not in ('marked','unmarked'):
             if not (before_marking or existing_only):
                 raise ValueError('存在未读清的弃置标记，已停在可逆标记阶段')
             unread_marks += 1
-        rank = disc.get('observedGrade')
+        rank = disc['rarity'] if delta else disc.get('observedGrade')
         if include_marked and mark == 'marked':
             source = '游戏原有弃置' if disc.get('markState') == 'marked' else '本轮观察到弃置'
         elif rank in ranks:

@@ -6,7 +6,7 @@ from .salvage_audit import native_run, needs_review, prepare_batch
 from .task_order import following_native
 
 
-def handoff(app, report, observed=None, *, batch=None):
+def handoff(app, report, observed=None, *, batch=None, snapshot=None):
     upcoming = following_native(app.ctx, app.account, app.group)
     if upcoming is None:
         if batch is not None:
@@ -20,7 +20,8 @@ def handoff(app, report, observed=None, *, batch=None):
     previous = read(app.root/'dismantle-result.json', {})
     if needs_review(previous):
         raise ValueError('请先到「库存记录」核对上次的盘')
-    snapshot = read(app.root/'inventory.json')
+    if snapshot is None:
+        snapshot = read(app.root/'inventory.json')
     receipt = prepare_batch(snapshot, report, observed or {}, native.dismantle_level,
                             include_marked=native.dismantle_abandon, before_marking=observed is None)
     native_state = native_run(Path(os_utils.get_work_dir()), app.account)

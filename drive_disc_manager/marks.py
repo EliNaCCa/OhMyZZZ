@@ -41,7 +41,7 @@ def mark_action(live_state, previous, wants_trash):
     return 'mark' if wants_trash else 'keep'
 
 
-def reconcile_scan(root, inventory, names=None):
+def reconcile_scan(root, inventory, names=None, *, verified_uids=None):
     from .store import digest, fingerprint, inventory as validate_inventory, read, save, roll_base
     from .stat_reading import checked_values
     import time
@@ -67,6 +67,8 @@ def reconcile_scan(root, inventory, names=None):
                 if digest(entry['values']) not in signatures:
                     entry.update(previousState=entry['state'], state='absent-after-rescan', observedAt=now)
     for disc in inventory['discs']:
+        if verified_uids is not None and disc.get('exportUid') not in verified_uids:
+            continue
         fp = fingerprint(disc)
         live = disc.get('markState', 'unknown')
         uid = disc.get('exportUid')

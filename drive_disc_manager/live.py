@@ -22,6 +22,7 @@ def hints(ocr, screen):
 
 class Marker:
     batch = None
+    scope = None
 
     def __init__(self, app, scanner, report, *, readings=()):
         if report.get('networkPreview'):
@@ -40,6 +41,7 @@ class Marker:
         self.history = read(self.root/'markers.json', {})
         self.observed = {}
         self.released = set()
+        self.confirmed_locks = {}
         asset = Path(__file__).parent/'assets'/'lock_open.png'
         import numpy as np
         self.template = cv2.imdecode(np.frombuffer(asset.read_bytes(),np.uint8),cv2.IMREAD_GRAYSCALE)
@@ -47,6 +49,8 @@ class Marker:
             raise ValueError('缺少开锁模板')
 
     def guard(self):
+        if getattr(self, 'guard_export', None):
+            self.guard_export()
         if not self.app.ctx.run_context.is_context_running or self.app.ctx.current_instance_idx != self.app.account:
             raise ValueError('运行状态或账号已改变')
         if not self.app.ctx.controller.game_win.is_win_active:
@@ -84,6 +88,8 @@ class Marker:
         disc.update(rarity=rank, level=level)
         fp = fingerprint(disc)
         if fp not in self.rows or self.seen_counts[fp]!=1:
+            return None
+        if self.scope is not None and self.rows[fp].get('exportUid') not in self.scope:
             return None
         expected = self.rows[fp].get('observedValues')
         if not expected or measure(items, disc, self.parser) != expected:
@@ -128,6 +134,7 @@ class Marker:
         if self.detail() != (fp, expected_lock, expected_mark, equipped):
             raise ValueError('操作结果未能复读，先对账')
         self.observed[fp] = expected_mark
+        self.confirmed_locks[fp] = expected_lock == 'locked'
         self.remember(fp, state, spare=spare)
 
     def handle_disc(self, mode, detail, row):
@@ -176,6 +183,7 @@ class Marker:
     def phase_targets(self, mode):
         todo = {}
         for fp,row in self.rows.items():
+            if self.scope is not None and row.get('exportUid') not in self.scope: continue
             if row['review'] or row.get('ambiguous') or self.seen_counts[fp]!=1: continue
             if mode=='lock' and row['decision']=='保留': todo[fp]=row
             if mode=='mark' and row['decision']=='弃置候选': todo[fp]=row

@@ -58,7 +58,7 @@ def match_targets(exported, targets, names, observations):
 
 def warehouse_observations(scanner, total, guard):
     from one_dragon.utils import cv2_utils
-    from .scan_copies import selected_position, scroll_thumb
+    from .scan_copies import selected_position, scroll_thumb, viewport_stamp
     from .scan_marks import MarkReader
     from .warehouse import enter_warehouse, warehouse_header
 
@@ -79,20 +79,25 @@ def warehouse_observations(scanner, total, guard):
             raise ValueError('仓库画面或盘数已变化')
         return screen
 
-    def read_disc(screen, point):
-        if selected_position(screen, point) is None:
+    def read_disc(screen, point, page):
+        selected = selected_position(screen, point)
+        if selected is None:
             return None
         crop = cv2_utils.crop_image_only(screen, area.rect)
         items = [dict(text=text, confidence=b.confidence, position=(b.x,b.y,b.x+b.w,b.y+b.h))
                  for text, boxes in (ctx.ocr.run_ocr(crop) or {}).items() for b in boxes]
-        return MarkReader(scanner.drive_disk_scanner.parser, ctx.ocr, screen[985:1070,1050:1920]).parse_ocr_result(items, crop)
+        cell = (page, *selected)
+        thumb = scroll_thumb(screen)
+        if thumb:
+            cell += (viewport_stamp(screen, selected[0], thumb), thumb)
+        return MarkReader(scanner.drive_disk_scanner.parser, ctx.ocr, screen[985:1070,1050:1920], cell).parse_ocr_result(items, crop)
 
     with guarded_grid(scanner.drive_disk_scanner, guard) as grid:
         frame()
         grid.ctx.controller.scroll(-120, grid._scroll_list_center())
         sleep(.5)
         unchanged = 0
-        for _ in range(total + 1):
+        for page in range(total + 1):
             screen = frame()
             points = grid._detect_points(screen)
             if not points:
@@ -106,9 +111,9 @@ def warehouse_observations(scanner, total, guard):
                     if not grid._ensure_selected(point, row, col):
                         continue
                     grid._stable_screenshot()
-                    disc = read_disc(frame(), point)
+                    disc = read_disc(frame(), point, page)
                     if disc and disc.get('observedValues') and disc.get('observedGrade'):
-                        yield disc, lambda p=point: read_disc(frame(), p)
+                        yield disc, lambda p=point, n=page: read_disc(frame(), p, n)
             before = frame()
             grid.ctx.controller.scroll(3, grid._scroll_list_center())
             sleep(.55)

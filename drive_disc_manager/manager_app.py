@@ -115,6 +115,12 @@ class ManagerApp(ZApplication):
                     wiki = wiki_path()
                     names = equipment_names(read(wiki, {})) | cfg.get('aliases', {})
                     return equip_cn_targets(self, scanner, cfg, cn_plan, cn_inventory, field, names, wiki, request)
+                if mark and cn_plan is not None:
+                    from .incremental_marks import daily, FILE as CHECKPOINT
+                    delta = daily(self, scanner, cn_inventory, cn_plan, pinned, wiki_path(), field)
+                    if delta is not None:
+                        return delta
+                    (self.root/CHECKPOINT).unlink(missing_ok=True)
                 scan_started = time()
                 exports = Path(os_utils.get_work_dir())/'.debug/inventory_exports'
                 before = {p:p.stat().st_mtime_ns for p in exports.glob('inventory_*.json')}
@@ -189,6 +195,10 @@ class ManagerApp(ZApplication):
                 from .live import Marker
                 from .dismantle import handoff
                 marker = Marker(self, scanner, report, readings=scanner.ocr_worker.scanned_discs)
+                if cn_plan is not None:
+                    from .incremental_marks import check_file
+                    marker.guard_export = lambda: check_file(cn_inventory)
+                    marker.guard_export()
                 marker.batch = handoff(self, report)
                 observed = marker.run()
                 if marker.batch:
@@ -199,6 +209,9 @@ class ManagerApp(ZApplication):
                 from .equip_ui import EquipUI
                 receipt = apply_loadout(self.root,cfg,report,snapshot,EquipUI(self,scanner,wiki_path()),name=field,names=names)
                 messages.append(f"{receipt['profile']} · 已复读 {len(receipt['verified'])} 个号位")
+            if mark and cn_plan is not None:
+                from .incremental_marks import checkpoint
+                checkpoint(self.root, cn_inventory, cn_plan, snapshot, report, marker)
             return self.round_success(' / '.join(messages) if messages else '预览 · '+str(report['counts']))
         except (KeyError,ValueError,OSError,TypeError) as exc:
             return self.round_fail(str(exc))

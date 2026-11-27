@@ -11,6 +11,30 @@ def attribute_key(disc, base, names, reverse):
             tuple(sorted((s['key'], 1 + s['upgrades'] - base) for s in disc['substats'])))
 
 
+def bind_observations(disc, observations, export_base, game_base):
+    row = dict(disc, exportUid=disc['id'], exportSet=disc['setKey'], location='', ownerState='unknown', lockState='unknown',
+               markState='unknown', observedGrade=None, observedValues=None)
+    if observations:
+        def controls(d):
+            return (d.get('ownerState'), d.get('location', ''), d.get('lockState'), d.get('markState'))
+        sample = observations[0]
+        values = checked_values(sample, game_base)
+        state, wearer, locked, marked = controls(sample)
+        owner_known = (state == 'worn' and bool(wearer)) or (state == 'bag' and not wearer)
+        if (values and owner_known
+                and locked in ('locked', 'unlocked') and marked in ('marked', 'unmarked')
+                and all(checked_values(d, game_base) == values and controls(d) == controls(sample)
+                           and d.get('lock') is (locked == 'locked') and d.get('trash') is (marked == 'marked')
+                           and d.get('observedGrade') == disc['rarity'] for d in observations)
+                and (disc['rarity'] != 'S' or values == checked_values(disc, export_base))):
+            row.update(setKey=sample['setKey'], observedValues=values, observedGrade=disc['rarity'])
+            for field in ('ownerState', 'location', 'markState', 'lockState', 'lock', 'trash'):
+                row[field] = sample[field]
+            if 'mainStatValue' in sample:
+                row['mainStatValue'] = sample['mainStatValue']
+    return row
+
+
 def verify_cn_inventory(exported, game, readings, names):
     """Keep the export's physical IDs. The scan supplies only observable controls and stats."""
     from .cn_export import SOURCE
@@ -40,27 +64,8 @@ def verify_cn_inventory(exported, game, readings, names):
         # A card can appear on overlapping pages. It can supply controls for one
         # UID only when the inventory itself says this attribute line is unique.
         for disc in group:
-            row = dict(disc, exportUid=disc['id'], exportSet=disc['setKey'], location='', ownerState='unknown', lockState='unknown',
-                       markState='unknown', observedGrade=None, observedValues=None)
-            if len(group) == 1:
-                def controls(d):
-                    return (d.get('ownerState'), d.get('location', ''), d.get('lockState'), d.get('markState'))
-                sample = observations[0]
-                values = checked_values(sample, roll_base(game))
-                state, wearer, locked, marked = controls(sample)
-                owner_known = (state == 'worn' and bool(wearer)) or (state == 'bag' and not wearer)
-                if (values and owner_known
-                        and locked in ('locked', 'unlocked') and marked in ('marked', 'unmarked')
-                        and all(checked_values(d, roll_base(game)) == values and controls(d) == controls(sample)
-                                   and d.get('lock') is (locked == 'locked') and d.get('trash') is (marked == 'marked')
-                                   and d.get('observedGrade') == disc['rarity'] for d in observations)
-                        and (disc['rarity'] != 'S' or values == checked_values(disc, roll_base(exported)))):
-                    row.update(setKey=sample['setKey'], observedValues=values, observedGrade=disc['rarity'])
-                    for field in ('ownerState', 'location', 'markState', 'lockState', 'lock', 'trash'):
-                        row[field] = sample[field]
-                    if 'mainStatValue' in sample:
-                        row['mainStatValue'] = sample['mainStatValue']
-            results.append(row)
+            results.append(bind_observations(disc, observations if len(group) == 1 else (),
+                                             roll_base(exported), roll_base(game)))
     snapshot = dict(format='ZOD', version=1, dbVersion=2, source='OhMyZZZ CN', discs=results,
                     characters=game.get('characters', []), wengines=game.get('wengines', []),
                     exportInventory=digest(exported), exportFile=exported.get('exportFile'), exportWrittenNs=exported.get('exportWrittenNs'),
