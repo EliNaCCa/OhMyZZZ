@@ -25,6 +25,8 @@ def validate(value):
         if type(cfg[key]) is not bool: raise ValueError(key+' 应为布尔值')
     if cfg['autoUpgrade'] and not cfg['run_scanner']:
         raise ValueError('试强化需要先刷新驱动仓库')
+    if type(cfg['upgradeSteps']) is not int or not 1 <= cfg['upgradeSteps'] <= 99:
+        raise ValueError('每轮强化可设 1 到 99 档')
     for r in cfg['reserve_rules']:
         quota(r['count'])
         if 'trimRecommended' in r and type(r['trimRecommended']) is not bool:

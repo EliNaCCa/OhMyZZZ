@@ -142,7 +142,7 @@ def inventory(z, *, preview_only=False):
 
 def defaults():
     return dict(reserve=2, reserve_rules=[], trimRecommended=False, pins=[], protect15=True, protectNaturalCrit=True, profiles=[], overrides={},
-                auto_sync=True, run_scanner=True, applyMarkers=False, autoUpgrade=False, rotateSpareLocks=False, fieldProfile='',
+                auto_sync=True, run_scanner=True, applyMarkers=False, autoUpgrade=False, upgradeSteps=1, rotateSpareLocks=False, fieldProfile='',
                 optimizer_url='', roster=[], aliases={}, includeOwned=True, futureAgents=[], excludedAgents=[],
                 inventorySource='ocr', dailyLimit=1, weeklyLimit=7)
 

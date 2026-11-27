@@ -127,7 +127,7 @@ class ManagerApp(ZApplication):
                 scan_started = time()
                 exports = Path(os_utils.get_work_dir())/'.debug/inventory_exports'
                 before = {p:p.stat().st_mtime_ns for p in exports.glob('inventory_*.json')}
-                if cn_inventory is None and (mark or field) and any(str(key).startswith('cn-uid/') for key in cfg['pins']):
+                if cn_inventory is None and (mark or field or upgrade) and any(str(key).startswith('cn-uid/') for key in cfg['pins']):
                     from .cn_export import FILE, refresh
                     def current_account():
                         if self.ctx.current_instance_idx != self.account or not self.ctx.run_context.is_context_running:
@@ -220,10 +220,11 @@ class ManagerApp(ZApplication):
                 from .incremental_marks import checkpoint
                 checkpoint(self.root, cn_inventory, cn_plan, snapshot, report, marker)
             if upgrade:
-                from .upgrade import try_one
-                messages.append(try_one(self, scanner, report, snapshot, cfg, names,
-                                        network_plan=network_plan if source == 'network' else None,
-                                        guard_export=marker.guard_export if mark and cn_plan is not None else None))
+                from .upgrade import run_trials
+                from .incremental_marks import check_file
+                messages.append(run_trials(self, scanner, report, snapshot, cfg, names,
+                                           network_plan=cn_plan or network_plan,
+                                           guard_export=(lambda: check_file(cn_inventory)) if cn_inventory else None))
             return self.round_success(' / '.join(messages) if messages else '预览 · '+str(report['counts']))
         except (KeyError,ValueError,OSError,TypeError) as exc:
             return self.round_fail(str(exc))

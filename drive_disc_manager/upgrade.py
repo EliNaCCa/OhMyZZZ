@@ -1,4 +1,4 @@
-"""Try one tier on a kept disc. A confirmation in flight is reconciled before another spend."""
+"""Try one tier at a time and reconcile the selected disc before spending again."""
 from collections import Counter
 from contextlib import closing
 
@@ -36,7 +36,9 @@ def advanced(before, after):
 def eligible(row):
     return (row['decision'] == '保留' and row.get('upgrade') and not row['marked'] and not row['ambiguous']
             and not row['review'] and row.get('ownerState') == 'bag' and not row.get('location')
-            and row.get('observedValues') and not row.get('manualUnlock') and not row.get('manualKeep'))
+            and row.get('observedValues') and not row.get('manualUnlock') and not row.get('manualKeep')
+            and (row.get('scannedLock') != 'locked' or row.get('managedSpareLock'))
+            and not any(r in ('手动保护', '已保存配装用盘') or r.startswith('配队 · ') for r in row['reasons']))
 
 
 def bag_disc(d):
@@ -44,10 +46,14 @@ def bag_disc(d):
             and d.get('lockState') in ('locked', 'unlocked') and d['rarity'] == 'S' and checked_values(d, 1))
 
 
-def after_advice(row, after, cfg, names):
+def revised_stats(row, after):
     stats = rolls(after)
-    revised = dict(row, level=after['level'], rolls=stats, development=development(after['level'], stats),
-                   roleRolls={label: sum(stats.get(k, 0) for k in keys) for label, keys in row.get('roleStats', {}).items()})
+    return dict(row, level=after['level'], rolls=stats, development=development(after['level'], stats),
+                roleRolls={label: sum(stats.get(k, 0) for k in keys) for label, keys in row.get('roleStats', {}).items()})
+
+
+def after_advice(row, after, cfg, names):
+    revised = revised_stats(row, after)
     reverse = equipment_keys(names)
     limits, _ = matching_rules(revised, dict(cfg, reserve_rules=[normalized_rule(r, reverse) for r in cfg['reserve_rules']]))
     return upgrade_advice(revised, limits)
@@ -59,18 +65,30 @@ def finalize(root, receipt, after):
         raise ValueError('还没核对到这张盘强化后的词条')
     # If the native dismantler follows this task, the kept piece is still in the bag under a new fingerprint.
     batch = read(root/'dismantle-preview.json', {})
-    if receipt.get('batch') and batch.get('batch') == receipt['batch'] and 'upgradeAfter' not in batch:
-        old_fp, new_fp = fingerprint(before), fingerprint(after)
+    old_fp, new_fp = fingerprint(before), fingerprint(after)
+    if receipt.get('batch') and batch.get('batch') == receipt['batch']:
+        moves = batch.setdefault('upgradeMoves', {})
         counts = batch['beforeCounts']
-        if counts.get(old_fp) != 1 or any(e['fp'] == old_fp for e in batch['entries']):
-            raise ValueError('强化盘与本轮拆解清单不符')
-        del counts[old_fp]
-        counts[new_fp] = counts.get(new_fp, 0) + 1
-        batch['upgradeAfter'] = new_fp
-        save(root/'dismantle-preview.json', batch)
+        if old_fp in moves:
+            if moves[old_fp] != new_fp:
+                raise ValueError('这档强化的记录与实物不同')
+        else:
+            legacy_move = batch.get('upgradeAfter') == new_fp and old_fp not in counts
+            if not legacy_move:
+                if counts.get(old_fp) != 1 or any(e['fp'] == old_fp for e in batch['entries']):
+                    raise ValueError('强化盘与本轮拆解清单不符')
+                del counts[old_fp]
+                counts[new_fp] = counts.get(new_fp, 0) + 1
+            if 'beforeUids' in batch:
+                from .salvage_audit import uid_item
+                item = batch['beforeUids'][receipt['uid']]
+                if item != uid_item(dict(before, exportSet=item['set'])):
+                    raise ValueError('强化盘编号与拆解记录不同')
+                batch['beforeUids'][receipt['uid']] = uid_item(dict(after, exportSet=item['set']))
+            moves[old_fp] = new_fp
+            save(root/'dismantle-preview.json', batch)
     history = read(root/'markers.json', {})
     from .marks import owns_spare
-    old_fp, new_fp = fingerprint(before), fingerprint(after)
     entry = history.get(old_fp, {})
     if (owns_spare(entry, before['observedValues'], uid=receipt.get('uid')) and new_fp not in history
             and new_fp not in receipt['previousMatches']):
@@ -119,7 +137,7 @@ def execute(root, ui, row, before, snapshot, cfg, names, batch=None):
     if (current, goal) != (before['level'], target):
         raise ValueError(f'本次只试到 +{target}，游戏预览为 +{goal}')
     label = f"{names.get(row['set'], row['set'])} {row['slot']}号盘"
-    receipt = dict(status='pending', before=before, target=target, uid=row.get('exportUid'), batch=batch,
+    receipt = dict(status='pending', before=before, target=target, uid=row.get('exportUid'), batch=batch, managedBefore=row.get('managedSpareLock', False),
                    row=row, label=label, limits={k:cfg[k] for k in ('reserve','reserve_rules','protect15','protectNaturalCrit')}, names=names,
                    previousMatches=[fingerprint(d) for d in snapshot['discs'] if advanced(before, d)])
     save(root/RECEIPT, receipt)
@@ -127,14 +145,78 @@ def execute(root, ui, row, before, snapshot, cfg, names, batch=None):
     return finalize(root, receipt, ui.read_after())
 
 
-def try_one(app, scanner, report, snapshot, cfg, names, *, guard_export=None, network_plan=None):
+def match_export(snapshot, report, net, network_plan, names):
+    from .inventory_comparison import attribute_key
+    reverse = equipment_keys(names)
+    def key(d):
+        return attribute_key(d, 1, names, reverse)
+    if digest(net) != network_plan['inventory'] or network_plan['configuration'] != report['configuration']:
+        raise ValueError('网络库存已更新，请重新整理')
+    local_counts = Counter(key(d) for d in snapshot['discs'])
+    remote_counts = Counter(key(d) for d in net['discs'])
+    if local_counts != remote_counts:
+        raise ValueError('网络库存与游戏里的驱动盘不同，请刷新库存')
+    remote_rows = {r['id']:dict(r) for r in network_plan['discs']}
+    by_stats = {key(d):remote_rows[d['id']] for d in net['discs'] if remote_counts[key(d)] == 1}
+    matches = {}
+    for d in snapshot['discs']:
+        peer = by_stats.get(key(d))
+        if peer and (not d.get('exportUid') or not peer.get('exportUid') or peer['exportUid'] == d['exportUid']):
+            matches[d['id']] = peer
+    return remote_rows, matches
+
+
+def permit(row, *, export=False):
+    # CN exports omit wearers. The game reading separately establishes that the disc is in the bag.
+    if export and row.get('exportUid') and row.get('ownerState') == 'unknown' and not row.get('location'):
+        row = dict(row, ownerState='bag')
+    return eligible(row)
+
+
+def apply_reading(row, receipt, cfg, names):
+    after = receipt['after']
+    updated = revised_stats(row, after)
+    updated.update(fp=fingerprint(after), observedValues=after['observedValues'], scannedLock=after['lockState'],
+                   managedSpareLock=receipt.get('managedBefore', False), marked=receipt.get('marked', False))
+    updated['upgrade'] = after_advice(row, after, cfg, names) if receipt.get('nextUpgrade') else None
+    if receipt.get('outgrown'):
+        updated.update(decision='已弃置' if updated['marked'] else '弃置候选', upgrade=None)
+    if fingerprint(after) in receipt['previousMatches']:
+        updated.update(ambiguous=True, upgrade=None)
+    row.update(updated)
+
+
+def select_disc(scanner, total, guard, targets, root):
     from .disc_probe import read_selected
     from .equip_targets import warehouse_observations
+    from .marks import owns_spare
+    history = read(root/'markers.json', {})
+    with closing(warehouse_observations(scanner, total, guard, by_acquisition=True)) as observations:
+        for sample, _ in observations:
+            row = targets.get(fingerprint(sample))
+            if not row or not bag_disc(sample):
+                continue
+            before = read_selected(scanner, total, guard)
+            if (not bag_disc(before) or fingerprint(before) != row['fp'] or before['observedValues'] != row['observedValues']
+                    or before['lockState'] != sample['lockState']):
+                continue
+            managed = owns_spare(history.get(row['fp'], {}), before['observedValues'], uid=row.get('exportUid'))
+            if (before['lockState'] == 'locked' and not managed) or (before['lockState'] == 'unlocked' and row.get('scannedLock') == 'locked'):
+                continue
+            return dict(row, managedSpareLock=managed), before
+    return None
+
+
+def run_trials(app, scanner, report, snapshot, cfg, names, *, guard_export=None, network_plan=None):
+    from .potential import benchmarks
+    from .store import snapshot_path
     from .upgrade_ui import UpgradeUI
-    from .inventory_comparison import attribute_key
 
     if report.get('networkPreview') or report.get('issues') or digest(snapshot) != report['inventory']:
         raise ValueError('试强化需要本次游戏库存')
+    limit = cfg['upgradeSteps']
+    if type(limit) is not int or not 1 <= limit <= 99:
+        raise ValueError('每轮强化可设 1 到 99 档')
     def guard():
         if (app.ctx.current_instance_idx != app.account or not app.ctx.run_context.is_context_running
                 or not app.ctx.controller.game_win.is_win_active or digest(config(app.root)) != report['configuration']):
@@ -142,57 +224,80 @@ def try_one(app, scanner, report, snapshot, cfg, names, *, guard_export=None, ne
         if guard_export:
             guard_export()
 
-    receipt = read(app.root/RECEIPT, {})
     guard()
+    receipt = read(app.root/RECEIPT, {})
     if receipt.get('status') == 'pending':
         return recover(app.root, receipt, snapshot)
-    targets = {r['fp']:r for r in report['discs'] if eligible(r)}
-    targets = {fp:r for fp,r in targets.items() if r.get('exportUid') or not
-               any(reason in ('手动保护', '已保存配装用盘') for reason in r['reasons'])}
+    # Stable in this run, even when an OCR fingerprint changes at every tier.
+    discs = {d['id']:d for d in snapshot['discs']}
+    rows = {r['id']:dict(r) for r in report['discs']}
+    peers = remote_rows = None
     if network_plan is not None:
-        # International exports have no durable IDs. Require a unique matching keep recommendation in both reads.
-        from .store import snapshot_path
         net = read(snapshot_path(app.root, cfg))
-        if digest(net) != network_plan['inventory']:
-            raise ValueError('网络库存已更新，请重新整理')
-        reverse = equipment_keys(names)
-        def key(d): return attribute_key(d, 1, names, reverse)
-        counts = Counter(key(d) for d in net['discs'])
-        by_id = {d['id']:d for d in net['discs']}
-        allowed = {key(by_id[r['id']]):r for r in network_plan['discs'] if eligible(r) and counts[key(by_id[r['id']])] == 1}
-        matches = {fingerprint(d):allowed[key(d)] for d in snapshot['discs'] if key(d) in allowed}
-        targets = {fp:r for fp,r in targets.items() if fp in matches}
-    if not targets:
-        return '没有适合试强化的盘'
+        remote_rows, peers = match_export(snapshot, report, net, network_plan, names)
     batch = read(app.root/'dismantle-preview.json', {})
+    batch_id = None
+    excluded = set()
     if batch.get('inventory') == report['inventory'] and batch.get('account') == app.account:
-        native_targets = {e['fp'] for e in batch['entries']}
-        targets = {fp:r for fp,r in targets.items() if fp not in native_targets}
         batch_id = batch['batch']
-    else:
-        batch_id = None
-    if not targets:
-        return '没有适合试强化的盘'
-    total = len(snapshot['discs'])
-    with closing(warehouse_observations(scanner, total, guard, by_acquisition=True)) as observations:
-        for sample, _ in observations:
-            row = targets.get(fingerprint(sample))
-            if row and bag_disc(sample):
-                before = read_selected(scanner, total, guard)
-                if bag_disc(before) and fingerprint(before) == row['fp'] and before['observedValues'] == row['observedValues']:
-                    break
-        else:
-            return '没有找到本轮可试强化的盘'
-    picked = row
-    if network_plan is not None:
-        # Both inventories must agree that this tier cannot compete before marking it.
-        remote_floor = matches[row['fp']].get('upgradeFloor')
-        floor = row.get('upgradeFloor')
-        picked = dict(row, upgradeFloor=[*floor, *remote_floor] if floor and remote_floor else [])
-    note = execute(app.root, UpgradeUI(scanner, guard, total, names), picked, before, snapshot, cfg, names, batch_id)
-    receipt = read(app.root/RECEIPT)
-    if not (cfg['applyMarkers'] and receipt.get('outgrown')):
-        return note
+        excluded = {e['fp'] for e in batch['entries']}
+    touched = Counter()
+    notes = []
+    for _ in range(limit):
+        guard()
+        floors = benchmarks(rows.values(), cfg, names)
+        remote_floors = benchmarks(remote_rows.values(), cfg, names) if peers is not None else {}
+        counts = Counter(r['fp'] for r in rows.values())
+        candidates = []
+        for ident, row in rows.items():
+            if row['fp'] in excluded or counts[row['fp']] != 1 or not eligible(row):
+                continue
+            floor = floors.get(row['fp'], []) if 'upgradeFloor' in row else []
+            if peers is not None:
+                peer = peers.get(ident)
+                if not peer or not permit(peer, export=True):
+                    continue
+                remote = remote_floors.get(peer['fp'], []) if 'upgradeFloor' in peer else []
+                floor = [*floor, *remote] if floor and remote else []
+            if not verdict(row['level'], row['rolls'], floor):
+                candidates.append(dict(row, upgradeFloor=floor))
+        if not candidates:
+            break
+        def priority(row):
+            return touched[row['id']], len(row['rolls']) != 3
+        first = min(map(priority, candidates))
+        targets = {r['fp']:r for r in candidates if priority(r) == first}
+        selected = select_disc(scanner, len(discs), guard, targets, app.root)
+        if selected is None:
+            if not notes:
+                return '没有找到本轮可试强化的盘'
+            break
+        picked, before = selected
+        ident = picked['id']
+        view = dict(snapshot, discs=list(discs.values()))
+        ui = UpgradeUI(scanner, guard, len(discs), names)
+        execute(app.root, ui, picked, before, view, cfg, names, batch_id)
+        receipt = read(app.root/RECEIPT)
+        if cfg['applyMarkers'] and receipt.get('outgrown'):
+            mark_outgrown(app, scanner, dict(report, discs=list(rows.values())), rows[ident], receipt, guard, batch_id)
+            receipt = read(app.root/RECEIPT)
+        after = receipt['after']
+        retained = {k:discs[ident][k] for k in ('id', 'exportUid', 'exportSet') if k in discs[ident]}
+        discs[ident] = dict(after, **retained)
+        if receipt.get('marked'):
+            discs[ident].update(trash=True, markState='marked', lock=False, lockState='unlocked')
+        apply_reading(rows[ident], receipt, cfg, names)
+        if peers is not None:
+            apply_reading(peers[ident], receipt, cfg, names)
+        touched[ident] += 1
+        notes.append(receipt['note'])
+    if len(notes) > 1:
+        return f'已试强化 {len(touched)} 张盘，共 {len(notes)} 档 · ' + notes[-1]
+    return notes[0] if notes else '没有适合试强化的盘'
+
+
+def mark_outgrown(app, scanner, report, row, receipt, guard, batch_id):
+    note = receipt['note']
     # Update the one selected piece and use the existing marker's fresh detail checks.
     from .live import Marker
     from .marks import owns_spare
@@ -224,7 +329,8 @@ def try_one(app, scanner, report, snapshot, cfg, names, *, guard_export=None, ne
     if managed:
         marker.handle_disc('release', detail, revised)
     detail = marker.detail()
-    if detail != (fp, 'unlocked', 'unmarked', False) or not marker.handle_disc('mark', detail, revised):
+    if (detail != (fp, 'unlocked', 'unmarked', False) or not marker.handle_disc('mark', detail, revised)
+            or marker.detail() != (fp, 'unlocked', 'marked', False)):
         raise ValueError('请下次整理再核对这张盘的弃置状态')
     note = note.replace('建议弃置', '已标记弃置', 1)
     save(app.root/RECEIPT, dict(receipt, marked=True, note=note))

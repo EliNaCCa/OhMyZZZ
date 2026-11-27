@@ -161,7 +161,8 @@ class Marker:
                 self.remember(fp, 'manual-unlock')
                 raise ValueError('扫描后发现保留盘被解锁，请重新计算')
             spare = bool(row['reasons']) and all(r.startswith('备用 · ') for r in row['reasons'])
-            spare |= bool(self.cfg.get('autoUpgrade') and row.get('upgrade') and row.get('upgradeFloor'))
+            spare |= bool(self.cfg.get('autoUpgrade') and 'upgradeFloor' in row and
+                          (row.get('upgrade') or '+3 胚子留作备用' in row['reasons']))
             self.change(mode, detail, 'manual-keep' if action == 'manual-keep' else 'locked',
                         spare=spare and not equipped and action != 'manual-keep' and row.get('scannedLock') == 'unlocked')
         elif mode == 'release':

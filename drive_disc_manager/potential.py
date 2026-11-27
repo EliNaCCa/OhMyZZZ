@@ -1,7 +1,7 @@
 """Compare the best a disc can still roll with the weakest spare for each use."""
 from collections import defaultdict
 
-from .reserve_policy import DEFAULT_STATS, SELECTORS, matching_rules, normalized_rule
+from .reserve_policy import DEFAULT_STATS, SELECTORS, matching_rules, normalized_rule, upgrade_advice
 from .store import equipment_keys
 
 
@@ -83,6 +83,8 @@ def evaluate(rows, cfg, names):
     if not cfg.get('autoUpgrade'):
         return
     floors = benchmarks(rows, cfg, names)
+    reverse = equipment_keys(names)
+    limits_cfg = dict(cfg, reserve_rules=[normalized_rule(r, reverse) for r in cfg['reserve_rules']])
     for row in rows:
         if row['fp'] not in floors or protected(row, cfg):
             continue
@@ -90,6 +92,18 @@ def evaluate(rows, cfg, names):
         row['upgradeFloor'] = floor
         reason = verdict(row['level'], row['rolls'], floor)
         if not reason:
+            if (row['level'] < 15 and row['decision'] != '保留' and not row['reasons'] and floor
+                    and '超出同类备用名额' in row['explanation'] and row['recommendations']):
+                limits, _ = matching_rules(row, limits_cfg)
+                advice = upgrade_advice(dict(row, reasons=['试强化']), limits)
+                if advice or row['level'] == 3:
+                    row.update(decision='保留', reasons=['试强化'] if advice else ['+3 胚子留作备用'])
+                    row.pop('checkForDiscard', None)
+                    row['explanation'] = [s for s in row['explanation'] if s not in
+                                          ('超出同类备用名额', '超出留盘名额，穿戴和标记待游戏内核对')]
+                    if advice:
+                        row['upgrade'] = advice
+                        row['explanation'].append(advice['reason'])
             continue
         row['decision'] = '弃置候选'
         row['reasons'] = []

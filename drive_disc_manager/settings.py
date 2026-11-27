@@ -202,7 +202,7 @@ class ManagerInterface(BaseInterface):
         for key, icon, title, hint in [
             ('run_scanner', FluentIcon.SEARCH, '整理前刷新驱动仓库', '关闭后用上次读取的库存生成筛选结果。'),
             ('applyMarkers', FluentIcon.FILTER, '自动标记驱动盘', '要留的锁定，要拆的标记为弃置。'),
-            ('autoUpgrade', FluentIcon.UP, '试强化潜力盘', '整理时用镀剂强化一张背包里的盘，只升到下一档。'),
+            ('autoUpgrade', FluentIcon.UP, '试强化潜力盘', '先试三词条胚子，每升一档都用新词条比较。'),
             ('protect15', FluentIcon.ACCEPT, '保留满级盘（+15）', None),
             ('protectNaturalCrit', FluentIcon.TILES, '保留四词条双暴胚子', '掉落时就有四条副属性，同时带暴击率和暴击伤害。强化后也保留。'),
             ('rotateSpareLocks', FluentIcon.SYNC, '优先留更好的备用盘', '同类盘按你的备用规则比较。先锁新盘，再解开旧备用盘。你手动锁的盘会保留。'),
@@ -215,6 +215,15 @@ class ManagerInterface(BaseInterface):
             toggle.value_changed.connect(lambda checked,k=key:self.set_flag(k,checked))
             self.flags[key] = toggle
             box.addWidget(toggle)
+            if key == 'autoUpgrade':
+                self.upgrade_budget = QWidget()
+                budget = QHBoxLayout(self.upgrade_budget)
+                budget.addWidget(BodyLabel('每次整理最多强化'))
+                steps = SpinBox(); steps.setRange(1, 99); steps.setSuffix(' 档')
+                steps.setAccessibleName('每次整理最多强化几档')
+                steps.valueChanged.connect(lambda value: self.invoke(lambda: self.set_limit('upgradeSteps', value)))
+                self.limits['upgradeSteps'] = steps
+                budget.addWidget(steps); budget.addStretch(); box.addWidget(self.upgrade_budget)
         self.scanner_note = BodyLabel(); self.scanner_note.setWordWrap(True); box.addWidget(self.scanner_note)
         bar = QHBoxLayout(); box.addLayout(bar)
         self.button(bar,'配装器地址',self.configure_optimizer)
@@ -566,6 +575,7 @@ class ManagerInterface(BaseInterface):
         self.import_button.setEnabled(source != 'network' and self.preview_job is None)
         for key, spin in self.limits.items():
             with QSignalBlocker(spin): spin.setValue(self.cfg[key])
+        self.upgrade_budget.setVisible(self.cfg['autoUpgrade'])
         self.config_hash = digest(self.cfg)
         if self.equip_review:
             request = self.equip_review['request']

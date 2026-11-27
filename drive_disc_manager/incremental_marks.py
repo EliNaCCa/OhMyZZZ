@@ -258,6 +258,6 @@ def daily(app, scanner, exported, planned, pinned, wiki, field):
     checkpoint(app.root, exported, planned, view, report, marker)
     message = f'增量整理完成 · 已核对 {len(found)} 张盘' if found else '驱动盘没有变化'
     if cfg.get('autoUpgrade'):
-        from .upgrade import try_one
-        message += ' / ' + try_one(app, scanner, report, view, cfg, names, guard_export=marker.guard_export)
+        from .upgrade import run_trials
+        message += ' / ' + run_trials(app, scanner, report, view, cfg, names, network_plan=planned, guard_export=marker.guard_export)
     return app.round_success(message)
