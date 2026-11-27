@@ -5,7 +5,7 @@ from .allocation import assign_group, group_conflict, reusable_assignments
 from .drive_disc_manager_const import PLUGIN_VERSION
 from .store import digest, equipment_keys, fingerprint, inventory, is_pinned, pin_keys, roll_base
 from .subscriptions import effective, current_conflicts, SLOT_MAIN
-from .reserve_policy import apply_reserves, assess_growth, matching_rules, normalized_rule, upgrade_advice
+from .reserve_policy import assess_growth, plan_reserves
 from .roster import compile_roster, explain, parse_main, preview_bindings, roster_catalog, scanner_agent_key
 from .stat_reading import checked_values
 
@@ -302,34 +302,8 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
                 del row['review'][checks:]
         if issues:
             row['review'].append('有启用配队尚未完成计算')
-    quotas = [normalized_rule(rule, reverse) for rule in cfg['reserve_rules']]
-    coverage = apply_reserves(rows, dict(cfg, reserve_rules=quotas))
-    limits_by_group = {}
-    for row in rows:
-        if row['marked']:
-            continue
-        row['decision'] = '保留' if row['reasons'] else ('待复核' if row['review'] else '弃置候选')
-        if row['decision'] == '保留' and row['level'] < 15:
-            key = (row['set'], row['slot'], row['main'])
-            if key not in limits_by_group:
-                limits_by_group[key], _ = matching_rules(row, dict(cfg, reserve_rules=quotas))
-            advice = upgrade_advice(row, limits_by_group[key])
-            if advice:
-                row['upgrade'] = advice
-                row['explanation'].append(advice['reason'])
-        if stats_only and row['decision'] == '弃置候选':
-            row['checkForDiscard'] = True
-            row['decision'] = '待复核'
-            row['explanation'].append('超出留盘名额，穿戴和标记待游戏内核对')
-        if row['managedSpareLock'] and row['decision'] == '弃置候选':
-            row['explanation'].append('新保留盘锁定后，解除本插件的旧备用锁')
+    coverage = plan_reserves(rows, cfg, reverse, stats_only=stats_only)
     from .disc_trace import rule_book
-    from .potential import evaluate
-    evaluate(rows, cfg, names)
-    if stats_only:
-        for row in rows:
-            if row.get('outgrown'):
-                row.update(checkForDiscard=True, decision='待复核')
     evidence = rule_book(rows, rules, cfg['overrides'], current_conflicts(rules, cfg['overrides']))
     teams = {p['name']:dict(agent=(p.get('request') or {}).get('characterName') or p.get('agentKey'),
                             group=p.get('simultaneous') or '') for p in enabled}

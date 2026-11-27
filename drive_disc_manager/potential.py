@@ -2,15 +2,14 @@
 from collections import defaultdict
 
 from .optimizer import STATS
-from .reserve_policy import SELECTORS, matching_rules, normalized_rule, spare_uses, upgrade_advice
-from .store import equipment_keys
+from .reserve_policy import SELECTORS, matching_rules, spare_uses, upgrade_advice
 
 
 def group_key(row):
     return tuple(row[k] for k in SELECTORS)
 
 
-def benchmarks(rows, cfg, names):
+def benchmarks(rows, cfg):
     groups = defaultdict(list)
     for row in rows:
         personal_lock = row.get('scannedLock') == 'locked' and not row.get('managedSpareLock')
@@ -20,8 +19,6 @@ def benchmarks(rows, cfg, names):
                 and '已保存配装用盘' not in row['reasons']
                 and not any(r.startswith('配队 · ') for r in row['reasons'])):
             groups[group_key(row)].append(row)
-    reverse = equipment_keys(names)
-    cfg = dict(cfg, reserve_rules=[normalized_rule(r, reverse) for r in cfg['reserve_rules']])
     out = {}
     for group in groups.values():
         limits, _ = matching_rules(group[0], cfg)
@@ -76,12 +73,10 @@ def protected(row, cfg):
             or any(r in ('手动保护','已保存配装用盘','四词条双暴胚子') or r.startswith('配队 · ') for r in row['reasons']))
 
 
-def evaluate(rows, cfg, names):
+def evaluate(rows, cfg):
     if not cfg.get('autoUpgrade'):
         return
-    floors = benchmarks(rows, cfg, names)
-    reverse = equipment_keys(names)
-    limits_cfg = dict(cfg, reserve_rules=[normalized_rule(r, reverse) for r in cfg['reserve_rules']])
+    floors = benchmarks(rows, cfg)
     for row in rows:
         if row['fp'] not in floors or protected(row, cfg):
             continue
@@ -91,7 +86,7 @@ def evaluate(rows, cfg, names):
         if not reason:
             if (row['level'] < 15 and row['decision'] != '保留' and not row['reasons'] and floor
                     and '超出同类备用名额' in row['explanation'] and row['recommendations']):
-                limits, _ = matching_rules(row, limits_cfg)
+                limits, _ = matching_rules(row, cfg)
                 advice = upgrade_advice(row, limits)
                 if advice or row['level'] == 3:
                     row.update(decision='保留', reasons=['试强化'] if advice else ['+3 胚子留作备用'])

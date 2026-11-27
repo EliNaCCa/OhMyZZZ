@@ -175,37 +175,92 @@ def apply_reserves(rows, cfg):
     return report
 
 
+def kept_coverage(coverage, rows):
+    """Count the spare slots still filled after game checks and potential decisions."""
+    groups = {}
+    for previous in coverage:
+        key = tuple(previous[k] for k in SELECTORS)
+        purposes = [dict(use, covered=0) for use in previous['purposes']]
+        groups[key] = dict(previous, kept=0, fixedExtra=0, shared=0, purposes=purposes)
+    for row in rows:
+        if row['decision'] != '保留' or row['review']:
+            continue
+        purposes = {reason.removeprefix('备用 · ') for reason in row['reasons'] if reason.startswith('备用 · ')}
+        fixed = not purposes and '插件备用锁' in row['reasons']
+        if not purposes and not fixed:
+            continue
+        group = groups[tuple(row[k] for k in SELECTORS)]
+        group['kept'] += 1
+        group['fixedExtra'] += int(fixed)
+        group['shared'] += int(len(purposes) > 1)
+        for use in group['purposes']:
+            use['covered'] += int(use['purpose'] in purposes)
+    return list(groups.values())
+
+
+def plan_reserves(rows, cfg, reverse, *, stats_only):
+    """Apply spare quotas and trial potential to rows with their independent keep reasons."""
+    cfg = dict(cfg, reserve_rules=[normalized_rule(rule, reverse) for rule in cfg['reserve_rules']])
+    coverage = apply_reserves(rows, cfg)
+    limits_by_group = {}
+    for row in rows:
+        if row['marked']:
+            continue
+        row['decision'] = '保留' if row['reasons'] else ('待复核' if row['review'] else '弃置候选')
+        if row['decision'] == '保留' and row['level'] < 15:
+            key = (row['set'], row['slot'], row['main'])
+            if key not in limits_by_group:
+                limits_by_group[key], _ = matching_rules(row, cfg)
+            advice = upgrade_advice(row, limits_by_group[key])
+            if advice:
+                row['upgrade'] = advice
+                row['explanation'].append(advice['reason'])
+        if stats_only and row['decision'] == '弃置候选':
+            row['checkForDiscard'] = True
+            row['decision'] = '待复核'
+            row['explanation'].append('超出留盘名额，穿戴和标记待游戏内核对')
+        if row.get('managedSpareLock') and row['decision'] == '弃置候选':
+            row['explanation'].append('新保留盘锁定后，解除本插件的旧备用锁')
+    from .potential import evaluate
+    evaluate(rows, cfg)
+    if stats_only:
+        for row in rows:
+            if row.get('outgrown'):
+                row.update(checkForDiscard=True, decision='待复核')
+    return kept_coverage(coverage, rows) if cfg.get('autoUpgrade') else coverage
+
+
 def quota_impact(report, scope, cfg, reverse):
-    """Replay only spare selection for the matching groups in this saved preview."""
+    """Replay the same quota and potential decisions over the matching groups."""
     scope = rule_selectors(scope)
     rows = [row for row in report['discs'] if not row['marked'] and all(row[k] == v for k,v in scope.items())]
     if any('keptBeforeReserves' not in row for row in rows):
         return None
     prepared = []
     for row in rows:
-        independent = row['keptBeforeReserves']
-        if independent and row.get('managedSpareLock') and '插件备用锁' in row['reasons']:
-            # Older previews counted the manager's own lock as an independent reason.
-            independent = any(r != '插件备用锁' and r not in row['recommendations'] for r in row['reasons'])
-        prepared.append(dict(row, reasons=['独立保留'] if independent else [], explanation=[]))
-    normalized = [normalized_rule(rule,reverse) for rule in cfg['reserve_rules']]
-    coverage = apply_reserves(prepared, dict(cfg,reserve_rules=normalized))
+        reasons = []
+        if row['keptBeforeReserves']:
+            generated = {'插件备用锁', '试强化', '+3 胚子留作备用', *row['recommendations']}
+            reasons = [reason for reason in row['reasons'] if reason not in generated and not reason.startswith('备用 · ')]
+        updated = dict(row, reasons=reasons, explanation=[])
+        for previous in ('upgrade', 'upgradeFloor', 'outgrown', 'checkForDiscard'):
+            updated.pop(previous, None)
+        prepared.append(updated)
+    coverage = plan_reserves(prepared, cfg, reverse, stats_only=any('buildId' in row for row in rows))
     before = sum(row['decision'] == '保留' for row in rows)
-    after = sum(bool(row['reasons']) for row in prepared)
+    after = sum(row['decision'] == '保留' for row in prepared)
+    potential = sum(row['reasons'] in (['试强化'], ['+3 胚子留作备用']) for row in prepared)
     new_candidates = new_game_checks = 0
     for old, new in zip(rows, prepared, strict=True):
-        if new['reasons'] or new['review']:
-            continue
-        if 'buildId' in old:
-            if not old.get('checkForDiscard'):
-                new_game_checks += 1
-        elif old['decision'] != '弃置候选':
+        if new.get('checkForDiscard') and not old.get('checkForDiscard'):
+            new_game_checks += 1
+        elif new['decision'] == '弃置候选' and old['decision'] != '弃置候选':
             new_candidates += 1
     by_purpose = defaultdict(int)
     for group in coverage:
         for use in group['purposes']:
             if use['count'] != 0:
                 by_purpose[use['purpose']] += use['covered']
-    return dict(total=len(rows), before=before, after=after, newCandidates=new_candidates, newGameChecks=new_game_checks,
+    return dict(total=len(rows), before=before, after=after, potential=potential, newCandidates=new_candidates, newGameChecks=new_game_checks,
                 spares=sum(group['kept'] for group in coverage), groups=len(coverage),
                 byPurpose=dict(by_purpose), shared=sum(group['shared'] for group in coverage))

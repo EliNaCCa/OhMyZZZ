@@ -241,10 +241,12 @@ def run_trials(app, scanner, report, snapshot, cfg, names, *, guard_export=None,
         excluded = {e['fp'] for e in batch['entries']}
     touched = Counter()
     notes = []
+    reverse = equipment_keys(names)
+    limits = dict(cfg, reserve_rules=[normalized_rule(rule, reverse) for rule in cfg['reserve_rules']])
     for _ in range(limit):
         guard()
-        floors = benchmarks(rows.values(), cfg, names)
-        remote_floors = benchmarks(remote_rows.values(), cfg, names) if peers is not None else {}
+        floors = benchmarks(rows.values(), limits)
+        remote_floors = benchmarks(remote_rows.values(), limits) if peers is not None else {}
         counts = Counter(r['fp'] for r in rows.values())
         candidates = []
         for ident, row in rows.items():

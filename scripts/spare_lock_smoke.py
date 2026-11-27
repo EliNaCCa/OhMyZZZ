@@ -121,7 +121,7 @@ def smoke(home):
         assert m.rows[manual_id]['reasons'] == ['游戏内已锁定']
         original_report = deepcopy(m.report)
         impact = quota_impact(m.report, {'set':'SwingJazz'}, dict(cfg,reserve=0), {})
-        assert impact == dict(total=3,before=2,after=1,newCandidates=1,spares=0,groups=1,byPurpose={},shared=0)
+        assert impact == dict(total=3,before=2,after=1,potential=0,newCandidates=1,newGameChecks=0,spares=0,groups=1,byPurpose={},shared=0)
         assert m.report == original_report
         visit(m, 'lock', fresh)
         visit(m, 'lock', manual)

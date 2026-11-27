@@ -167,7 +167,10 @@ class QuotaEditor(QDialog):
         if result is None:
             self.impact.setText('请先在仓库预览重新计算一次，以载入备用名额的计算依据。')
         else:
-            summary = f"共 {result['total']} 张，保留 {result['before']} → {result['after']} 张，其中备用 {result['spares']} 张。"
+            summary = f"共 {result['total']} 张，保留 {result['before']} → {result['after']} 张，其中备用 {result['spares']} 张"
+            if result['potential']:
+                summary += f"，另留潜力盘 {result['potential']} 张"
+            summary += '。'
             if result['newGameChecks']:
                 summary += f"有 {result['newGameChecks']} 张需要进游戏核对后再标记弃置。"
             if result['newCandidates']:

@@ -139,7 +139,7 @@ def smoke(home, tmp):
     from drive_disc_manager.purpose_editor import PurposeEditor
     assert '角色' in page.grid.item(0,4).text() and page.grid.item(2,4).text() == '暴击伤害'
     probe_row = dict(set='SwingJazz',slot='4',main='def_',fp='demo-ap',decision='弃置候选',marked=False,
-                     keptBeforeReserves=False,rolls={'anomProf':1},development={'upgrades':4},review=[],
+                     keptBeforeReserves=False,level=0,ambiguous=False,managedSpareLock=False,rolls={'anomProf':1},development={'upgrades':4},review=[],
                      reasons=[],recommendations=[],explanation=[])
     draft = dict(config(account), reserve=0,reserve_rules=[])
     dialog = QuotaEditor(widget,{'set':'SwingJazz'},draft,{},'摇摆爵士',report={'discs':[probe_row]})

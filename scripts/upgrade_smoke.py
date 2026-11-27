@@ -36,6 +36,24 @@ with TemporaryDirectory() as tmp:
     assert not verdict(0, base, [dict(only_crit, minimum=5)])
     assert not verdict(0, base, [dict(only_crit, stats=['crit_', 'crit_dmg_'])])
     spare=piece('2',15,{'crit_':3,'crit_dmg_':3,'hp':1,'def':1}); snap=stock([before,spare])
+    # Reducing two slots to one keeps a trial that can still tie the six-roll spare.
+    from drive_disc_manager.reserve_policy import quota_impact
+    rules = {'version':'v','fields':{'matrix/TestSet/4':['atk_']}}
+    two_slots = dict(cfg, reserve=2, protect15=False, trimRecommended=True)
+    one_slot = dict(two_slots, reserve=1)
+    original = plan(snap, two_slots, rules, {})
+    impact = quota_impact(original, {}, one_slot, {})
+    assert impact['after'] == plan(snap, one_slot, rules, {})['counts']['保留'] == 2
+    assert impact['spares'] == impact['potential'] == 1 and not impact['newCandidates']
+    # This +3 has one useful roll and four upgrades left. The +15 already has six useful rolls.
+    weak = piece('1', 3, dict(base, def_=1))
+    tested = stock([weak, spare])
+    protected_spare = dict(one_slot, protect15=True)
+    report_after = plan(tested, protected_spare, rules, {})
+    assert report_after['discs'][0]['decision'] == '弃置候选'
+    assert report_after['reserveCoverage'][0]['kept'] == report_after['reserveCoverage'][0]['purposes'][0]['covered'] == 0
+    same = quota_impact(report_after, {}, protected_spare, {})
+    assert same['before'] == same['after'] == 1 and same['spares'] == same['potential'] == 0
     # The player's own protected disc stays outside the extra spare quota.
     just_crit = [dict(purpose='通用', count=1, stats=['crit_'])]
     competing = piece('2', 15, {'crit_':6, 'hp':1, 'def':1, 'hp_':1})
