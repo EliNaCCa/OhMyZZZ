@@ -1,6 +1,7 @@
 """Compare the best a disc can still roll with the weakest spare for each use."""
 from collections import defaultdict
 
+from .optimizer import STATS
 from .reserve_policy import DEFAULT_STATS, SELECTORS, matching_rules, normalized_rule, upgrade_advice
 from .store import equipment_keys
 
@@ -23,9 +24,11 @@ def uses(row, limits):
 def benchmarks(rows, cfg, names):
     groups = defaultdict(list)
     for row in rows:
+        personal_lock = row.get('scannedLock') == 'locked' and not row.get('managedSpareLock')
         if (not row['marked'] and not row['review'] and not row['ambiguous'] and row.get('development')
                 and not row.get('location') and not row.get('manualUnlock') and not row.get('manualKeep')
-                and row.get('observedValues') and '已保存配装用盘' not in row['reasons']
+                and row.get('observedValues') and not personal_lock and '手动保护' not in row['reasons']
+                and '已保存配装用盘' not in row['reasons']
                 and not any(r.startswith('配队 · ') for r in row['reasons'])):
             groups[group_key(row)].append(row)
     reverse = equipment_keys(names)
@@ -40,7 +43,7 @@ def benchmarks(rows, cfg, names):
                 if count is None:
                     floor = []
                     break
-                keys = tuple(sorted(set(stats)-{row['main']}))
+                keys = tuple(sorted(k for k in set(stats) if k != row['main'] and STATS.get(k, (None, None))[1]))
                 if not keys:
                     continue
                 # Include one extra so a disc is never compared with itself.
@@ -62,9 +65,14 @@ def verdict(level, rolls, floor):
     for use in floor:
         keys = set(use['stats'])
         good = sum(rolls.get(k, 0) for k in keys)
-        # A three-line drop can reveal a useful fourth stat. With four lines,
-        # future levels can only hit existing stats.
-        maximum = good + (remaining if good or len(rolls) == 3 else 0)
+        if len(rolls) == 3:
+            # The first tier adds a distinct stat. Only later tiers can improve it.
+            useful_reveal = bool(keys.difference(rolls))
+            maximum = good + int(useful_reveal)
+            if good or useful_reveal:
+                maximum += remaining - 1
+        else:
+            maximum = good + (remaining if good else 0)
         if maximum >= use['minimum']:
             return ''
         margins.append((use['minimum']-maximum, use['label'], maximum, use['minimum']))

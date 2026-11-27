@@ -5,7 +5,7 @@ from contextlib import closing
 from .optimizer import exported_s_main
 from .inventory_comparison import match_export
 from .reserve_policy import development, matching_rules, normalized_rule, upgrade_advice
-from .stat_reading import checked_values
+from .stat_reading import checked_values, format_stats
 from .potential import verdict
 from .store import config, digest, equipment_keys, fingerprint, read, save
 
@@ -106,7 +106,15 @@ def finalize(root, receipt, after):
         advice = None
     label = receipt['label']
     decision = '建议弃置，' + reason if reason else f"建议再试到 +{advice['target']}" if advice else '留作备用'
-    note = f"{label} +{before['level']} → +{after['level']} · " + decision
+    old_subs = before['observedValues']['subs']
+    new_subs = after['observedValues']['subs']
+    stat = next(k for k, v in new_subs.items() if old_subs.get(k) != v)
+    if stat in old_subs:
+        old = format_stats({stat:old_subs[stat]})
+        change = f"{old} → {new_subs[stat]:g}" + ('%' if stat.endswith('_') else '')
+    else:
+        change = '新增' + format_stats({stat:new_subs[stat]})
+    note = f"{label} +{before['level']} → +{after['level']} · {change} · {decision}"
     save(root/RECEIPT, dict(receipt, status='verified', after=after, nextUpgrade=advice, outgrown=reason, note=note))
     return note
 

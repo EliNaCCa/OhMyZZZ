@@ -30,7 +30,22 @@ with TemporaryDirectory() as tmp:
                         controller=SimpleNamespace(game_win=SimpleNamespace(is_win_active=True)),
                         run_context=SimpleNamespace(is_context_running=True)))
     base={'crit_':1,'def':1,'hp':1}; before=piece('1',0,base)
+    from drive_disc_manager.potential import verdict
+    only_crit = dict(label='偏暴击', stats=['crit_'], minimum=6)
+    assert '最多 5 档' in verdict(0, base, [only_crit])
+    assert not verdict(0, base, [dict(only_crit, minimum=5)])
+    assert not verdict(0, base, [dict(only_crit, stats=['crit_', 'crit_dmg_'])])
     spare=piece('2',15,{'crit_':3,'crit_dmg_':3,'hp':1,'def':1}); snap=stock([before,spare])
+    # The player's own protected disc stays outside the extra spare quota.
+    just_crit = [dict(purpose='通用', count=1, stats=['crit_'])]
+    competing = piece('2', 15, {'crit_':6, 'hp':1, 'def':1, 'hp_':1})
+    floor_cfg = dict(cfg, trimRecommended=True, reserve_rules=just_crit, pins=[fingerprint(competing)])
+    for other in (competing, dict(competing, lock=True, lockState='locked')):
+        local_cfg = dict(floor_cfg, pins=[] if other['lock'] else floor_cfg['pins'])
+        small = stock([before, other]); match_rules = {'version':'v','fields':{'matrix/TestSet/4':['atk_']}}
+        pick, protected = plan(small,local_cfg,match_rules,{})['discs']
+        assert protected['decision'] == '保留' and pick['decision'] == '保留', (pick['reasons'],pick['explanation'])
+        assert pick['upgradeFloor'][0]['minimum'] == 0
     report=plan(snap,cfg,{'version':'v','fields':{'matrix/TestSet/4':['atk_']}},{})
     assert report['configuration']==digest(cfg) and eligible(report['discs'][0])
     def observe(*_,**__): yield before,lambda:before
@@ -50,7 +65,8 @@ with TemporaryDirectory() as tmp:
         else: raise AssertionError('unexpected success')
         pending=read(root/RECEIPT); assert pending['status']=='pending'
         good=piece('1',3,dict(base,crit_dmg_=1)); bad=piece('1',3,dict(base,def_=1))
-        assert '建议再试到 +6' in recover(root,pending,stock([good,spare]))
+        note = recover(root,pending,stock([good,spare]))
+        assert '新增暴击伤害 4.8%' in note and '建议再试到 +6' in note
         assert ui.confirm.call_count==1
         ui.read_after.side_effect=None;ui.read_after.return_value=bad
         marker.detail.return_value=(fingerprint(bad),'unlocked','unmarked',False)
@@ -109,5 +125,6 @@ with TemporaryDirectory() as tmp:
         assert batch['beforeCounts'] == {fingerprint(d):1 for d in bag.values()}
         assert batch['beforeUids'] == {k:uid_item(d) for k,d in bag.items()} and len(batch['upgradeMoves'])==3
         last = read(root/RECEIPT); upgrade.finalize(root, last, last['after'])
+        assert '暴击伤害 4.8% → 9.6%' in last['note']
         assert read(root/'dismantle-preview.json') == batch
     print('PASS two trials, updated spare floors, three-tier budget, hand lock and replayable UID ledger')
