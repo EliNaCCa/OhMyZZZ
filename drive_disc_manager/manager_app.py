@@ -188,7 +188,7 @@ class ManagerApp(ZApplication):
                     return self.round_fail('请开启本轮重新扫描后再标记')
                 from .live import Marker
                 from .dismantle import handoff
-                marker = Marker(self,scanner,report)
+                marker = Marker(self, scanner, report, readings=scanner.ocr_worker.scanned_discs)
                 marker.batch = handoff(self, report)
                 observed = marker.run()
                 if marker.batch:

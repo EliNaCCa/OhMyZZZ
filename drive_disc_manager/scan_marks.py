@@ -125,11 +125,11 @@ def capture_marks(scanner, root=None):
         pending.cell = None
         if selected:
             column, y = selected
-            pending.cell = (grid.scroll_rounds, column)
+            pending.cell = (grid.scroll_rounds, column, y)
             thumb = scroll_thumb(image)
             stamp = viewport_stamp(image, column, thumb) if thumb else None
             if stamp:
-                pending.cell += (y, stamp, thumb)
+                pending.cell += (stamp, thumb)
         pending.footer = image[985:1070,1050:1920].copy()
         try:
             return save_image(row, col, image)

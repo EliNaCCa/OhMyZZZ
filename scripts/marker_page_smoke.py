@@ -32,7 +32,7 @@ def smoke(home):
     def scroll(amount, pos):
         nonlocal page
         calls.append((amount, pos.x, pos.y))
-        page = min(page + 1, 2)
+        page = min(page + 1, 2) if amount > 0 else max(page - 1, 0)
     marker.app = SimpleNamespace(ctx=SimpleNamespace(controller=SimpleNamespace(scroll=scroll)))
     matched = []
     def handle(mode, detail, row):
@@ -51,6 +51,30 @@ def smoke(home):
         else:
             raise AssertionError('lost target reported success at end of list')
         assert len(calls) == 2 and len(matched) == 1
+        # A phase with one stale position and one valid position should revisit
+        # only the outstanding item, including when the viewport is near the end.
+        from contextlib import nullcontext
+        marker.app.account, marker.app.group = 1, 'one_dragon'
+        marker.report = dict(issues=[], rules='sample', discs=[{},{}])
+        marker.cfg, marker.history = {}, {}
+        marker.guard = lambda:None
+        marker.scanner = SimpleNamespace(_ensure_screen_areas=lambda:None)
+        marker.positions = {'done':['one position']}
+        marker.phase_targets = lambda mode: {'done':{}, 'first':{}} if mode == 'lock' else {}
+        marker.detail = lambda: ('first', 'locked', 'unmarked', False) if page == 0 else None
+        def visit(mode, todo):
+            nonlocal page
+            assert mode == 'lock' and set(todo) == {'first','done'}
+            del todo['done']
+            page = 2
+        marker.visit_positions = visit
+        with (patch('drive_disc_manager.live.marker_conflict', return_value=''),
+              patch('drive_disc_manager.live.enter_warehouse', return_value=2),
+              patch('zzz_od.operation.back_to_normal_world.BackToNormalWorld') as world,
+              patch('drive_disc_manager.manual_equip.guarded_grid', return_value=nullcontext())):
+            world.return_value.execute.return_value.success = True
+            marker.run()
+        assert page == 0 and matched[1:] == [('lock','first',{})]
 
 
 if __name__ == '__main__':

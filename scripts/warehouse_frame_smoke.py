@@ -78,6 +78,7 @@ def smoke(home):
                 assert selected_position(moved, SimpleNamespace(x=572, y=bottom)) is None
                 stamp = viewport_stamp(frame,3)
                 assert stamp and viewport_stamp(moved,3) == stamp
+                replay_mark_positions(marker, sample, frame, moved, positions[0], stamp, scroll_thumb(frame))
                 other_bytes = (path.parent/'mark_grid_319.jpg').read_bytes()
                 other = cv2.imdecode(np.frombuffer(other_bytes,np.uint8), cv2.IMREAD_COLOR_RGB)
                 other = cv2.resize(other[-900:],(1920,1080),interpolation=cv2.INTER_CUBIC)
@@ -207,6 +208,61 @@ def smoke(home):
         mixed = dict(z,discs=[dict(sample,setKey='谶羽之誓'),duplicate],audit=dict(game_total=2,exported=2,delta=0))
         assert all(row['ambiguous'] and row['review'] for row in plan(mixed,cfg,rules,names)['discs'])
     print('PASS one +3 disc across two frames, five stat readings, correct optimizer input, mismatch blocked, pin preserved')
+
+
+def replay_mark_positions(marker, sample, frame, moved, selected, stamp, thumb):
+    """Exercise the marking phase with the recorded warehouse and no game controller."""
+    from drive_disc_manager.mark_positions import scan_positions
+    from drive_disc_manager.store import fingerprint
+
+    fp = fingerprint(sample)
+    target = marker.rows[fp]
+    sample = dict(sample, observedGrade='S', observedValues=target['observedValues'],
+                  scanCell=(0, *selected, stamp, thumb))
+    marker.positions = scan_positions([sample], marker.rows)
+    assert marker.positions[fp]
+    assert not scan_positions([sample], {fp:dict(target, ambiguous=True)})
+    assert not scan_positions([dict(sample, observedValues=None)], marker.rows)
+    row, col = 3, 3
+    layout = [[SimpleNamespace(x=167+135*c, y=319+174*r) for c in range(9)] for r in range(4)]
+    selections = []
+    def select(pt, r, c):
+        selections.append((r,c))
+        return True
+    original_grid = marker.grid
+    marker.grid = SimpleNamespace(_detect_points=lambda img:[layout[0][0]], _resolve_grid=lambda points:(layout, ''),
+                                  _ensure_selected=select, _stable_screenshot=lambda:None)
+    try:
+        with (patch.object(marker, 'frame', return_value=frame),
+              patch.object(marker, 'handle_disc', return_value=True) as handle,
+              patch.object(marker, 'next_page', side_effect=AssertionError('scrolled past visible target'))):
+            todo = {fp:target}
+            marker.visit_positions('lock', todo)
+            assert not todo and selections == [(row, col)]
+            handle.assert_called_once_with('lock', (fp, 'unlocked', 'unmarked', False), target)
+            # At either end of the list the thumb can be unreadable. The grid
+            # can still find the same selected cell and verify its actual disc.
+            marker.positions = scan_positions([dict(sample, scanCell=(11, *selected))], marker.rows)
+            todo = {fp:target}
+            with patch('drive_disc_manager.scan_copies.scroll_thumb', return_value=None):
+                marker.visit_positions('lock', todo)
+            assert not todo and selections == [(row, col)] * 2 and handle.call_count == 2
+        # Neighbors match but the selection is one row up. Its unchanged detail
+        # panel cannot authorize marking at the recorded coordinates.
+        with (patch.object(marker, 'frame', return_value=moved),
+              patch.object(marker, 'handle_disc', side_effect=AssertionError('wrong selection'))):
+            todo = {fp:target}
+            marker.visit_positions('lock', todo)
+            assert set(todo) == {fp}
+        # Even a valid selection with a different stat line must be left for fallback.
+        with (patch.object(marker, 'frame', return_value=frame),
+              patch.object(marker, 'detail', return_value=('other', 'unlocked', 'unmarked', False)),
+              patch.object(marker, 'handle_disc', side_effect=AssertionError('wrong disc'))):
+            todo = {fp:target}
+            marker.visit_positions('mark', todo)
+            assert set(todo) == {fp}
+    finally:
+        marker.grid = original_grid
 
 
 if __name__ == '__main__':

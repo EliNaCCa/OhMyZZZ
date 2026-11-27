@@ -184,7 +184,7 @@ def with_copies(export, readings):
     base = roll_base(export)
     for disc in readings:
         cell = disc.get('scanCell')
-        if (not isinstance(cell, (list, tuple)) or len(cell) not in (2,4,5) or any(type(i) is not int for i in cell[:2])
+        if (not isinstance(cell, (list, tuple)) or len(cell) not in (2,3,4,5) or any(type(i) is not int for i in cell[:2])
                 or cell[0] < 0 or cell[1] not in range(9) or not checked_values(disc, base)):
             continue
         if disc.get('markState') not in ('marked', 'unmarked') or disc.get('lockState') not in ('locked', 'unlocked'):

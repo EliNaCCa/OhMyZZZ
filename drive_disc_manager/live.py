@@ -1,7 +1,6 @@
 """Live reversible markers. The inventory scanner's lock/trash/rarity are placeholders.
 Read the on-screen lock and trash controls again before handing control to the host.
 """
-import re
 import time
 from collections import Counter
 from pathlib import Path
@@ -12,7 +11,7 @@ from one_dragon.utils import cv2_utils
 from .warehouse import enter_warehouse, warehouse_header
 from .store import digest, fingerprint, read, save, config
 from .marks import mark_action, marker_for, owns_spare
-from .scan_marks import mark_hint, observed_grade, read_controls
+from .scan_marks import mark_hint, observed_header, read_controls
 from .stat_reading import measure
 from .task_order import marker_conflict
 
@@ -24,7 +23,7 @@ def hints(ocr, screen):
 class Marker:
     batch = None
 
-    def __init__(self, app, scanner, report):
+    def __init__(self, app, scanner, report, *, readings=()):
         if report.get('networkPreview'):
             raise ValueError('请先用游戏画面核对本轮标记清单')
         self.app = app
@@ -36,6 +35,8 @@ class Marker:
         self.report = report
         self.rows = {row['fp']:row for row in report['discs']}
         self.seen_counts = Counter(row['fp'] for row in report['discs'])
+        from .mark_positions import scan_positions
+        self.positions = scan_positions(readings, self.rows)
         self.history = read(self.root/'markers.json', {})
         self.observed = {}
         self.released = set()
@@ -61,8 +62,9 @@ class Marker:
             raise ValueError('当前驱动仓库数量与计划不匹配')
         return screen
 
-    def detail(self):
-        screen = self.frame()
+    def detail(self, screen=None):
+        if screen is None:
+            screen = self.frame()
         area = self.app.ctx.screen_loader.get_area('仓库-驱动仓库','驱动盘属性')
         part = cv2_utils.crop_image_only(screen, area.rect)
         items = []
@@ -72,15 +74,14 @@ class Marker:
         if not items or any(i['confidence']<0.85 for i in items):
             return None
         texts = ''.join(item['text'] for item in items).replace(' ','')
-        slot = re.search(r'\[([1-6])\]',texts.replace('【','[').replace('】',']'))
-        level = re.search(r'(?:等级|Lv[.]?)([0-9]{1,2})/(?:9|12|15)(?![0-9])',texts,re.I)
-        rank = observed_grade(items)
-        if not slot or not level or rank is None or ('主属性' not in texts and 'MainStat' not in texts):
+        slot, level, rank = observed_header(items)
+        if slot is None or level is None or rank is None or ('主属性' not in texts and 'MainStat' not in texts):
             return None
-        disc = self.parser.parse_ocr_result([dict(i) for i in items],None)
-        if not disc or str(disc['slotKey'])!=slot[1] or disc['level']!=int(level[1]):
+        parsed_items = [dict(i, text=i['text'].replace('【','[').replace('】',']')) for i in items]
+        disc = self.parser.parse_ocr_result(parsed_items, None)
+        if not disc or str(disc['slotKey']) != slot:
             return None
-        disc['rarity'] = rank
+        disc.update(rarity=rank, level=level)
         fp = fingerprint(disc)
         if fp not in self.rows or self.seen_counts[fp]!=1:
             return None
@@ -175,7 +176,7 @@ class Marker:
     def phase_targets(self, mode):
         todo = {}
         for fp,row in self.rows.items():
-            if row['review'] or self.seen_counts[fp]!=1: continue
+            if row['review'] or row.get('ambiguous') or self.seen_counts[fp]!=1: continue
             if mode=='lock' and row['decision']=='保留': todo[fp]=row
             if mode=='mark' and row['decision']=='弃置候选': todo[fp]=row
             if mode=='release' and row['decision']=='弃置候选' and row.get('managedSpareLock'): todo[fp]=row
@@ -231,6 +232,75 @@ class Marker:
             action = {'lock':'锁定', 'release':'解除旧备用锁', 'mark':'弃置标记'}[mode]
             raise ValueError(f'{stop}，{action}尚有 {len(todo)} 张未核实，保留现场记录')
 
+    def visit_position(self, mode, fp, pos, grid, row):
+        from .mark_positions import page_grid_point
+        from .scan_copies import selected_position, viewport_stamp
+        match = page_grid_point(grid, pos)
+        if match is None:
+            return False
+        screen = self.frame()
+        if pos.stamp is not None and viewport_stamp(screen, pos.column) != pos.stamp:
+            return False
+        r, c, pt = match
+        if not self.grid._ensure_selected(pt, r, c):
+            return False
+        self.grid._stable_screenshot()
+        screen = self.frame()
+        selected = selected_position(screen, pt)
+        if not selected or selected[0] != pos.column or abs(selected[1]-pos.center_y) > 4:
+            return False
+        detail = self.detail(screen)
+        if not detail or detail[0] != fp:
+            return False
+        self.observed[fp] = detail[2]
+        return self.handle_disc(mode, detail, row)
+
+    def visit_positions(self, mode, todo):
+        """Look up this phase's targets. Leave missed items in todo for normal traversal."""
+        from collections import defaultdict
+        from .scan_copies import scroll_thumb
+
+        by_thumb, by_page = defaultdict(list), defaultdict(list)
+        for fp in todo:
+            for pos in self.positions.get(fp, ()):
+                if pos.thumb is None:
+                    by_page[pos.page].append((fp, pos))
+                else:
+                    by_thumb[pos.thumb].append((fp, pos))
+        last_top = max((thumb[1] for thumb in by_thumb), default=-1)
+        last_page = max(by_page, default=-1)
+        for page in range(400):
+            screen = self.frame()
+            thumb = scroll_thumb(screen)
+            spots = [*by_thumb.get(thumb, ()), *by_page.get(page, ())]
+            if spots:
+                points = self.grid._detect_points(screen)
+                if not points:
+                    return
+                grid, _note = self.grid._resolve_grid(points)
+                self.grid.grid_rows = grid
+                for fp, pos in spots:
+                    if fp in todo and self.visit_position(mode, fp, pos, grid, todo[fp]):
+                        del todo[fp]
+                        if not todo:
+                            return
+            if page >= last_page and (not by_thumb or (thumb and thumb[1] >= last_top)):
+                return
+            if not self.next_page():
+                return
+
+    def rewind(self):
+        from .scan_copies import scroll_thumb
+        before = scroll_thumb(self.frame())
+        for _ in range(32):
+            self.guard()
+            self.app.ctx.controller.scroll(-120, self.grid._scroll_list_center())
+            time.sleep(.6)
+            after = scroll_thumb(self.frame())
+            if after is None or (before and after[1] >= before[1]):
+                return
+            before = after
+
     def run(self):
         reason = marker_conflict(self.app.ctx,self.app.account,self.app.group)
         if reason: raise ValueError(reason)
@@ -252,5 +322,14 @@ class Marker:
             self.scanner._ensure_screen_areas()
             if enter_warehouse(self.app, self.guard) != len(self.report['discs']):
                 raise ValueError('当前驱动仓库数量与计划不匹配')
-            self.apply(phase, todo)
+            from .manual_equip import guarded_grid
+            with guarded_grid(self.grid, self.guard):
+                if any(self.positions.get(fp) for fp in todo):
+                    self.visit_positions(phase, todo)
+                    if todo:
+                        # Some pages can move after a mark. Restart the normal search
+                        # from the top for outstanding discs only.
+                        self.rewind()
+                if todo:
+                    self.apply(phase, todo)
         return self.observed

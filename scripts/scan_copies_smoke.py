@@ -39,7 +39,8 @@ def smoke():
         assert all(d['ambiguous'] and d['review'] for d in plan(saved, defaults(), {}, {'SwingJazz':'摇摆爵士'})['discs'])
         for evidence in ([disc, dict(overlap, scanCell=(1, 1))], [disc, dict(copy, scanCell=(0, 1))], [disc, dict(copy, observedValues=None)],
                          [upper, jitter], [upper, dict(lower, scanCell=(0,1,493,'b'*64))],
-                         [upper, dict(lower, scanCell=(1,1,493,stamp))], [upper, dict(lower, scanCell=(0,1))]):
+                         [upper, dict(lower, scanCell=(1,1,493,stamp))], [upper, dict(lower, scanCell=(0,1))],
+                         [dict(upper, scanCell=(0,1,319)), dict(lower, scanCell=(0,1,493))]):
             try:
                 import_inventory(root, source, readings=evidence)
             except ValueError as exc:
