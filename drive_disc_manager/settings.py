@@ -1197,8 +1197,9 @@ class ManagerInterface(BaseInterface):
             rows = describe(self.root, record, read(wiki_path(), {}))
         stamp = datetime.fromtimestamp(record['finished']).strftime('%m-%d %H:%M')
         lines = [f"{r['name']} {r['slot']} 号 +{r['level']}　{r['main']}　｜　{r['subs']}　｜　{r['suggestion']}" for r in rows]
-        self.probe_note.setText(f'{stamp} · 当前筛选下最近获得的 {len(rows)} 张' + ('\n' + '\n'.join(lines) if lines else ''))
-        self.probe_note.setToolTip('\n'.join(r['advice'] for r in rows))
+        basis = ' · 参考' + rows[0]['basis'] if rows and rows[0].get('basis') else ''
+        self.probe_note.setText(f'{stamp} · 当前筛选下最近获得的 {len(rows)} 张' + basis + ('\n' + '\n'.join(lines) if lines else ''))
+        self.probe_note.setToolTip('\n'.join(r['advice'] + ('\n' + r['reference'] if r.get('reference') else '') for r in rows))
         self.probe_note.show()
 
     def show_probe(self, record):

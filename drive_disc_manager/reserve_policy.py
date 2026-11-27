@@ -76,17 +76,17 @@ def upgrade_advice(row, limits, floor=()):
         if any(use['label'] == purpose and tuple(use['stats']) == keys and
                max_useful_rolls(row['level'], row['rolls'], keys) < use['minimum'] for use in floor):
             continue
-        targets.append((purpose, sum(row['rolls'].get(k, 0) for k in keys)))
+        targets.append((purpose, sum(row['rolls'].get(k, 0) for k in keys), keys))
     if not targets:
         return None
-    use, good = max(targets, key=lambda item: item[1])
+    use, good, keys = max(targets, key=lambda item: item[1])
     # Reveal a fourth line on a promising three-liner. On developed pieces require
     # more useful rolls before spending materials on the next tier.
     minimum = (1 if len(row['rolls']) == 3 else 2) + row['level'] // 6
     if good < minimum:
         return None
     target = 3 * (row['level'] // 3 + 1)
-    return dict(target=target, purpose=use, rolls=good,
+    return dict(target=target, purpose=use, rolls=good, stats=list(keys),
                 reason=f'{use}有效副词条 {good} 档，建议试到 +{target}')
 
 

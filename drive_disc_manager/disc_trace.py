@@ -91,16 +91,17 @@ def probe_trace(record, cfg, rules, wiki, known_owned, *, comparison=None):
             floor = probe_floor(row, limits, comparison) if comparison else []
             advice = upgrade_advice(row, limits, floor)
             if advice:
+                row['trialUse'] = advice
                 row['probeAdvice'] = f"可试到 +{advice['target']} · {advice['purpose']}"
                 suffix = '，看第四条副词条' if len(rolls) == 3 else ''
-                source = '按单盘词条' if comparison is None else f'对照 {comparison[1]} 仓库预览'
+                source = '按单盘词条' if comparison is None else '对照' + comparison[1]
                 row['explanation'].append(source + '，' + advice['reason'] + suffix)
             elif comparison and (reason := verdict(row['level'], rolls, floor)):
                 row['probeAdvice'] = '跳过试强化'
-                row['explanation'].append(f'对照 {comparison[1]} 仓库预览，{reason}，跳过试强化')
+                row['explanation'].append(f'对照{comparison[1]}，{reason}，跳过试强化')
             elif comparison and upgrade_advice(row, limits):
                 row['probeAdvice'] = '暂缓强化'
-                row['explanation'].append(f'对照 {comparison[1]} 仓库预览，暂缓强化')
+                row['explanation'].append(f'对照{comparison[1]}，暂缓强化')
     if row['marked']:
         row['probeAdvice'] = '已弃置'
     elif disc.get('location'):

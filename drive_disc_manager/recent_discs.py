@@ -101,21 +101,21 @@ def daily_read(app, pinned, wiki):
     guard()
     record = dict(account=app.account, started=started, finished=time(), status='verified',
                   warehouseCount=total, discs=discs, rules=pinned[1].get('version'))
-    record['rows'] = describe(app.root, record, read(wiki, {}), pinned=pinned, single_disc_only=True)
+    record['rows'] = describe(app.root, record, read(wiki, {}), pinned=pinned)
     guard()
     save(app.root/'recent-discs.json', record)
     return len(discs)
 
 
-def describe(root, record, wiki, *, pinned=None, single_disc_only=False):
+def describe(root, record, wiki, *, pinned=None):
     from .disc_trace import probe_trace
     from .potential import saved_comparison
     from .store import config, equipment_names, known_agents, read
     cfg, rules = pinned[:2] if pinned else (config(root), read(root/'rules.json', {}))
     names = equipment_names(wiki) | cfg.get('aliases', {})
     agents = known_agents(root)
-    # When the reader was unavailable this run, only the single-disc advice is current.
-    comparison = None if single_disc_only else saved_comparison(root, cfg, rules)
+    comparison = saved_comparison(root, cfg, rules)
+    observations = {} if comparison else read(root/'scan-observations.json', {})
     rows = []
     for disc in record['discs']:
         row, _ = probe_trace(dict(status='verified', disc=disc), cfg, rules, wiki, agents, comparison=comparison)
@@ -124,4 +124,42 @@ def describe(root, record, wiki, *, pinned=None, single_disc_only=False):
                          main=format_stats(row['observedValues']['main']), subs=format_stats(row['observedValues']['subs']),
                          suggestion=row.get('probeAdvice', '待比较同类盘'),
                          advice='、'.join(dict.fromkeys(notes)) or '留盘要和仓库里的同类盘比较'))
+        if comparison:
+            rows[-1]['basis'] = comparison[1]
+        elif row.get('trialUse') and observations:
+            reference = observed_peer(row, observations, names)
+            if reference:
+                rows[-1]['reference'] = reference
     return rows
+
+
+def observed_peer(row, observations, names):
+    """Pick an example from a past scan for display. Keep quota decisions in the planner."""
+    from datetime import datetime
+    from .store import equipment_key, equipment_keys
+    reverse = equipment_keys(names)
+    use = row['trialUse']
+    best_score = 0
+    best = None
+    for disc in observations.get('rows', []):
+        if (disc.get('observedGrade') != 'S' or disc.get('rarity') != 'S' or disc.get('ownerState') != 'bag'
+                or disc.get('location') or disc.get('markState') != 'unmarked' or disc.get('lockState') != 'unlocked'
+                or str(disc.get('slotKey')) != row['slot'] or disc.get('mainStatKey') != row['main']
+                or equipment_key(disc['setKey'], names, reverse) != row['set']):
+            continue
+        if not isinstance(disc.get('substats'), list):
+            continue
+        try:
+            values = checked_values(disc, 1)
+        except (TypeError, KeyError):
+            continue
+        if not values or (disc['level'], values) == (row['level'], row['observedValues']):
+            continue
+        score = sum(s['upgrades'] for s in disc['substats'] if s['key'] in use['stats'])
+        if score > best_score:
+            best, best_score = disc, score
+    if best is None:
+        return None
+    subs = {k:v for k,v in best['observedValues']['subs'].items() if k in use['stats']}
+    stamp = datetime.fromtimestamp(observations['at']).strftime('%m-%d')
+    return f"{stamp} 扫到的同类盘 +{best['level']} · {format_stats(subs)}（{use['purpose']}有效 {best_score} 档，这张 {use['rolls']} 档）"

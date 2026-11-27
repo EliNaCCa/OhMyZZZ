@@ -56,7 +56,8 @@ def benchmarks(rows, cfg):
 def saved_comparison(root, cfg, rules):
     from datetime import datetime
     from .store import digest, inventory, preview_path, read, snapshot_path
-    snapshot = read(snapshot_path(root, cfg), {})
+    source = snapshot_path(root, cfg)
+    snapshot = read(source, {})
     report = read(preview_path(root, cfg), {})
     if (not snapshot or not report.get('generated') or report.get('issues') or
             report.get('inventory') != digest(snapshot) or report.get('configuration') != digest(cfg) or
@@ -66,6 +67,10 @@ def saved_comparison(root, cfg, rules):
         inventory(snapshot, preview_only=True)
     except ValueError:
         return None
+    if cfg.get('inventorySource') == 'cn_export':
+        from .cn_export import source_path
+        if str(source_path(root, snapshot)) != snapshot.get('exportFile'):
+            return None
     rows = report['discs']
     if (len(rows) != len(snapshot['discs']) or
             {r['id'] for r in rows} != {disc['id'] for disc in snapshot['discs']}):
@@ -74,7 +79,13 @@ def saved_comparison(root, cfg, rules):
     for row in rows:
         if comparable(row) and row['decision'] == '保留':
             groups[group_key(row)].append(row)
-    stamp = datetime.fromtimestamp(report['generated']).strftime('%m-%d %H:%M')
+    # Recalculating the preview doesn't change the age of its inventory.
+    written = snapshot.get('exportWrittenNs')
+    if written:
+        stamp = '国服导出 ' + datetime.fromtimestamp(written / 1_000_000_000).strftime('%m-%d %H:%M')
+    else:
+        saved = snapshot.get('observedAt') or source.stat().st_mtime
+        stamp = '库存记录 ' + datetime.fromtimestamp(saved).strftime('%m-%d %H:%M')
     return groups, stamp
 
 
@@ -84,7 +95,8 @@ def probe_floor(row, limits, comparison):
     from .store import is_pinned
     groups, _ = comparison
     keys = set(row.get('pinKeys') or [row['fp']])
-    peers = [p for p in groups.get(group_key(row), ()) if not is_pinned(p, keys)]
+    peers = [p for p in groups.get(group_key(row), ()) if not is_pinned(p, keys)
+             and (p['level'], p['observedValues']) != (row['level'], row['observedValues'])]
     return spare_floor(row, limits, ranked_spares(peers), ())
 
 

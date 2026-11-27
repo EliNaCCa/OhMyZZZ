@@ -30,6 +30,12 @@ def smoke(home, sample):
         for file in ('rules.json', 'owned-agents.json'):
             if (src/file).is_file():
                 save(root/file, read(src/file))
+        # Replay one real same-slot peer from the saved scan, not the entire bag.
+        past = read(src/'scan-observations.json')
+        peer = next(d for d in past['rows'] if d['setKey'] == discs[0]['setKey'] and
+                    d['slotKey'] == discs[0]['slotKey'] and d['mainStatKey'] == discs[0]['mainStatKey'] and
+                    (d.get('observedValues') or {}).get('subs') == {'crit_dmg_':4.8,'pen':9,'hp_':3})
+        save(root/'scan-observations.json', dict(at=past['at'], total=past['total'], rows=[peer]))
         scanner = NS(config=NS(scan_drive_disk=True), _ensure_screen_areas=lambda: None)
         ctx = NS(current_instance_idx=1, get_plugin_data_dir=lambda _: root.parent,
                  controller=NS(game_win=NS(is_win_active=True)),
@@ -51,6 +57,8 @@ def smoke(home, sample):
             assert front.call_count == 1 and front.call_args.args[-1] == 3
             original = read(root/'recent-discs.json')
             assert original['discs'] == discs and all(r['suggestion'] for r in original['rows'])
+            assert '有效 2 档，这张 1 档' in original['rows'][0]['reference']
+            assert all('basis' not in row for row in original['rows'])
             save(root/'config.json', dict(cfg, inventorySource='network'))
             with patch('drive_disc_manager.network_reader.socket.create_connection', side_effect=ConnectionRefusedError()):
                 assert '已记录当前筛选下最近的' in manager.manage_inventory()
@@ -69,6 +77,11 @@ def smoke(home, sample):
             from one_dragon.base.operation.operation_base import OperationResult
             sample_disc = {k:discs[0][k] for k in ('slotKey', 'level', 'rarity', 'setKey', 'mainStatKey', 'substats')}
             sample_disc.update(id='101', location='', lock=False, trash=False)
+            # One simulated +15 spare with six proficiency rolls. The recorded +0
+            # can reach only five in that use, including all remaining tiers.
+            cfg.update(reserve=0, reserve_rules=[dict(purpose='异常精通', count=1, stats=['anomProf'])])
+            sample_disc.update(level=15, substats=[dict(key=k, upgrades=v) for k,v in
+                               [('anomProf',6), ('def',1), ('hp',1), ('crit_',1)]])
             save(root/'config.json', cfg)
             save(root/'exports/zzz-drives-zood-v1.json', dict(format='ZOOD', version=1, source='zzz-drive-exporter', discs=[sample_disc]))
             total = observed['warehouseCount']
@@ -84,6 +97,12 @@ def smoke(home, sample):
                 mismatch = manager.manage_inventory()
                 assert f'游戏仓库有 {total} 张，国服导出有 1 张' in mismatch and front.call_count == 3, mismatch
                 assert grid.execute.call_count == 0 and not (root/'inventory.json').exists()
+                from datetime import datetime
+                cn = read(root/'cn-inventory.json')
+                stamp = datetime.fromtimestamp(cn['exportWrittenNs'] / 1e9).strftime('%m-%d %H:%M')
+                compared = read(root/'recent-discs.json')['rows']
+                assert all(r.get('basis') == '国服导出 ' + stamp and 'reference' not in r for r in compared)
+                assert compared[0]['suggestion'] == '跳过试强化' and '最多 5 档' in compared[0]['advice'], compared[0]
                 before = (root/'recent-discs.json').read_bytes()
                 with patch('drive_disc_manager.upgrade.pending_trial', return_value={'uid':'101'}):
                     assert '已记录' not in manager.manage_inventory()
@@ -97,7 +116,10 @@ def smoke(home, sample):
         page.on_interface_shown()
         assert page.recent_result.isEnabled()
         page.recent_result.trigger()
-        assert all(r['name'] in page.probe_note.text() and r['suggestion'] in page.probe_note.text() for r in saved['rows'])
+        assert '参考国服导出' in page.probe_note.text()
+        assert all(r['name'] in page.probe_note.text() and r['suggestion'] in page.probe_note.text() for r in compared)
+        page.show_recent(original)
+        assert original['rows'][0]['reference'] in page.probe_note.toolTip()
         ctx.current_instance_idx = 2
         page.on_interface_shown()
         assert not page.recent_result.isEnabled() and not page.probe_note.text()
