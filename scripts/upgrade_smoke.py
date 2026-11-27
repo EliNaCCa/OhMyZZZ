@@ -67,6 +67,18 @@ with TemporaryDirectory() as tmp:
         good=piece('1',3,dict(base,crit_dmg_=1)); bad=piece('1',3,dict(base,def_=1))
         note = recover(root,pending,stock([good,spare]))
         assert '新增暴击伤害 4.8%' in note and '建议再试到 +6' in note
+        # A character likes both crit stats; the player's only active use counts crit rate alone.
+        from drive_disc_manager.upgrade import after_advice, finalize
+        row = dict(pending['row'], roleStats={'主C':['crit_', 'crit_dmg_']})
+        assert after_advice(row,good,cfg,{})['target'] == 6
+        assert after_advice(row,good,dict(cfg,reserve=0),{}) is None
+        assert after_advice(row,good,dict(cfg,reserve_rules=just_crit),{}) is None
+        crit_damage = dict(cfg,reserve=0,reserve_rules=[dict(purpose='偏暴伤', count=1)])
+        assert after_advice(row,piece('1',6,dict(base,crit_dmg_=2)),crit_damage,{}) is None
+        # The selected piece was verified, but at +3 its line now matches a second physical copy.
+        duplicate = dict(pending,previousMatches=[fingerprint(good)])
+        assert '停在 +3' in finalize(root,duplicate,good)
+        assert read(root/RECEIPT)['nextUpgrade'] is None and not read(root/RECEIPT)['outgrown']
         assert ui.confirm.call_count==1
         ui.read_after.side_effect=None;ui.read_after.return_value=bad
         marker.detail.return_value=(fingerprint(bad),'unlocked','unmarked',False)

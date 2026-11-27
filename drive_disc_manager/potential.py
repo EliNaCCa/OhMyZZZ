@@ -2,23 +2,12 @@
 from collections import defaultdict
 
 from .optimizer import STATS
-from .reserve_policy import DEFAULT_STATS, SELECTORS, matching_rules, normalized_rule, upgrade_advice
+from .reserve_policy import SELECTORS, matching_rules, normalized_rule, spare_uses, upgrade_advice
 from .store import equipment_keys
 
 
 def group_key(row):
     return tuple(row[k] for k in SELECTORS)
-
-
-def uses(row, limits):
-    for purpose, (_, count, stats) in limits.items():
-        if count == 0:
-            continue
-        if purpose == '通用' and stats is DEFAULT_STATS and row.get('roleStats'):
-            for role, preferred in row['roleStats'].items():
-                yield role, count, preferred
-        else:
-            yield purpose, count, stats
 
 
 def benchmarks(rows, cfg, names):
@@ -39,7 +28,7 @@ def benchmarks(rows, cfg, names):
         cache = {}
         for row in group:
             floor = []
-            for label, count, stats in uses(row, limits):
+            for label, count, stats in spare_uses(row, limits):
                 if count is None:
                     floor = []
                     break

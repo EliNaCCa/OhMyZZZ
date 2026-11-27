@@ -89,6 +89,6 @@ def probe_trace(record, cfg, rules, wiki, known_owned):
             advice = upgrade_advice(row, limits)
             if advice:
                 suffix = '，看第四条副词条' if len(rolls) == 3 else ''
-                row['explanation'].append(f"建议试到 +{advice['target']}{suffix}")
+                row['explanation'].append(advice['reason'] + suffix)
     return row, dict(rules=rules.get('version'), traceRules=rule_book([row], rules, cfg['overrides'],
                                                                      current_conflicts(rules,cfg['overrides'])))

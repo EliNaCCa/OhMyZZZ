@@ -34,16 +34,26 @@ def quota(value):
     return value
 
 
+def spare_uses(row, limits):
+    """Use character preferences only for the inherited general-purpose stat list."""
+    for purpose, (_, count, stats) in limits.items():
+        if count == 0:
+            continue
+        if purpose == '通用' and stats is DEFAULT_STATS and row.get('roleStats'):
+            for role, preferred in row['roleStats'].items():
+                yield role, count, preferred
+        else:
+            yield purpose, count, stats
+
+
 def upgrade_advice(row, limits):
     """Rate one S disc's next three-level step from its own stats and matching uses."""
     growth = row.get('development')
     if (not growth or row['level'] >= 15 or row['marked'] or row['review']
             or not row['recommendations']):
         return None
-    targets = [(agent, rolls) for agent, rolls in row.get('roleRolls', {}).items()]
-    for purpose, (_, count, stats) in limits.items():
-        if count != 0 and (not targets or stats is not DEFAULT_STATS):
-            targets.append((purpose, sum(row['rolls'].get(k, 0) for k in stats)))
+    targets = [(purpose, sum(row['rolls'].get(k, 0) for k in stats))
+               for purpose, _, stats in spare_uses(row, limits)]
     if not targets:
         return None
     use, good = max(targets, key=lambda item: item[1])

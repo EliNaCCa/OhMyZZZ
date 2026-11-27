@@ -97,15 +97,18 @@ def finalize(root, receipt, after):
         save(root/'markers.json', history)
     advice = after_advice(receipt['row'], after, receipt['limits'], receipt['names'])
     reason = verdict(after['level'], rolls(after), receipt['row'].get('upgradeFloor', ()))
-    if (after['level'] == 15 and receipt['limits'].get('protect15', True)) or new_fp in receipt['previousMatches']:
+    duplicate = new_fp in receipt['previousMatches']
+    if (after['level'] == 15 and receipt['limits'].get('protect15', True)) or duplicate:
         reason = ''
     if (receipt['limits'].get('protectNaturalCrit', True) and development(after['level'], rolls(after))['initial'] == 4
             and {'crit_', 'crit_dmg_'} <= rolls(after).keys()):
         reason = ''
-    if reason:
+    if reason or duplicate:
         advice = None
     label = receipt['label']
     decision = '建议弃置，' + reason if reason else f"建议再试到 +{advice['target']}" if advice else '留作备用'
+    if duplicate:
+        decision = f"仓库里有相同词条的盘，这张停在 +{after['level']}"
     old_subs = before['observedValues']['subs']
     new_subs = after['observedValues']['subs']
     stat = next(k for k, v in new_subs.items() if old_subs.get(k) != v)
