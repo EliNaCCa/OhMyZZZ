@@ -109,6 +109,48 @@ with TemporaryDirectory() as tmp:
         assert marker.handle_disc.call_count==1 and read(root/RECEIPT)['marked']
     print('PASS +3 vs +6, confirmation recovery, useful fourth line, outgrown spare marked')
 
+    # Run the lock and trial stages against the same two physical pieces.
+    from drive_disc_manager.live import Marker
+    from drive_disc_manager.marks import owns_spare
+    from drive_disc_manager.disc_trace import probe_trace
+    natural = piece('11', 0, dict(base, crit_dmg_=1))
+    hand = dict(piece('12', 0, {'crit_':1, 'crit_dmg_':1, 'def_':1, 'hp_':1}), lock=True, lockState='locked')
+    protected = stock([natural, hand]); report = plan(protected,cfg,rules,{})
+    row, personal = report['discs']
+    assert eligible(row) and not eligible(personal) and '四词条双暴胚子' in row['reasons']
+    detail_row, _ = probe_trace(dict(status='verified', disc=dict(natural, fingerprint=row['fp'])),cfg,rules,{},())
+    assert any('建议试到 +3' in note for note in detail_row['explanation'])
+    game_disc = dict(natural)
+    game = Marker.__new__(Marker); game.root=root; game.report=report; game.cfg=cfg; game.app=app
+    game.history={}; game.observed={}; game.confirmed_locks={}; game.rows={r['fp']:r for r in report['discs']}
+    game.detail = lambda:(row['fp'], game_disc['lockState'], 'unmarked', False)
+    def game_click(point):
+        assert point.x == 1530 and not game_disc['lock']
+        game_disc.update(lock=True,lockState='locked')
+    app.ctx.controller.click = game_click
+    with patch('drive_disc_manager.live.time.sleep'):
+        assert game.handle_disc('lock',game.detail(),row)
+    assert owns_spare(read(root/'markers.json')[row['fp']], natural['observedValues'])
+    def pages(*args, by_acquisition):
+        assert by_acquisition
+        for disc in (hand, game_disc):
+            yield disc, lambda:disc
+    grown = dict(piece('11',3,dict(base,crit_dmg_=2)), lockState='locked', lock=True)
+    with (patch('drive_disc_manager.equip_targets.warehouse_observations',pages),
+          patch('drive_disc_manager.disc_probe.read_selected',side_effect=lambda *_:dict(game_disc)),
+          patch('drive_disc_manager.upgrade_ui.UpgradeUI') as adapter):
+        # A player removes the just-applied lock before the trial. The old scan still says unlocked.
+        game_disc.update(lock=False,lockState='unlocked')
+        assert '没有找到' in run_trials(app,None,report,protected,cfg,{})
+        adapter.assert_not_called()
+        # Replay the uninterrupted path from immediately after the confirmed plugin lock.
+        game_disc.update(lock=True,lockState='locked')
+        ui=adapter.return_value; ui.preview.return_value=(0,3); ui.read_after.return_value=grown
+        note = run_trials(app,None,report,protected,cfg,{})
+        ui.confirm.assert_called_once_with(0,3)
+        assert '暴击伤害 4.8% → 9.6%' in note and owns_spare(read(root/'markers.json')[fingerprint(grown)],grown['observedValues'])
+    print('PASS newly locked natural double crit, manual lock and manual unlock, +3 with lock retained')
+
     # Two +0 drops compete for one spare slot. The second comparison must see the first +3.
     from drive_disc_manager import upgrade
     from drive_disc_manager.salvage_audit import uid_item

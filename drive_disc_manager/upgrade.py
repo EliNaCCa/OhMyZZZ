@@ -199,7 +199,9 @@ def select_disc(scanner, total, guard, targets, root):
                     or before['lockState'] != sample['lockState']):
                 continue
             managed = owns_spare(history.get(row['fp'], {}), before['observedValues'], uid=row.get('exportUid'))
-            if (before['lockState'] == 'locked' and not managed) or (before['lockState'] == 'unlocked' and row.get('scannedLock') == 'locked'):
+            if before['lockState'] == 'locked' and not managed:
+                continue
+            if before['lockState'] == 'unlocked' and (managed or row.get('scannedLock') == 'locked'):
                 continue
             return dict(row, managedSpareLock=managed), before
     return None
