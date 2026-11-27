@@ -94,10 +94,54 @@ with TemporaryDirectory() as tmp:
         assert after_advice(row,good,dict(cfg,reserve_rules=just_crit),{}) is None
         crit_damage = dict(cfg,reserve=0,reserve_rules=[dict(purpose='偏暴伤', count=1)])
         assert after_advice(row,piece('1',6,dict(base,crit_dmg_=2)),crit_damage,{}) is None
-        # The selected piece was verified, but at +3 its line now matches a second physical copy.
-        duplicate = dict(pending,previousMatches=[fingerprint(good)])
-        assert '停在 +3' in finalize(root,duplicate,good)
+        # Returning to the warehouse can select an older +3 that looks like a possible result.
+        # Start at the real spend entry so the prior lines and copy counts come from the bag.
+        from drive_disc_manager.upgrade import execute
+        old_copy = dict(good, id='9', setKey='测试盘')
+        alias = {'TestSet':'测试盘'}
+        trial_ui = Mock()
+        trial_ui.preview.return_value = (0,3)
+        trial_ui.confirm.side_effect = lambda current, goal, before_click: before_click()
+        trial_ui.read_after.return_value = good
+        batch = dict(batch='copy', beforeCounts={fingerprint(d):1 for d in (before,old_copy)}, entries=[])
+        save(root/'dismantle-preview.json', batch)
+        history = read(root/'markers.json',{})
+        try:
+            execute(root, trial_ui, pending['row'], before, stock([before,old_copy]), cfg, alias, 'copy')
+        except ValueError as exc:
+            assert '等下次整理核对' in str(exc), exc
+        else:
+            raise AssertionError('accepted a pre-existing +3 as the result')
+        duplicate = read(root/RECEIPT)
+        assert duplicate['status'] == 'pending' and 'after' not in duplicate
+        assert read(root/'dismantle-preview.json') == batch and read(root/'markers.json',{}) == history
+        assert '仍是原等级' in recover(root,duplicate,stock([before,old_copy]))
+        assert read(root/'dismantle-preview.json') == batch
+        # The actual trial may have gained a different fourth stat.
+        try:
+            recover(root,duplicate,stock([bad,old_copy,spare]))
+        except ValueError as exc:
+            assert '待核对' in str(exc), exc
+        else:
+            raise AssertionError('attributed a lookalike despite a second change to the bag')
+        assert '新增防御力' in recover(root,duplicate,stock([bad,old_copy]))
+        save(root/'dismantle-preview.json', batch)
+        unrelated = dict(spare, setKey='AnotherSet')
+        assert '停在 +3' in recover(root,duplicate,stock([old_copy,good,unrelated]))
         assert read(root/RECEIPT)['nextUpgrade'] is None and not read(root/RECEIPT)['outgrown']
+        assert read(root/'dismantle-preview.json')['upgradeMoves'] == {fingerprint(before):fingerprint(good)}
+        # With a bound UID a second, unrelated drop does not obscure the target's level.
+        bound_disc = dict(good, exportUid=good['id'], ownerState='unknown', markState='unknown', observedValues=None)
+        bound = dict(stock([bound_disc,old_copy,spare]), source='OhMyZZZ CN', exportFile='account-1.json', exportWrittenNs=2)
+        cn_receipt = dict(duplicate, uid=good['id'], batch=None, exportFile=bound['exportFile'], exportWrittenNs=1)
+        stale_before = dict(bound, discs=[dict(before, exportUid=before['id']),old_copy,spare], exportWrittenNs=1)
+        for other in (dict(bound, exportFile='other-account.json'), dict(bound, exportWrittenNs=1), stale_before):
+            try: recover(root, cn_receipt, other)
+            except ValueError: pass
+            else: raise AssertionError('used an unrelated or stale export to settle the trial')
+        assert '停在 +3' in recover(root, cn_receipt, bound)
+        assert trial_ui.confirm.call_count == 1
+        print('PASS old +3 in warehouse, unchanged level, different fourth stat, exact copy count and bound UID')
         assert ui.confirm.call_count==1
         ui.read_after.side_effect=None;ui.read_after.return_value=bad
         marker.detail.return_value=(fingerprint(bad),'unlocked','unmarked',False)

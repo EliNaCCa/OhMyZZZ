@@ -3,7 +3,7 @@ from collections import Counter
 from contextlib import closing
 
 from .optimizer import exported_s_main
-from .inventory_comparison import match_export
+from .inventory_comparison import attribute_key, match_export
 from .reserve_policy import development, matching_rules, normalized_rule, upgrade_advice
 from .stat_reading import checked_values, format_stats
 from .potential import verdict
@@ -60,13 +60,28 @@ def after_advice(row, after, cfg, names):
     return upgrade_advice(revised, limits, row.get('spendingFloors', row.get('upgradeFloor', ())))
 
 
-def finalize(root, receipt, after):
+def peers_digest(discs, omit, names, reverse):
+    # Acquiring a disc in another slot does not affect a trial. OCR IDs may
+    # change on every scan, so compare stat lines and keep their multiplicities.
+    family = attribute_key(omit, 1, names, reverse)
+    lines = (attribute_key(d, 1, names, reverse) for d in discs if d is not omit)
+    return digest(sorted(k for k in lines if k[:3] == family[:3] and k[4] == family[4]))
+
+
+def finalize(root, receipt, after, *, copy_verified=False):
     before = receipt['before']
     if not advanced(before, after) or not bag_disc(after) or after['lockState'] != before['lockState']:
         raise ValueError('还没核对到这张盘强化后的词条')
+    old_fp, new_fp = fingerprint(before), fingerprint(after)
+    names = receipt['names']
+    line = digest(attribute_key(after, 1, names, equipment_keys(names)))
+    duplicate = line in receipt.get('previousLines', ()) or new_fp in receipt['previousMatches']
+    if duplicate and not copy_verified:
+        note = f"{receipt['label']} · 仓库里已有相同词条的 +{after['level']} 盘，等下次整理核对强化结果"
+        save(root/RECEIPT, dict(receipt, status='pending', observedCopy=after, note=note))
+        raise ValueError(note)
     # If the native dismantler follows this task, the kept piece is still in the bag under a new fingerprint.
     batch = read(root/'dismantle-preview.json', {})
-    old_fp, new_fp = fingerprint(before), fingerprint(after)
     if receipt.get('batch') and batch.get('batch') == receipt['batch']:
         moves = batch.setdefault('upgradeMoves', {})
         counts = batch['beforeCounts']
@@ -92,12 +107,11 @@ def finalize(root, receipt, after):
     from .marks import owns_spare
     entry = history.get(old_fp, {})
     if (owns_spare(entry, before['observedValues'], uid=receipt.get('uid')) and new_fp not in history
-            and new_fp not in receipt['previousMatches']):
+            and not duplicate):
         history[new_fp] = dict(history.pop(old_fp), spareLock=dict(entry['spareLock'], values=after['observedValues']))
         save(root/'markers.json', history)
     advice = after_advice(receipt['row'], after, receipt['limits'], receipt['names'])
     reason = verdict(after['level'], rolls(after), receipt['row'].get('upgradeFloor', ()))
-    duplicate = new_fp in receipt['previousMatches']
     if (after['level'] == 15 and receipt['limits'].get('protect15', True)) or duplicate:
         reason = ''
     if (receipt['limits'].get('protectNaturalCrit', True) and development(after['level'], rolls(after))['initial'] == 4
@@ -127,14 +141,35 @@ def recover(root, receipt, snapshot):
     inventory(snapshot)  # A partial view cannot settle an interrupted spend.
     before = receipt['before']
     uid = receipt.get('uid')
+    names = receipt['names']
+    reverse = equipment_keys(names)
+    observed = receipt.get('observedCopy')
+    if observed:
+        if uid and receipt.get('exportFile') and (snapshot.get('source') != 'OhMyZZZ CN' or
+                snapshot.get('exportFile') != receipt['exportFile'] or
+                (snapshot.get('exportWrittenNs') or 0) <= receipt['exportWrittenNs']):
+            raise ValueError('这次强化等同一份国服仓库导出更新后再核对')
+        line = attribute_key(observed, 1, names, reverse)
+        copies = [d for d in snapshot['discs'] if attribute_key(d, 1, names, reverse) == line]
+        # A bound export can identify the result even when the warehouse UI
+        # cannot assign either of two identical cards to its physical UID.
+        if uid and receipt.get('exportFile') and any(d.get('exportUid') == uid for d in copies):
+            return finalize(root, receipt, observed, copy_verified=True)
+        if (not uid and copies and not snapshot['audit'].get('incremental') and receipt.get('otherPeers') and
+                peers_digest(snapshot['discs'], copies[0], names, reverse) == receipt['otherPeers']):
+            return finalize(root, receipt, observed, copy_verified=True)
     pool = [d for d in snapshot['discs'] if same_family(d, before) and (not uid or d.get('exportUid') == uid)]
     if snapshot['audit'].get('incremental'):
         fresh = set(snapshot['audit']['verifiedUids'])
         pool = [d for d in pool if d.get('exportUid') in fresh]
-    after = [d for d in pool if advanced(before, d) and (uid or fingerprint(d) not in receipt['previousMatches'])]
+    prior_lines = set(receipt.get('previousLines', ()))
+    after = [d for d in pool if advanced(before, d) and (uid or
+             (fingerprint(d) not in receipt['previousMatches'] and digest(attribute_key(d, 1, names, reverse)) not in prior_lines))]
     same = [d for d in pool if fingerprint(d) == fingerprint(before) and d.get('observedValues') == before['observedValues']]
     if len(after) == 1 and not same:
-        return finalize(root, receipt, after[0])
+        if observed and not uid and receipt.get('otherPeers') != peers_digest(snapshot['discs'], after[0], names, reverse):
+            raise ValueError('还有其他同类盘发生了变化，这次强化结果待核对')
+        return finalize(root, receipt, after[0], copy_verified=bool(uid))
     if len(same) == 1 and not after and bag_disc(same[0]) and same[0]['lockState'] == before['lockState']:
         save(root/RECEIPT, dict(receipt, status='unchanged', note='这张盘仍是原等级，本次已核对'))
         return '已核对上次试强化，盘仍是原等级'
@@ -156,9 +191,17 @@ def execute(root, ui, row, before, snapshot, cfg, names, batch=None):
     if (current, goal) != (before['level'], target):
         raise ValueError(f'本次只试到 +{target}，游戏预览为 +{goal}')
     label = f"{names.get(row['set'], row['set'])} {row['slot']}号盘"
+    reverse = equipment_keys(names)
+    target_disc = next(d for d in snapshot['discs'] if d['id'] == row['id'])
+    family = attribute_key(before, 1, names, reverse)[:3]
+    lines = [attribute_key(d, 1, names, reverse) for d in snapshot['discs'] if d['level'] == target]
     receipt = dict(status='pending', before=before, target=target, uid=row.get('exportUid'), batch=batch, managedBefore=row.get('managedSpareLock', False),
                    row=row, label=label, limits={k:cfg[k] for k in ('reserve','reserve_rules','protect15','protectNaturalCrit')}, names=names,
+                   otherPeers=peers_digest(snapshot['discs'], target_disc, names, reverse),
+                   previousLines=sorted({digest(k) for k in lines if k[:3] == family and k[4] == before['rarity']}),
                    previousMatches=[fingerprint(d) for d in snapshot['discs'] if advanced(before, d)])
+    if snapshot.get('source') == 'OhMyZZZ CN' and snapshot.get('exportFile') and snapshot.get('exportWrittenNs'):
+        receipt.update(exportFile=snapshot['exportFile'], exportWrittenNs=snapshot['exportWrittenNs'])
     ui.confirm(current, goal, before_click=lambda: save(root/RECEIPT, receipt))
     return finalize(root, receipt, ui.read_after())
 
@@ -269,7 +312,7 @@ def run_trials(app, scanner, report, snapshot, cfg, names, *, guard_export=None,
         if not candidates:
             break
         def priority(row):
-            return touched[row['id']], len(row['rolls']) != 3
+            return touched[row['id']], len(row['rolls']) != 3, -row['upgrade']['rolls']
         first = min(map(priority, candidates))
         targets = {r['fp']:r for r in candidates if priority(r) == first}
         selected = select_disc(scanner, len(discs), guard, targets, app.root)
