@@ -23,6 +23,7 @@ def hints(ocr, screen):
 class Marker:
     batch = None
     scope = None
+    newly_marked = None
 
     def __init__(self, app, scanner, report, *, readings=()):
         if report.get('networkPreview'):
@@ -136,9 +137,13 @@ class Marker:
         self.observed[fp] = expected_mark
         self.confirmed_locks[fp] = expected_lock == 'locked'
         self.remember(fp, state, spare=spare)
+        if mode == 'mark' and self.newly_marked is not None:
+            self.newly_marked.append({key:self.rows[fp][key] for key in ('set', 'slot', 'main', 'level')})
 
     def handle_disc(self, mode, detail, row):
         fp, lock, mark, equipped = detail
+        if lock in ('locked', 'unlocked'):
+            self.confirmed_locks[fp] = lock == 'locked'
         entry = marker_for(self.history, fp, row.get('exportUid'))
         history = entry.get('state')
         if history == 'pending':
@@ -320,6 +325,7 @@ class Marker:
             before = after
 
     def run(self):
+        self.newly_marked = []
         reason = marker_conflict(self.app.ctx,self.app.account,self.app.group)
         if reason: raise ValueError(reason)
         if self.report['issues'] or not self.report['rules']: raise ValueError('配装或规则待复核')
@@ -360,4 +366,6 @@ class Marker:
                         self.rewind()
                 if todo:
                     self.apply(phase, todo)
+        save(self.root/'last-marking.json', dict(account=self.app.account, finished=time.time(),
+                                               batch=self.batch, newlyMarked=self.newly_marked))
         return self.observed

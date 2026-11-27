@@ -1,18 +1,20 @@
 """Three synthetic warehouse pages, no game inputs or real inventory."""
 import argparse
 import sys
+from tempfile import TemporaryDirectory
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 
-def smoke(home):
+def smoke(home, root):
     import numpy as np
     sys.path[:0] = [str(Path(__file__).resolve().parents[1]), str(home/'src'), str(home/'plugins')]
     from one_dragon.base.geometry.point import Point
     from drive_disc_manager.live import Marker
 
     marker = Marker.__new__(Marker)
+    marker.root = root
     marker.observed = {}
     page = 0
     center = Point(430, 580)
@@ -91,6 +93,8 @@ def smoke(home):
               patch('drive_disc_manager.manual_equip.guarded_grid', return_value=nullcontext())):
             marker.run()
             assert matched == [('lock', 'lock', 'lock'), ('mark', 'mark', 'mark')]
+            from drive_disc_manager.store import read
+            assert read(root/'last-marking.json')['newlyMarked'] == []  # The stub did not click any mark.
             assert [amount for amount, *_ in calls] == [3, 3, -120, -120]
             assert warehouse.call_count == 2
             world.assert_not_called()
@@ -120,5 +124,6 @@ def smoke(home):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--home', type=Path, required=True)
-    smoke(parser.parse_args().home.resolve())
+    with TemporaryDirectory() as tmp:
+        smoke(parser.parse_args().home.resolve(), Path(tmp))
     print('PASS three-page traversal, same-warehouse lock and discard, re-entry sorting and changed count')

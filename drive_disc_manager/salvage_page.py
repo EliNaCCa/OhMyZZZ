@@ -7,19 +7,7 @@ from qfluentwidgets import BodyLabel, CheckBox, PushButton, SubtitleLabel
 
 from .disc_detail_page import table
 from .reserve_presets import STAT_NAMES
-from .salvage_audit import needs_review
-from .store import read
-
-
-def latest_batch(account):
-    last = read(account/'dismantle-result.json', {})
-    if needs_review(last):
-        return last
-    planned = read(account/'dismantle-preview.json', {})
-    if (planned.get('batch') and planned.get('account') == int(account.name)
-            and planned['batch'] != last.get('batch') and planned.get('started', 0) > last.get('started', 0)):
-        return planned
-    return last
+from .salvage_audit import latest_batch, needs_review
 
 
 class SalvagePage(QWidget):

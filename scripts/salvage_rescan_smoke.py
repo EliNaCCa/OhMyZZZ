@@ -71,6 +71,33 @@ def smoke(root):
     assert replay('legacy-arrival', kept, drop)['status'] == 'needs_review'
     assert replay('legacy-exact', kept)['status'] == 'reconciled'
 
+    # A low-grade spare locked this run and a worn disc stay out of the native scope.
+    low = dict(kept, rarity='A', observedGrade='A')
+    worn = dict(low, id='worn', setKey='SwingJazz', location='Soldier11', ownerState='worn')
+    rotated = dict(low, id='replace', setKey='AstralVoice', lock=True, lockState='locked')
+    scan = warehouse(low, worn, rotated, old)
+    scope = dict(inventory=digest(scan), configuration='fixture')
+    checked = prepare_batch(scan, scope, {fingerprint(rotated):'marked'}, 'A及以下',
+                            confirmed_locks={fingerprint(low):True, fingerprint(rotated):False})
+    assert [(e['set'], e['source']) for e in checked['entries']] == [
+        ('AstralVoice','本轮观察到弃置'), ('SwingJazz','游戏原有弃置')]
+
+    scan = warehouse(kept)
+    empty = prepare_batch(scan, dict(inventory=digest(scan), configuration='fixture'), {}, 'A及以下')
+    for label, done, state, after, wanted in [
+            ('still-marking', False, 1, [kept], None), ('no-disc', True, 1, [kept], 'reconciled'),
+            ('new-drop', True, 1, [kept,drop], 'reconciled'), ('missing', True, 1, [drop], 'needs_review'),
+            ('new-unclear', True, 1, [kept,dict(drop,observedValues=None)], 'needs_review'),
+            ('no-finish', True, 3, [kept], 'needs_review')]:
+        account = root/label
+        save(account/'dismantle-preview.json', dict(empty, marksVerified=done, account=1, started=10))
+        observe_native(account, 1, dict(account=1, status=state, updated=11), 12)
+        reconcile(account, warehouse(*after))
+        result = read(account/'dismantle-result.json', {})
+        assert result.get('status') == wanted, (label,result)
+        if label == 'new-drop':
+            assert result['newDiscs'] == 1 and not result['entries']
+
     # If the host continues into dismantling after a marker interruption, only
     # a mark observed in THIS batch is a known addition to the old marks.
     fresh_scan = warehouse(old, kept, drop)

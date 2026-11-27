@@ -268,7 +268,7 @@ class ManagerApp(ZApplication):
                 if marker.batch:
                     if guard_export:
                         guard_export()
-                    handoff(self, report, observed, batch=marker.batch)
+                    handoff(self, report, observed, batch=marker.batch, confirmed_locks=marker.confirmed_locks)
                 messages.append('标记完成')
             if field:
                 from .loadout import apply_loadout

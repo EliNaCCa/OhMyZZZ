@@ -6,7 +6,7 @@ from .salvage_audit import native_run, needs_review, prepare_batch
 from .task_order import following_native
 
 
-def handoff(app, report, observed=None, *, batch=None, snapshot=None):
+def handoff(app, report, observed=None, *, batch=None, snapshot=None, confirmed_locks=None):
     upcoming = following_native(app.ctx, app.account, app.group)
     if upcoming is None:
         if batch is not None:
@@ -23,14 +23,15 @@ def handoff(app, report, observed=None, *, batch=None, snapshot=None):
     if snapshot is None:
         snapshot = read(app.root/'inventory.json')
     receipt = prepare_batch(snapshot, report, observed or {}, native.dismantle_level,
-                            include_marked=native.dismantle_abandon, before_marking=observed is None)
+                            include_marked=native.dismantle_abandon, before_marking=observed is None,
+                            confirmed_locks=confirmed_locks)
     native_state = native_run(Path(os_utils.get_work_dir()), app.account)
     if batch is not None:
         initial = read(app.root/'dismantle-preview.json')
         if (initial['batch'] != batch or initial['nativeAtPreview'] != native_state or initial.get('nativeDay') != day
                 or any(initial[k] != receipt[k] for k in ('inventory', 'configuration', 'selector', 'nativeGrade'))):
             raise ValueError('标记期间拆解任务或筛选条件有变化，请重新扫描')
-        receipt.update(batch=batch, started=initial['started'])
+        receipt.update(batch=batch, started=initial['started'], marksVerified=True)
     receipt.update(account=app.account, nativeAtPreview=native_state, nativeDay=day)
     # Native selection exposes button matches only. Its failure edges can still
     # proceed to confirm. Keep the independent host task out of this invocation.

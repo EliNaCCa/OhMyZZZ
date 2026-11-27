@@ -135,7 +135,7 @@ def smoke(home, tmp):
         assert len(read(fresh/'preview.json')['discs']) == 1
         for action in (marker, equip, dismantle):
             action.assert_not_called()
-    # A failure in the fielded team's equipment step must leave the completed marks on disk.
+    # Daily sorting writes the completed marks without applying the saved team.
     from drive_disc_manager.store import fingerprint
     fp = fingerprint(disc)
     save(fresh/'config.json', dict(config(fresh), auto_sync=False, applyMarkers=True, fieldProfile='出场'))
@@ -147,20 +147,21 @@ def smoke(home, tmp):
     record = Obj(run_status_under_now=0, STATUS_SUCCESS=1, get_current_dt=lambda:'20261126')
     run.get_run_record = lambda **_:record
     run.get_config = lambda app_id,*_:native if app_id == 'drive_disc_dismantle' else scanner.config
-    def stop_at_equip(*args, **kwargs):
-        receipt = read(fresh/'dismantle-preview.json')
-        assert receipt['account'] == 2 and receipt['batch'] == marker.return_value.batch
-        assert 'markCandidates' not in receipt and [e['fp'] for e in receipt['entries']] == [fp]
-        raise ValueError('模拟换装中断')
     def observed_mark():
         initial = read(fresh/'dismantle-preview.json')
         assert 'markCandidates' in initial and not initial['entries']
         return {fp:'marked'}
     with (patch('drive_disc_manager.scan_marks.capture_marks', lambda *_:nullcontext()),
           patch('drive_disc_manager.live.Marker') as marker, patch('drive_disc_manager.loadout.verify_bindings'),
-          patch('drive_disc_manager.equip_ui.EquipUI'), patch('drive_disc_manager.loadout.apply_loadout', stop_at_equip)):
+          patch('drive_disc_manager.equip_ui.EquipUI'), patch('drive_disc_manager.loadout.apply_loadout') as equip):
         marker.return_value.run.side_effect = observed_mark
-        assert ManagerApp.manage_inventory(manager) == ('failed','模拟换装中断')
+        marker.return_value.confirmed_locks = {fp:False}
+        outcome = ManagerApp.manage_inventory(manager)
+        assert '标记完成' in outcome, outcome
+        equip.assert_not_called()
+        receipt = read(fresh/'dismantle-preview.json')
+        assert receipt['account'] == 2 and receipt['batch'] == marker.return_value.batch
+        assert receipt['marksVerified'] and 'markCandidates' not in receipt and [e['fp'] for e in receipt['entries']] == [fp]
 
     # Ordinary daily run with markers off. The host's already marked disc is the only candidate.
     from drive_disc_manager.salvage_audit import observe_native, reconcile

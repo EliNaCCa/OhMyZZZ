@@ -26,6 +26,17 @@ def needs_review(receipt):
     return False
 
 
+def latest_batch(account):
+    last = read(account/'dismantle-result.json', {})
+    if needs_review(last):
+        return last
+    planned = read(account/'dismantle-preview.json', {})
+    if (planned.get('batch') and planned.get('account') == int(account.name)
+            and planned['batch'] != last.get('batch') and planned.get('started', 0) > last.get('started', 0)):
+        return planned
+    return last
+
+
 def disc_shape(disc):
     # Set names and optional numeric fields can change between scanner dictionaries.
     return digest([str(disc['slotKey']), disc['level'], disc['mainStatKey'], sorted(s['key'] for s in disc['substats'])])
@@ -36,7 +47,8 @@ def uid_item(disc):
                 level=disc['level'], rarity=disc['rarity'], rolls={s['key']:s['upgrades'] for s in disc['substats']})
 
 
-def prepare_batch(z, report, observed, grade, *, include_marked=True, before_marking=False, existing_only=False):
+def prepare_batch(z, report, observed, grade, *, include_marked=True, before_marking=False, existing_only=False,
+                  confirmed_locks=None):
     discs, counts = inventory(z)
     # A read-only preview records even a player's explicit S-grade selection.
     # Marking retains its original narrower selection policy.
@@ -47,6 +59,10 @@ def prepare_batch(z, report, observed, grade, *, include_marked=True, before_mar
     unresolved_grades = 0
     unread_marks = 0
     planned = set()
+    releasing = set()
+    if before_marking:
+        releasing = {row['fp'] for row in report.get('discs', [])
+                     if row.get('decision') == '弃置候选' and row.get('managedSpareLock')}
     if before_marking and include_marked:
         planned = {row['fp'] for row in report.get('discs', []) if row.get('decision') == '弃置候选'}
     candidates = {}
@@ -64,9 +80,13 @@ def prepare_batch(z, report, observed, grade, *, include_marked=True, before_mar
         if cached and include_marked:
             raise ValueError('拆解前需核对未锁盘的弃置状态，请重新整理')
         mark = observed.get(fp, disc.get('markState')) if counts[fp]==1 else disc.get('markState')
-        if existing_only and not cached and ((disc.get('lockState') == 'locked' and disc.get('lock') is True)
-                              or (disc.get('ownerState') == 'worn' and disc.get('location'))):
-            continue
+        if not cached:
+            locked = disc.get('lockState') == 'locked' and disc.get('lock') is True
+            if counts[fp] == 1 and confirmed_locks is not None and fp in confirmed_locks:
+                locked = confirmed_locks[fp]
+            worn = disc.get('ownerState') == 'worn' and disc.get('location')
+            if worn or (locked and fp not in releasing):
+                continue
         if include_marked and mark not in ('marked','unmarked'):
             if not (before_marking or existing_only):
                 raise ValueError('存在未读清的弃置标记，已停在可逆标记阶段')
@@ -161,7 +181,8 @@ def observe_native(root, account, native, scan_started):
             else:
                 continue
             before['entries'].append(dict(candidates[fp], source=source))
-    if not (before.get('entries') or before.get('unresolvedGrades') or before.get('unreadMarks') or before.get('existingOnly')):
+    if not (before.get('entries') or before.get('unresolvedGrades') or before.get('unreadMarks')
+            or before.get('existingOnly') or before.get('marksVerified')):
         return
     record(root, dict(before, status='pending', independentNative=native))
 
@@ -170,7 +191,7 @@ def addition_reason(disc, base, duplicate, shapes):
     from .optimizer import STATS
     if duplicate:
         return '同属性盘数量增加'
-    if not shapes or None in shapes:
+    if None in shapes:
         return '上批缺少比对信息'
     if disc_shape(disc) in shapes:
         return '与上批候选属性相似'
@@ -203,6 +224,8 @@ def stock_changes(root, previous, remaining, counts, by_fp, base):
         changes.append(dict(fp=fp, count=count, kind='missing', after='清单内数量减少' if fp in candidates else '清单外少盘',
                             **{k:entry[k] for k in ('set', 'slot', 'main', 'level') if k in entry}))
     shapes = {e.get('shape') for e in previous['entries']}
+    if not shapes and not (previous.get('marksVerified') or previous.get('existingOnly')):
+        shapes.add(None)  # Older empty receipts don't identify a completed inventory check.
     additions = counts - remaining
     verified = not missing and all(n >= 0 for n in remaining.values())
     for fp, count in additions.items():
@@ -291,7 +314,7 @@ def reconcile_uids(root, receipt, fresh):
         states[state] += 1
         issues |= state == '仍在仓库' or entry['source'] == '弃置标记待核'
     all_gone = bool(batch) and batch <= gone
-    checked_run = native['status'] == 1 and (bool(batch) or receipt.get('existingOnly') is True)
+    checked_run = native['status'] == 1 and (bool(batch) or receipt.get('existingOnly') or receipt.get('marksVerified'))
     resolved = not issues and (checked_run or all_gone)
     if not game and states['仍在仓库']:
         receipt['firstUidObservation'] = observation
@@ -353,14 +376,16 @@ def reconcile(root, fresh):
                 remaining[entry['fp']] -= 1
         all_gone = bool(previous['entries']) and states['已不在库存'] == len(previous['entries'])
         new_count = None
-        if expected and sum(expected.values()) == previous['beforeTotal']:
+        if expected is not None and sum(expected.values()) == previous['beforeTotal']:
             previous['stockChanges'], new_count = stock_changes(root, previous, remaining, counts, by_fp, roll_base(fresh))
         # With arrivals, the old batch must be completely absent. For snapshots with
         # no arrivals retain the established success/unchanged-mark reconciliation.
         exact_result = resolved and native['status'] == 1 and new_count == 0
+        empty_checked = (not previous['entries'] and native['status'] == 1 and new_count is not None
+                         and (previous.get('marksVerified') or previous.get('existingOnly')))
         uncertain_marks = previous.get('unreadMarks') or any(e['source'] == '弃置标记待核' for e in previous['entries'])
         resolved = (not uncertain_marks and previous.get('unresolvedGrades') == 0
-                    and (exact_result or (all_gone and new_count is not None)))
+                    and (exact_result or empty_checked or (all_gone and new_count is not None)))
         if resolved and new_count:
             previous['newDiscs'] = new_count
     previous.update(status='reconciled' if resolved else 'needs_review', observations=dict(states),

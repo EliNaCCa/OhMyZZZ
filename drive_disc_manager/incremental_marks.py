@@ -257,7 +257,7 @@ def daily(app, scanner, exported, planned, pinned, wiki, field):
     save(app.root/FILE, {})
     observed = marker.run()
     if marker.batch:
-        handoff(app, report, observed, batch=marker.batch, snapshot=view)
+        handoff(app, report, observed, batch=marker.batch, snapshot=view, confirmed_locks=marker.confirmed_locks)
     guard()
     if field:
         result = equip_cn_targets(app, scanner, cfg, planned, exported, field, names, wiki)

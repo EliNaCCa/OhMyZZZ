@@ -118,6 +118,7 @@ def smoke(home):
         cfg['pins'] = []
         m = scan(inventory(old, fresh, manual))
         assert m.rows[old_id]['decision'] == '弃置候选' and m.rows[new_id]['reasons'] == ['备用 · 通用']
+        m.newly_marked = []
         assert m.rows[manual_id]['reasons'] == ['游戏内已锁定']
         original_report = deepcopy(m.report)
         impact = quota_impact(m.report, {'set':'SwingJazz'}, dict(cfg,reserve=0), {})
@@ -136,6 +137,8 @@ def smoke(home):
         m.released.add(old_id)
         visit(m, 'mark', old)
         assert clicked == [('1','lock'), ('2','lock'), ('1','release'), ('1','mark')]
+        assert m.confirmed_locks == {new_id:True, manual_id:True, old_id:False}
+        assert m.newly_marked == [dict(set='SwingJazz', slot='4', main='def_', level=0)]
         m = scan(inventory(old, fresh, manual))
         assert m.rows[old_id]['decision'] == '已弃置'
         for d in (fresh, manual): visit(m, 'lock', d)
