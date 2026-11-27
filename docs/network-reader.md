@@ -32,7 +32,9 @@
 
 ## 它怎么读，有什么风险？
 
-登录时，服务器会把本账号的库存发给游戏客户端。Windows 读取器用 WinDivert 的只收、复制模式旁听这段通信，将已有的驱动盘数据整理成 ZOD。OhMyZZZ 向同一台电脑的读取器取一份清单，在本地计算。读取器需要管理员权限，使用期间驱动会在系统里运行。[所选版本源码](https://github.com/pingwinekZ/zzz_packet_capture_0delay/blob/cbf8efabbc77d187b6fc16c499b9c39b8e018acd/rust/crates/zzz-capture/src/windivert.rs)
+登录时，服务器会把本账号的库存发给游戏客户端。国服读取器 v0.2.1 是面向国服 PC 3.3 的预发布版，使用 Windows 自带的 pktmon 采集登录通信，将驱动盘保存为本地 JSON。OhMyZZZ 读取这份文件。[国服发布说明](https://github.com/Treageer/zzz-drive-exporter/releases/tag/v0.2.1)
+
+国际服读取器使用 WinDivert 的只收、复制模式，OhMyZZZ 通过同一台电脑上的 Live export 接口读取清单。两种读取器在采集时都需要管理员权限。[国际服实现](https://github.com/pingwinekZ/zzz_packet_capture_0delay/blob/cbf8efabbc77d187b6fc16c499b9c39b8e018acd/rust/crates/zzz-capture/src/windivert.rs)
 
 游戏规则和词条倍率是公开资料，仓库明细属于登录账号。官方声明允许对影响公平的第三方工具采取封禁等措施，具体检测规则和单个读取器的封号概率没有公开。OCR 同样使用第三方自动化来翻包。[绝区零公平运营声明](https://www.hoyolab.com/article/30585630)
 
