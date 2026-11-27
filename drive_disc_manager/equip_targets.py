@@ -56,7 +56,7 @@ def match_targets(exported, targets, names, observations):
     raise ValueError('仓库里还有方案用盘没核实 · '+missing)
 
 
-def warehouse_observations(scanner, total, guard):
+def warehouse_observations(scanner, total, guard, *, by_acquisition=False):
     from one_dragon.utils import cv2_utils
     from .scan_copies import selected_position, scroll_thumb, viewport_stamp
     from .scan_marks import MarkReader
@@ -67,6 +67,9 @@ def warehouse_observations(scanner, total, guard):
     observed_total = enter_warehouse(scanner, guard)
     if observed_total != total:
         raise ValueError(f'游戏仓库有 {observed_total} 张，国服导出有 {total} 张，请更新导出文件')
+    if by_acquisition:
+        from .warehouse_sort import newest_first
+        newest_first(scanner, total, guard)
     area = ctx.screen_loader.get_area('仓库-驱动仓库', '驱动盘属性')
     if area is None:
         raise ValueError('扫描器缺少驱动盘属性区域')

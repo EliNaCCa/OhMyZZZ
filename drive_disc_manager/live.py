@@ -330,6 +330,9 @@ class Marker:
             self.scanner._ensure_screen_areas()
             if enter_warehouse(self.app, self.guard) != len(self.report['discs']):
                 raise ValueError('当前驱动仓库数量与计划不匹配')
+            if self.scope is not None:
+                from .warehouse_sort import newest_first
+                newest_first(self.scanner, len(self.report['discs']), self.guard)
             from .manual_equip import guarded_grid
             with guarded_grid(self.grid, self.guard):
                 if any(self.positions.get(fp) for fp in todo):

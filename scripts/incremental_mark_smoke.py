@@ -52,7 +52,8 @@ def smoke(home, sample, root):
              controller=NS(game_win=NS(is_win_active=True)), run_context=NS(is_context_running=True, get_application=lambda *a:scanner)),
              round_success=lambda s:NS(ok=True, msg=s), round_fail=lambda s:NS(ok=False, msg=s))
     visited, scheduled = [], []
-    def pages(scanner, total, guard):
+    def pages(scanner, total, guard, *, by_acquisition=False):
+        assert by_acquisition
         guard()
         assert total == 5
         for index in (3,0,1,4,2):  # The other drop is behind consecutive old locks.

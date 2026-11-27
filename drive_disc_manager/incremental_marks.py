@@ -164,7 +164,7 @@ def daily(app, scanner, exported, planned, pinned, wiki, field):
     found = {}
 
     def inspect(wanted):
-        with closing(warehouse_observations(scanner, total, guard)) as observations:
+        with closing(warehouse_observations(scanner, total, guard, by_acquisition=True)) as observations:
             found.update(find_readings(exported, names, groups, wanted, observations))
 
     def decision_view():
