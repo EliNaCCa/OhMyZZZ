@@ -75,9 +75,12 @@ class ManagerApp(ZApplication):
             if (mark or upgrade) and not cfg['run_scanner']:
                 return self.round_fail('请开启「整理前刷新驱动仓库」再执行标记或试强化')
             source = cfg['inventorySource']
+            from .upgrade import pending_trial, recover
+            pending = pending_trial(self.root)
             network = source in ('cn_export', 'network')
             cn_inventory = cn_plan = network_plan = None
             guard_export = None
+            recovered = None
             manual_cn = self.group == MANUAL_GROUP and source == 'cn_export'
             if manual_cn or (network and cfg['run_scanner'] and not interactive):
                 def same_account():
@@ -120,7 +123,7 @@ class ManagerApp(ZApplication):
                 scanner = self.ctx.run_context.get_application('inventory_scan',self.account,'one_dragon' if interactive else self.group)
                 if not scanner.config.scan_drive_disk:
                     return self.round_fail('请在仓库扫描器中启用驱动盘')
-                if field and cn_plan is not None and not mark:
+                if field and cn_plan is not None and not mark and not pending:
                     from .equip_targets import equip_cn_targets
                     from .store import equipment_names
                     wiki = wiki_path()
@@ -135,7 +138,9 @@ class ManagerApp(ZApplication):
                 scan_started = time()
                 exports = Path(os_utils.get_work_dir())/'.debug/inventory_exports'
                 before = {p:p.stat().st_mtime_ns for p in exports.glob('inventory_*.json')}
-                if cn_inventory is None and (mark or field or upgrade) and any(str(key).startswith('cn-uid/') for key in cfg['pins']):
+                needs_uid = (pending and pending.get('uid')) or ((mark or field or upgrade) and
+                            any(str(key).startswith('cn-uid/') for key in cfg['pins']))
+                if cn_inventory is None and needs_uid:
                     from .cn_export import FILE, refresh
                     def current_account():
                         if self.ctx.current_instance_idx != self.account or not self.ctx.run_context.is_context_running:
@@ -170,7 +175,8 @@ class ManagerApp(ZApplication):
                     return self.round_fail('本轮扫描文件无法唯一识别')
                 from .marks import reconcile_scan
                 from .salvage_audit import native_run, observe_native, reconcile
-                observe_native(self.root, self.account, native_run(Path(os_utils.get_work_dir()), self.account), scan_started)
+                native = native_run(Path(os_utils.get_work_dir()), self.account)
+                observe_native(self.root, self.account, native, scan_started)
                 from .store import equipment_names
                 names = equipment_names(read(wiki_path(), {}))
                 names.update(cfg.get('aliases', {}))
@@ -178,8 +184,18 @@ class ManagerApp(ZApplication):
                 if text_cache is not None:
                     text_cache.finish()
                 snapshot = read(self.root/'inventory.json')
+                if pending:
+                    if guard_export:
+                        guard_export()
+                    recovered = recover(self.root, pending, snapshot)
+                    observe_native(self.root, self.account, native, scan_started)
                 reconcile(self.root,snapshot)
                 reconcile_scan(self.root, snapshot, names)
+                if recovered and network_plan is not None:
+                    network_plan = preview(self.root, wiki_path(), snapshot=pinned,
+                                           expected_inventory=network_plan['inventory'], triage_only=not manual_build)
+                    if cn_plan is not None:
+                        cn_plan = network_plan
                 # The host advances to the next task even if planning or marking fails.
                 if not interactive:
                     from .dismantle import note_existing_marks
@@ -210,7 +226,7 @@ class ManagerApp(ZApplication):
                 return self.round_fail('配装待复核 · '+' / '.join(report['issues']))
             if field and scanner is None:
                 return self.round_fail('应用出场方案需要本轮重新扫描')
-            messages = []
+            messages = [recovered] if recovered else []
             if mark:
                 from .live import Marker
                 from .dismantle import handoff
@@ -233,7 +249,7 @@ class ManagerApp(ZApplication):
             if mark and cn_plan is not None:
                 from .incremental_marks import checkpoint
                 checkpoint(self.root, cn_inventory, cn_plan, snapshot, report, marker)
-            if upgrade:
+            if upgrade and not recovered:
                 from .upgrade import run_trials
                 messages.append(run_trials(self, scanner, report, snapshot, cfg, names,
                                            network_plan=cn_plan or network_plan, guard_export=guard_export))

@@ -120,6 +120,8 @@ def finalize(root, receipt, after):
 
 
 def recover(root, receipt, snapshot):
+    from .store import inventory
+    inventory(snapshot)  # A partial view cannot settle an interrupted spend.
     before = receipt['before']
     uid = receipt.get('uid')
     pool = [d for d in snapshot['discs'] if same_family(d, before) and (not uid or d.get('exportUid') == uid)]
@@ -134,6 +136,11 @@ def recover(root, receipt, snapshot):
         save(root/RECEIPT, dict(receipt, status='unchanged', note='这张盘仍是原等级，本次已核对'))
         return '已核对上次试强化，盘仍是原等级'
     raise ValueError('上次试强化还没核对到实物，请刷新游戏仓库')
+
+
+def pending_trial(root):
+    receipt = read(root/RECEIPT, {})
+    return receipt if receipt.get('status') == 'pending' else None
 
 
 def execute(root, ui, row, before, snapshot, cfg, names, batch=None):
@@ -213,8 +220,8 @@ def run_trials(app, scanner, report, snapshot, cfg, names, *, guard_export=None,
             guard_export()
 
     guard()
-    receipt = read(app.root/RECEIPT, {})
-    if receipt.get('status') == 'pending':
+    receipt = pending_trial(app.root)
+    if receipt:
         return recover(app.root, receipt, snapshot)
     # Stable in this run, even when an OCR fingerprint changes at every tier.
     discs = {d['id']:d for d in snapshot['discs']}

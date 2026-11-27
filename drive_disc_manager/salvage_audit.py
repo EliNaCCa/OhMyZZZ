@@ -143,6 +143,10 @@ def observe_native(root, account, native, scan_started):
     baseline = before.get('nativeAtPreview') or {}
     if native['updated'] <= max(before['started'], baseline.get('updated', 0)):
         return
+    from .upgrade import pending_trial
+    trial = pending_trial(root)
+    if trial and trial.get('batch') == before['batch']:
+        return  # A confirmed upgrade moves the old fingerprint before this batch is audited.
     candidates = before.pop('markCandidates', {})
     if candidates:
         for fp, entry in read(root/'markers.json', {}).items():

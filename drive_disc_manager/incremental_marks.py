@@ -123,8 +123,9 @@ def daily(app, scanner, exported, planned, pinned, wiki, field):
     from .live import Marker
     from .marks import reconcile_scan
     from .planner import plan
-    from .service import reassign_discards
-    from .salvage_audit import native_run, needs_review, observe_native
+    from .service import preview, reassign_discards
+    from .upgrade import pending_trial, recover
+    from .salvage_audit import native_run, needs_review, observe_native, reconcile
     from one_dragon.utils import os_utils
     from .store import config, equipment_names, known_agents
     from .task_order import following_native
@@ -151,13 +152,11 @@ def daily(app, scanner, exported, planned, pinned, wiki, field):
     native = upcoming[0] if upcoming else None
     previous = baseline['facts']
     groups, dirty = worklist(exported, planned, previous, names, native)
-    if cfg.get('autoUpgrade'):
-        from .upgrade import RECEIPT
-        last = read(app.root/RECEIPT, {})
-        if last.get('status') == 'pending':
-            if last.get('uid') not in {d['id'] for d in exported['discs']}:
-                return None
-            dirty.add(last['uid'])
+    pending = pending_trial(app.root)
+    if pending:
+        if pending.get('uid') not in {d['id'] for d in exported['discs']}:
+            return None
+        dirty.add(pending['uid'])
     assigned = {uid for result in planned['assignments'].values() for uid in result.get('ids', ())}
     dirty.update(uid for uid in assigned if previous.get(uid, {}).get('disc', {}).get('markState') == 'marked')
     copies = {uid for ids in groups.values() if len(ids) > 1 for uid in ids}
@@ -204,6 +203,15 @@ def daily(app, scanner, exported, planned, pinned, wiki, field):
         if enter_warehouse(scanner, guard) != total:
             raise ValueError('仓库盘数有变化，请刷新国服仓库导出')
     inspect(dirty)
+    recovered = None
+    if pending:
+        recovered = recover(app.root, pending, decision_view())
+        observe_native(app.root, app.account, native_run(Path(os_utils.get_work_dir()), app.account), started)
+        reconcile(app.root, exported)
+        if needs_review(read(app.root/'dismantle-result.json', {})):
+            return app.round_fail('请先到「设置 → 库存记录」核对上次的盘')
+        planned = preview(app.root, wiki, snapshot=pinned, expected_inventory=planned['inventory'],
+                          triage_only=bool(planned.get('triageOnly')))
     while True:
         view = decision_view()
         reconcile_scan(app.root, view, names, verified_uids=found)
@@ -257,7 +265,9 @@ def daily(app, scanner, exported, planned, pinned, wiki, field):
         return result
     checkpoint(app.root, exported, planned, view, report, marker)
     message = f'增量整理完成 · 已核对 {len(found)} 张盘' if found else '驱动盘没有变化'
-    if cfg.get('autoUpgrade'):
+    if recovered:
+        message += ' / ' + recovered
+    elif cfg.get('autoUpgrade'):
         from .upgrade import run_trials
         message += ' / ' + run_trials(app, scanner, report, view, cfg, names, network_plan=planned, guard_export=marker.guard_export)
     return app.round_success(message)
