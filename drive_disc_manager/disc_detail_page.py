@@ -66,6 +66,16 @@ def rule_values(key, items, set_names, *, accepted=False):
     return '、'.join(names.get(v, v) for v in items) or '无'
 
 
+def cell_change_text(changes, side=None):
+    from .main_rule_editor import NAMES
+    states = {'recommended':'推荐', 'zero':'不推荐', 'blank':'未填写', 'missing':'无此项'}
+    parts = []
+    for stat, pair in changes.items():
+        status = ' → '.join(states[v] for v in pair) if side is None else states[pair[side]]
+        parts.append(f'{NAMES.get(stat, stat)}（{status}）')
+    return '、'.join(parts)
+
+
 class DiscDetails(QWidget):
     back = Signal()
     rule = Signal(str)
@@ -196,7 +206,10 @@ class DiscDetails(QWidget):
             mode = {'add':'额外接受', 'only':'只接受'}[entry['mode']]
             lines.extend(['我的规则　'+mode+' '+values(entry['local']), '当前生效　'+values(entry['active'])])
         if entry['conflict']:
-            lines.insert(0,'上游变动前　'+values(entry['old']))
+            if entry.get('cellChanges'):
+                lines.insert(0, '攻略更新　'+cell_change_text(entry['cellChanges']))
+            else:
+                lines.insert(0,'上游变动前　'+values(entry['old']))
         self.field_value.setText('　｜　'.join(lines))
 
     def open_rule(self):

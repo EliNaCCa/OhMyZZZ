@@ -14,6 +14,8 @@ def rule_book(rows, rules, overrides, conflicts):
                          conflict=bool(conflict), tabs=field_tabs(rules, key),
                          sourceCells=rules.get('sourceCells', {}).get(key, {}),
                          formerSource=key in rules.get('formerOrigins', {}))
+        if conflict and conflict.get('cellChanges'):
+            book[key]['cellChanges'] = conflict['cellChanges']
     return book
 
 

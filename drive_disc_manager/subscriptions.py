@@ -276,12 +276,34 @@ def conflict_view(change, override, key=''):
     # Compare the upstream delta with the player's intent. Preserve only disagreements.
     removed = (before - after) & values
     rejected = (after - before) - values if local['mode'] == 'only' else set()
-    if not removed and not rejected:
+    disputed = removed | rejected
+    old_known, new_known = change.get('oldKnown'), change.get('remoteKnown')
+    cell_changes = {}
+    if old_known is not None and new_known is not None:
+        # A numeric zero is an explicit decision even when the positive list is unchanged.
+        old_zero = set(old_known) - before
+        new_zero = set(new_known) - after
+        disputed |= (new_zero - old_zero) & values
+
+        def state(stat, positive, zero, source):
+            if source is None:
+                return 'missing'
+            if stat in positive:
+                return 'recommended'
+            return 'zero' if stat in zero else 'blank'
+
+        cell_changes = {stat: [state(stat, before, old_zero, old), state(stat, after, new_zero, remote)]
+                        for stat in sorted(disputed)}
+    if not disputed:
         return None
-    token = digest([change.get('event', change['version']), old, remote, local])
+    identity = [change.get('event', change['version']), old, remote, local]
+    if cell_changes:
+        identity.append(cell_changes)
+    token = digest(identity)
     if override.get('acknowledged') == token:
         return None
-    return dict(change, fieldKey=key, local=local, active=effective(remote, local), token=token)
+    return dict(change, fieldKey=key, local=local, active=effective(remote, local), token=token,
+                cellChanges=cell_changes)
 
 
 def current_conflicts(snapshot, overrides):
@@ -310,11 +332,22 @@ def merge(previous, fields, overrides, tabs, origins=None, evidence=None):
     pending = current_conflicts(previous, overrides)
     for key, override in overrides.items():
         before, after = old.get(key), fields.get(key)
-        if not old or before == after:
+        # Missing /known on a legacy row means we cannot tell blank from zero.
+        old_known = old.get(key+'/known') if before is not None else []
+        new_known = fields.get(key+'/known') if after is not None else []
+        matrix = key.startswith('matrix/') and old_known is not None and new_known is not None
+        if not old or (before == after and (not matrix or old_known == new_known)):
             continue
         # Compare to the start of an outstanding disagreement even after intervening revisions.
-        baseline = pending.pop(key, {}).get('old', before)
+        outstanding = pending.pop(key, None)
+        baseline = outstanding['old'] if outstanding else before
         change = dict(old=baseline, remote=after, version=rev, event=time.time_ns())
+        if matrix:
+            change['oldKnown'] = (outstanding or {}).get('oldKnown', old_known)
+            change['remoteKnown'] = new_known
+            if outstanding and before == after:
+                # Keep an open dialog valid when the edit is in an unrelated cell.
+                change['event'] = outstanding.get('event', outstanding['version'])
         conflict = conflict_view(change, override, key)
         if conflict:
             pending[key] = conflict

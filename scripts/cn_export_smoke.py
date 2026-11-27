@@ -109,7 +109,9 @@ def smoke(home, sample, temp):
     keep = plan(unlocked, options, rules, equipment_names({}))
     assert keep['counts'] == {'保留': 1, '待复核': 1}, keep['counts']
     copies = quota_impact(keep, {}, dict(options, reserve=2), {})
-    assert copies['spares'] == copies['after'] == 2 and copies['newCandidates'] == 0
+    assert copies['spares'] == copies['after'] == 2 and copies['newCandidates'] == copies['newGameChecks'] == 0
+    reduced = quota_impact(keep, {}, dict(options, reserve=0), {})
+    assert reduced['newGameChecks'] == 1 and reduced['after'] == reduced['newCandidates'] == 0
     from drive_disc_manager.store import toggle_pin, is_pinned, import_inventory
     one_pin = toggle_pin(keep['discs'][0], [])
     assert one_pin == ['cn-uid/1001'] and not is_pinned(keep['discs'][1], one_pin)

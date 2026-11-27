@@ -147,13 +147,20 @@ def quota_impact(report, scope, cfg, reverse):
     coverage = apply_reserves(prepared, dict(cfg,reserve_rules=normalized))
     before = sum(row['decision'] == '保留' for row in rows)
     after = sum(bool(row['reasons']) for row in prepared)
-    new_candidates = sum('buildId' not in old and old['decision'] != '弃置候选' and not new['reasons'] and not new['review']
-                         for old,new in zip(rows, prepared, strict=True))
+    new_candidates = new_game_checks = 0
+    for old, new in zip(rows, prepared, strict=True):
+        if new['reasons'] or new['review']:
+            continue
+        if 'buildId' in old:
+            if not old.get('checkForDiscard'):
+                new_game_checks += 1
+        elif old['decision'] != '弃置候选':
+            new_candidates += 1
     by_purpose = defaultdict(int)
     for group in coverage:
         for use in group['purposes']:
             if use['count'] != 0:
                 by_purpose[use['purpose']] += use['covered']
-    return dict(total=len(rows), before=before, after=after, newCandidates=new_candidates,
+    return dict(total=len(rows), before=before, after=after, newCandidates=new_candidates, newGameChecks=new_game_checks,
                 spares=sum(group['kept'] for group in coverage), groups=len(coverage),
                 byPurpose=dict(by_purpose), shared=sum(group['shared'] for group in coverage))

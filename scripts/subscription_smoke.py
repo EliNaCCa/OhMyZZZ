@@ -11,6 +11,44 @@ from drive_disc_manager import subscriptions as sub
 from drive_disc_manager.store import config, read, save
 
 
+def matrix_cell_smoke(root):
+    from drive_disc_manager.disc_trace import rule_book
+    key = 'matrix/FeatheredFate/4'
+    local = {key:dict(mode='add', values=['crit_'])}
+    base = {key:['anomProf'], key+'/known':['anomProf']}
+    zero = {**base, key+'/known':['anomProf', 'crit_']}
+    previous = sub.merge({}, base, local, {})
+    downgrade = sub.merge(previous, zero, local, {})
+    change = sub.current_conflicts(downgrade, local)[key]
+    assert change['cellChanges'] == {'crit_':['blank','zero']}
+    assert change['active'] == ['anomProf','crit_'] and not sub.can_merge(change)
+    trace = rule_book([dict(ruleUses=[(key, '', '')])], downgrade, local, {})
+    assert 'cellChanges' not in trace[key]
+    trace = rule_book([dict(ruleUses=[(key, '', '')])], downgrade, local, {key:change})
+    assert trace[key]['cellChanges'] == change['cellChanges']
+    unrelated = {**zero, key+'/known':[*zero[key+'/known'], 'hp_']}
+    updated = sub.merge(downgrade, unrelated, local, {})
+    assert sub.current_conflicts(updated, local)[key]['token'] == change['token']
+    assert not sub.current_conflicts(sub.merge(updated, base, local, {}), local)
+    # A legacy row did not record whether a non-recommended stat was blank.
+    legacy = sub.merge({}, {key:base[key]}, local, {})
+    assert not sub.current_conflicts(sub.merge(legacy, zero, local, {}), local)
+    save(root/'config.json', dict(config(root), overrides=local))
+    save(root/'rules.json', updated)
+    sub.resolve_conflict(root, key, change, 'local')
+    kept = config(root)['overrides']
+    assert not sub.current_conflicts(read(root/'rules.json'), kept)
+    assert not sub.current_conflicts(sub.merge(updated, unrelated, kept, {}), kept)
+    restored = sub.merge(updated, base, kept, {})
+    again = sub.merge(restored, zero, kept, {})
+    fresh = sub.current_conflicts(again, kept)[key]
+    assert fresh['token'] != change['token']
+    save(root/'rules.json', again)
+    sub.resolve_conflict(root, key, fresh, 'remote')
+    assert key not in config(root)['overrides']
+    assert not sub.current_conflicts(again, config(root)['overrides'])
+
+
 def guide_smoke(root):
     cards = '''
 ,Roxy Ifrita Pryce,,
@@ -297,6 +335,8 @@ def smoke(root):
 
 
 if __name__ == '__main__':
+    with TemporaryDirectory() as temp:
+        matrix_cell_smoke(Path(temp))
     icon_smoke()
     with TemporaryDirectory() as temp:
         guide_smoke(Path(temp))

@@ -1823,7 +1823,7 @@ class ManagerInterface(BaseInterface):
             self.refresh_saved_preview()
 
     def rule_row(self, key):
-        from .disc_detail_page import field_label, rule_values
+        from .disc_detail_page import cell_change_text, field_label, rule_values
         parts = key.split('/')
         source = parts[0]
         subject = '/'.join(parts[1:-1]) or key
@@ -1839,8 +1839,13 @@ class ManagerInterface(BaseInterface):
         def display(values, *, show_accepted=False):
             return rule_values(key, values, self.set_names, accepted=show_accepted)
         local = '继承上游' if mode=='inherit' else ('额外接受 ' if mode=='add' else '只接受 ') + display(override['values'], show_accepted=True)
+        changes = (conflict or {}).get('cellChanges')
+        old_text = display(conflict['old']) if conflict else '—'
+        new_text = display(remote)
+        if changes:
+            old_text, new_text = cell_change_text(changes, 0), cell_change_text(changes, 1)
         return [('⚠ ' if conflict else '')+subject, field_label(key), tab_label,
-                display(conflict['old']) if conflict else '—', display(remote), local, display(effective(remote,override or None), show_accepted=True)]
+                old_text, new_text, local, display(effective(remote,override or None), show_accepted=True)]
 
     def filter_rules(self, *_):
         if not hasattr(self, 'rule_rows'):
@@ -1864,7 +1869,12 @@ class ManagerInterface(BaseInterface):
         finally:
             self.fields.blockSignals(False)
         for index, key in enumerate(self.visible_keys):
-            self.fields.item(index, 6).setToolTip('上游原文　' + self.rule_rows[key][4])
+            if self.conflicts.get(key, {}).get('cellChanges'):
+                from .disc_detail_page import rule_values
+                remote = self.rules.get('fields', {}).get(key)
+                self.fields.item(index, 4).setToolTip('订阅推荐　' + rule_values(key, remote, self.set_names))
+            else:
+                self.fields.item(index, 6).setToolTip('上游原文　' + self.rule_rows[key][4])
         self.rule_total.setText(f'{len(self.visible_keys)} / {len(self.keys)} 条')
         self.select_rule()
 
