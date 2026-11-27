@@ -151,6 +151,13 @@ def daily(app, scanner, exported, planned, pinned, wiki, field):
     native = upcoming[0] if upcoming else None
     previous = baseline['facts']
     groups, dirty = worklist(exported, planned, previous, names, native)
+    if cfg.get('autoUpgrade'):
+        from .upgrade import RECEIPT
+        last = read(app.root/RECEIPT, {})
+        if last.get('status') == 'pending':
+            if last.get('uid') not in {d['id'] for d in exported['discs']}:
+                return None
+            dirty.add(last['uid'])
     assigned = {uid for result in planned['assignments'].values() for uid in result.get('ids', ())}
     dirty.update(uid for uid in assigned if previous.get(uid, {}).get('disc', {}).get('markState') == 'marked')
     copies = {uid for ids in groups.values() if len(ids) > 1 for uid in ids}
@@ -249,4 +256,8 @@ def daily(app, scanner, exported, planned, pinned, wiki, field):
             checkpoint(app.root, exported, planned, view, report, marker)
         return result
     checkpoint(app.root, exported, planned, view, report, marker)
-    return app.round_success(f'增量整理完成 · 已核对 {len(found)} 张盘' if found else '驱动盘没有变化')
+    message = f'增量整理完成 · 已核对 {len(found)} 张盘' if found else '驱动盘没有变化'
+    if cfg.get('autoUpgrade'):
+        from .upgrade import try_one
+        message += ' / ' + try_one(app, scanner, report, view, cfg, names, guard_export=marker.guard_export)
+    return app.round_success(message)

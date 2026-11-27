@@ -161,10 +161,11 @@ class Marker:
                 self.remember(fp, 'manual-unlock')
                 raise ValueError('扫描后发现保留盘被解锁，请重新计算')
             spare = bool(row['reasons']) and all(r.startswith('备用 · ') for r in row['reasons'])
+            spare |= bool(self.cfg.get('autoUpgrade') and row.get('upgrade') and row.get('upgradeFloor'))
             self.change(mode, detail, 'manual-keep' if action == 'manual-keep' else 'locked',
                         spare=spare and not equipped and action != 'manual-keep' and row.get('scannedLock') == 'unlocked')
         elif mode == 'release':
-            if (self.cfg.get('rotateSpareLocks') is not True or not row.get('managedSpareLock') or
+            if (not (self.cfg.get('rotateSpareLocks') or (self.cfg.get('autoUpgrade') and row.get('outgrown'))) or not row.get('managedSpareLock') or
                     row['decision'] != '弃置候选' or row['review'] or row['reasons'] or
                     not owns_spare(entry, row['observedValues'], uid=row.get('exportUid')) or equipped or action == 'manual-keep'):
                 raise ValueError('换代条件已变化，请重新扫描')
@@ -187,7 +188,8 @@ class Marker:
             if row['review'] or row.get('ambiguous') or self.seen_counts[fp]!=1: continue
             if mode=='lock' and row['decision']=='保留': todo[fp]=row
             if mode=='mark' and row['decision']=='弃置候选': todo[fp]=row
-            if mode=='release' and row['decision']=='弃置候选' and row.get('managedSpareLock'): todo[fp]=row
+            if (mode=='release' and row['decision']=='弃置候选' and row.get('managedSpareLock')
+                    and (self.cfg.get('rotateSpareLocks') or row.get('outgrown'))): todo[fp]=row
         return todo
 
     def next_page(self):
@@ -316,7 +318,7 @@ class Marker:
         if any(v.get('state') in ('pending', 'released') for v in self.history.values()):
             raise ValueError('上次确认附近中断，需要现场对账')
         phases = ['lock', 'mark']
-        if self.cfg.get('rotateSpareLocks') and any(row.get('managedSpareLock') and row['decision']=='弃置候选' for row in self.rows.values()):
+        if self.phase_targets('release'):
             if any(row['review'] and row['reasons'] for row in self.rows.values()):
                 raise ValueError('有待复核的保留盘，本轮暂缓备用换代')
             phases.insert(1, 'release')

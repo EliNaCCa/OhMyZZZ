@@ -21,8 +21,10 @@ def validate(value):
         values = cfg[key]
         if not isinstance(values,list) or any(not isinstance(v,str) or not v or agent_id(v)!=v for v in values):
             raise ValueError(key+' 应保存角色名单页的角色标识')
-    for key in ('protect15','protectNaturalCrit','trimRecommended','auto_sync','run_scanner','applyMarkers','rotateSpareLocks','includeOwned'):
+    for key in ('protect15','protectNaturalCrit','trimRecommended','auto_sync','run_scanner','applyMarkers','autoUpgrade','rotateSpareLocks','includeOwned'):
         if type(cfg[key]) is not bool: raise ValueError(key+' 应为布尔值')
+    if cfg['autoUpgrade'] and not cfg['run_scanner']:
+        raise ValueError('试强化需要先刷新驱动仓库')
     for r in cfg['reserve_rules']:
         quota(r['count'])
         if 'trimRecommended' in r and type(r['trimRecommended']) is not bool:

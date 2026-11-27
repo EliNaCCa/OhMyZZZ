@@ -170,6 +170,16 @@ def execution_plan(planned, inspected, snapshot, *, cfg, names, fielded=()):
             raise ValueError(f'「{name}」的方案用盘还缺穿戴或实物核对')
         assignments[name] = dict(result, ids=[r['fp'] for r in pieces])
     coverage = fill_spare_gaps(planned, rows, cfg, names)
+    from .reserve_policy import normalized_rule, refresh_upgrade
+    reverse = equipment_keys(names)
+    limits = dict(cfg, reserve_rules=[normalized_rule(r, reverse) for r in cfg['reserve_rules']])
+    for row in rows.values():
+        refresh_upgrade(row, limits)
+    from .potential import evaluate
+    evaluate(list(rows.values()), cfg, names)
+    for row in rows.values():
+        if row.get('outgrown') and not targets[row['exportUid']].get('checkForDiscard'):
+            row.update(decision='待复核', upgradeFloor=[])
     inspected.update(assignments=assignments, traceTeams=planned['traceTeams'], previewBindings=planned['previewBindings'],
                      reserveCoverage=coverage, counts=dict(Counter(r['decision'] for r in rows.values())),
                      issues=list(dict.fromkeys([*planned['issues'], *inspected['issues']])))

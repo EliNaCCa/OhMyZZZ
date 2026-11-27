@@ -259,6 +259,7 @@ def explain(row, by_set, unresolved, excluded):
             if preferred:
                 rolls = sum(row['rolls'].get(stat,0) for stat in preferred)
                 row.setdefault('roleRolls',{})[label] = rolls
+                row.setdefault('roleStats',{})[label] = sorted(preferred)
                 row.setdefault('roleHits',{})[label] = len(preferred.intersection(row['rolls']))
                 row['explanation'].append(f'{label}适用副词条合计 {rolls} 档')
                 rules.extend((field, label, '用于备用盘副词条排序') for field in sub_fields)

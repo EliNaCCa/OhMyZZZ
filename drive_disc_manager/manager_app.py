@@ -71,9 +71,10 @@ class ManagerApp(ZApplication):
                 from .loadout import verify_bindings
                 verify_bindings(cfg, field, read(wiki_path(), {}))
             mark = not interactive and cfg.get('applyMarkers')
+            upgrade = not interactive and cfg.get('autoUpgrade')
             source = cfg['inventorySource']
             network = source in ('cn_export', 'network')
-            cn_inventory = cn_plan = None
+            cn_inventory = cn_plan = network_plan = None
             manual_cn = self.group == MANUAL_GROUP and source == 'cn_export'
             if manual_cn or (network and cfg['run_scanner'] and not interactive):
                 def same_account():
@@ -85,7 +86,7 @@ class ManagerApp(ZApplication):
                 else:
                     from .network_reader import capture
                     capture(self.root, same_account)
-                if mark or field:
+                if mark or field or upgrade:
                     if manual_cn:
                         from .store import preview_path
                         cn_inventory = read(self.root/'cn-inventory.json')
@@ -102,7 +103,7 @@ class ManagerApp(ZApplication):
                             cn_inventory = read(self.root/'cn-inventory.json')
                         cn_plan = network_plan
             scanner = None
-            if interactive or (cfg['run_scanner'] and (not network or mark or field)):
+            if interactive or (cfg['run_scanner'] and (not network or mark or field or upgrade)):
                 from time import time
                 from .scanner_status import scanner_status
                 ready, reason = scanner_status(self.ctx, self.account)
@@ -169,7 +170,7 @@ class ManagerApp(ZApplication):
                 if not interactive:
                     from .dismantle import note_existing_marks
                     note_existing_marks(self, snapshot, scan_started)
-            if mark and cn_plan is not None:
+            if (mark or upgrade) and cn_plan is not None:
                 from .service import reassign_discards
                 cn_plan = reassign_discards(self.root, wiki_path(), pinned, cn_plan, snapshot)
             from .store import snapshot_path
@@ -218,6 +219,11 @@ class ManagerApp(ZApplication):
             if mark and cn_plan is not None:
                 from .incremental_marks import checkpoint
                 checkpoint(self.root, cn_inventory, cn_plan, snapshot, report, marker)
+            if upgrade:
+                from .upgrade import try_one
+                messages.append(try_one(self, scanner, report, snapshot, cfg, names,
+                                        network_plan=network_plan if source == 'network' else None,
+                                        guard_export=marker.guard_export if mark and cn_plan is not None else None))
             return self.round_success(' / '.join(messages) if messages else '预览 · '+str(report['counts']))
         except (KeyError,ValueError,OSError,TypeError) as exc:
             return self.round_fail(str(exc))

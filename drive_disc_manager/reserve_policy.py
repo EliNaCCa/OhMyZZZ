@@ -61,6 +61,18 @@ def rule_selectors(rule):
     return {k: str(rule[k]) for k in SELECTORS if rule.get(k) not in (None, '', '*')}
 
 
+def refresh_upgrade(row, cfg):
+    old = row.pop('upgrade', None)
+    if old and old['reason'] in row['explanation']:
+        row['explanation'].remove(old['reason'])
+    if row['decision'] == '保留' and not row['ambiguous']:
+        limits, _ = matching_rules(row, cfg)
+        advice = upgrade_advice(row, limits)
+        if advice:
+            row['upgrade'] = advice
+            row['explanation'].append(advice['reason'])
+
+
 def rule_stats(rule):
     return rule.get('stats', PURPOSE_STATS.get(rule.get('purpose'), DEFAULT_STATS))
 

@@ -324,6 +324,12 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         if row['managedSpareLock'] and row['decision'] == '弃置候选':
             row['explanation'].append('新保留盘锁定后，解除本插件的旧备用锁')
     from .disc_trace import rule_book
+    from .potential import evaluate
+    evaluate(rows, cfg, names)
+    if stats_only:
+        for row in rows:
+            if row.get('outgrown'):
+                row.update(checkForDiscard=True, decision='待复核')
     evidence = rule_book(rows, rules, cfg['overrides'], current_conflicts(rules, cfg['overrides']))
     teams = {p['name']:dict(agent=(p.get('request') or {}).get('characterName') or p.get('agentKey'),
                             group=p.get('simultaneous') or '') for p in enabled}

@@ -202,6 +202,7 @@ class ManagerInterface(BaseInterface):
         for key, icon, title, hint in [
             ('run_scanner', FluentIcon.SEARCH, '整理前刷新驱动仓库', '关闭后用上次读取的库存生成筛选结果。'),
             ('applyMarkers', FluentIcon.FILTER, '自动标记驱动盘', '要留的锁定，要拆的标记为弃置。'),
+            ('autoUpgrade', FluentIcon.UP, '试强化潜力盘', '整理时用镀剂强化一张背包里的盘，只升到下一档。'),
             ('protect15', FluentIcon.ACCEPT, '保留满级盘（+15）', None),
             ('protectNaturalCrit', FluentIcon.TILES, '保留四词条双暴胚子', '掉落时就有四条副属性，同时带暴击率和暴击伤害。强化后也保留。'),
             ('rotateSpareLocks', FluentIcon.SYNC, '优先留更好的备用盘', '同类盘按你的备用规则比较。先锁新盘，再解开旧备用盘。你手动锁的盘会保留。'),
@@ -636,6 +637,9 @@ class ManagerInterface(BaseInterface):
         self.filter_rules()
         counts = self.report.get('counts', {})
         totals = [f'库存 {len(self.rows)} 张']
+        upgrade_note = read(self.root/'upgrade-result.json', {}).get('note')
+        if upgrade_note:
+            totals.append('上次试强化 · ' + upgrade_note)
         if cn_export and inventory.get('lastChange') and not self.preview_stale:
             totals.append('上次变化 · ' + inventory['lastChange'])
         if cn_export and self.cfg.get('showcaseUid') and not self.preview_stale:
@@ -676,7 +680,7 @@ class ManagerInterface(BaseInterface):
         except Exception:
             ready, note = False, '请检查仓库扫描器是否已启用'
         self.scanner_note.setText('' if ready else note)
-        self.scanner_note.setVisible(not ready and self.cfg['run_scanner'] and (self.cfg['inventorySource']=='ocr' or self.cfg['applyMarkers']))
+        self.scanner_note.setVisible(not ready and self.cfg['run_scanner'] and (self.cfg['inventorySource']=='ocr' or self.cfg['applyMarkers'] or self.cfg.get('autoUpgrade')))
         receipt = read(self.root/'equip-result.json', {})
         parts = []
         if receipt.get('status')=='verified':
@@ -1108,10 +1112,10 @@ class ManagerInterface(BaseInterface):
         try:
             self.check_account(self.root)
             cfg = dict(self.cfg, **{key:checked})
-            if checked and key == 'applyMarkers':
+            if checked and key in ('applyMarkers', 'autoUpgrade'):
                 cfg['run_scanner'] = True
             if key=='run_scanner' and not checked:
-                cfg.update(applyMarkers=False,fieldProfile='')
+                cfg.update(applyMarkers=False,autoUpgrade=False,fieldProfile='')
             from .validation import validate
             validate(cfg)
             save_config(self.root,cfg,self.config_hash)
