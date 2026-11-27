@@ -1,4 +1,4 @@
-"""Replay up to three saved drops through the daily task and its embedded result view."""
+"""Replay saved drops through the daily reader and its embedded result view."""
 import argparse
 import os
 import sys
@@ -22,6 +22,8 @@ def smoke(home, sample):
     observed = read(sample)
     discs = observed['discs'][:3]
     assert discs and observed['status'] == 'verified'
+    if len(observed['discs']) >= 4:
+        replay_recent_window(observed)
     with TemporaryDirectory() as directory:
         root = Path(directory)/'1'
         cfg = dict(config(root), inventorySource='cn_export', auto_sync=False, applyMarkers=True)
@@ -55,6 +57,7 @@ def smoke(home, sample):
             result = manager.manage_inventory()
             assert f'已记录当前筛选下最近的 {len(discs)} 张盘' in result, result
             assert front.call_count == 1 and front.call_args.args[-1] == 3
+            assert front.call_args.kwargs['previous']['warehouseCount'] == past['total']
             original = read(root/'recent-discs.json')
             assert original['discs'] == discs and all(r['suggestion'] for r in original['rows'])
             assert '有效 2 档，这张 1 档' in original['rows'][0]['reference']
@@ -63,6 +66,7 @@ def smoke(home, sample):
             with patch('drive_disc_manager.network_reader.socket.create_connection', side_effect=ConnectionRefusedError()):
                 assert '已记录当前筛选下最近的' in manager.manage_inventory()
             saved = read(root/'recent-discs.json')
+            assert front.call_args.kwargs['previous'] == original
             assert saved['rows'] == original['rows'] and front.call_count == 2
             with patch('drive_disc_manager.network_reader.capture', side_effect=ValueError('账号不符')):
                 assert manager.manage_inventory() == '账号不符' and front.call_count == 2
@@ -117,14 +121,73 @@ def smoke(home, sample):
         assert page.recent_result.isEnabled()
         page.recent_result.trigger()
         assert '参考国服导出' in page.probe_note.text()
-        assert all(r['name'] in page.probe_note.text() and r['suggestion'] in page.probe_note.text() for r in compared)
+        table = page.recent_table
+        assert table.rowCount() == len(compared) and not table.isHidden()
+        assert all(r['name'] in table.item(i, 0).text() and r['suggestion'] == table.item(i, 1).text()
+                   for i, r in enumerate(compared))
         page.show_recent(original)
-        assert original['rows'][0]['reference'] in page.probe_note.toolTip()
+        assert original['rows'][0]['reference'] in table.item(0, 1).toolTip()
+        three_rows_height = table.height()
+        if len(observed['discs']) >= 4:
+            from drive_disc_manager.manager_app import wiki_path
+            from drive_disc_manager.recent_discs import describe
+            four = dict(observed, discs=observed['discs'][:4])
+            real_rows = describe(src, four, read(wiki_path(), {}))
+            page.show_recent(dict(four, rows=real_rows))
+            assert table.rowCount() == 4 and table.height() == three_rows_height
+            last = real_rows[-1]
+            assert table.item(3, 0).text() == f"{last['name']} {last['slot']} 号 +{last['level']}"
+            assert [table.item(3, c).text() for c in (1, 2, 3)] == [last['suggestion'], last['main'], last['subs']]
         ctx.current_instance_idx = 2
         page.on_interface_shown()
         assert not page.recent_result.isEnabled() and not page.probe_note.text()
+        assert table.isHidden() and table.rowCount() == 0
         print('PASS missing/offline reader, stale CN count before grid, pending trial, matching count enters grid, saved rows in UI')
         print([(r['name'],r['slot'],r['suggestion']) for r in saved['rows']])
+
+
+def replay_recent_window(record):
+    from contextlib import nullcontext
+    from unittest.mock import Mock
+    import numpy as np
+    from one_dragon.base.geometry.point import Point
+    from drive_disc_manager.recent_discs import read_front_row
+
+    four = record['discs'][:4]
+    # Across a row break, include a repeated drop and a pair resembling the
+    # old leading pair earlier than the known net increase.
+    drops = [*four, *four, four[2], four[2]]
+    cards = [*drops, *four[:2]]
+    total = record['warehouseCount']
+    previous = dict(warehouseCount=total-len(drops), discs=four[:2])
+    rows = [[Point(167+c*135,319+r*174) for c in range(9)] for r in range(2)]
+    points = [p for line in rows for p in line][:len(cards)]
+    grid = Mock()
+    grid._detect_points.return_value = points
+    grid._resolve_grid.return_value = rows, ''
+    scanner = NS(ctx=NS(ocr=None), screenshot=lambda:np.zeros((1080,1920,3), dtype=np.uint8), drive_disk_scanner=grid)
+    checked = []
+    def read_card(scanner, total, guard, *, target):
+        idx = len(checked)
+        assert (target.x,target.y) == (points[idx].x, points[idx].y-44)
+        checked.append(cards[idx])
+        return cards[idx]
+    with (patch('drive_disc_manager.recent_discs.guarded_grid', return_value=nullcontext(grid)),
+          patch('drive_disc_manager.recent_discs.newest_first', return_value=True),
+          patch('drive_disc_manager.recent_discs.warehouse_header', return_value=('驱动仓库',total)),
+          patch('drive_disc_manager.recent_discs.scroll_thumb', return_value=(1,4,5,22)),
+          patch('drive_disc_manager.recent_discs.read_selected', read_card),
+          patch('drive_disc_manager.recent_discs.sleep')):
+        assert read_front_row(scanner,total,lambda:None,3,previous=previous) == drops
+        assert checked == cards
+        # Same net total after a disposal. Four new positions precede the old pair.
+        previous['warehouseCount'] = total
+        previous['discs'] = [four[1], four[0]]
+        cards = [*four, *previous['discs']]
+        checked.clear()
+        assert read_front_row(scanner,total,lambda:None,3,previous=previous) == four
+        assert checked == cards
+    print('PASS ten new positions across two rows, duplicate rolls, four drops with unchanged warehouse count')
 
 
 if __name__ == '__main__':

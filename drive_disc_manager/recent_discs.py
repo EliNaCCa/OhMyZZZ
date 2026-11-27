@@ -1,4 +1,4 @@
-"""Read the first row of the current warehouse filter in acquisition order."""
+"""Read the newest visible discs under the current warehouse filter."""
 from time import sleep, time
 
 from .disc_probe import read_selected
@@ -31,12 +31,22 @@ def leave_disc_detail(scanner, guard):
         sleep(.7)
 
 
-def read_front_row(scanner, total, guard, count):
+def read_front_row(scanner, total, guard, count, *, previous=None):
     from one_dragon.base.geometry.point import Point
     if type(count) is not int or not 1 <= count <= 9:
         raise ValueError('一次可以看 1 到 9 张盘')
     if total == 0:
         return []
+    old = previous or {}
+    baseline = old.get('warehouseCount')
+    gain = total - baseline if type(baseline) is int else 0
+    # In daily mode a disposal can hide a drop in the net count. Look for
+    # the previous leading pair as well. This only bounds a read-only list.
+    initial = min(total, 36, max(count, gain))
+    anchor = [d.get('fingerprint') for d in old.get('discs', [])[:2]]
+    if len(anchor) != 2 or not all(anchor) or anchor[0] == anchor[1]:
+        anchor = []
+    limit = min(total, 36) if anchor else initial
     if not newest_first(scanner, total, guard):
         raise ValueError('这次没能确认哪一端是最新的盘')
 
@@ -56,21 +66,27 @@ def read_front_row(scanner, total, guard, count):
             raise ValueError('没读到当前筛选下的盘位')
         rows, _ = grid._resolve_grid(points)
         discs = []
-        for col, point in enumerate(rows[0][:min(count, total)]):
-            # Do not click an extrapolated empty cell past the end of this filter.
-            if not any(abs(hit.x-point.x) < 20 and abs(hit.y-point.y) < 20 for hit in points):
+        cells = [(r, c, point) for r, line in enumerate(rows[:4]) for c, point in enumerate(line[:9])]
+        overlap = None
+        for idx, (page_row, col, point) in enumerate(cells[:limit]):
+            center = Point(167 + 135 * col, 275 + 174 * page_row)
+            if (idx != page_row * 9 + col or abs(point.x - center.x) >= 20 or abs(point.y - center.y - 44) >= 20
+                    or not any(abs(hit.x-point.x) < 20 and abs(hit.y-point.y) < 20 for hit in points)):
                 break
             if not grid.ctx.controller.click(point):
-                raise ValueError('没能选中第 %d 张盘' % (col + 1))
+                raise ValueError('没能选中第 %d 张盘' % (idx + 1))
             grid.ctx.controller.mouse_move(Point(40, 182))
             sleep(.35)
             grid._stable_screenshot()
-            # The scanner fits clicks to the colored strip, sometimes at the
-            # bottom edge. Verify the selection at the first row's card center.
-            disc = read_selected(scanner, total, guard, target=Point(167 + 135*col, 275))
+            # Verify the selection at the center of the requested card.
+            disc = read_selected(scanner, total, guard, target=center)
             if not checked_values(disc, 1):
-                raise ValueError('第 %d 张盘的词条没读清' % (col + 1))
+                raise ValueError('第 %d 张盘的词条没读清' % (idx + 1))
             discs.append(disc)
+            if anchor and len(discs) - 2 >= gain and overlap is None and [d['fingerprint'] for d in discs[-2:]] == anchor:
+                overlap = len(discs) - 2
+            if overlap is not None and len(discs) >= initial:
+                return discs[:max(initial, overlap)]
         if not discs:
             raise ValueError('没读到第一张盘')
         return discs
@@ -97,7 +113,10 @@ def daily_read(app, pinned, wiki):
     started = time()
     leave_disc_detail(scanner, guard)
     total = enter_warehouse(scanner, guard)
-    discs = read_front_row(scanner, total, guard, 3)
+    previous = read(app.root/'recent-discs.json', {})
+    if previous.get('status') != 'verified' or str(previous.get('account')) != str(app.account):
+        previous = {'warehouseCount': read(app.root/'scan-observations.json', {}).get('total')}
+    discs = read_front_row(scanner, total, guard, 3, previous=previous)
     guard()
     record = dict(account=app.account, started=started, finished=time(), status='verified',
                   warehouseCount=total, discs=discs, rules=pinned[1].get('version'))

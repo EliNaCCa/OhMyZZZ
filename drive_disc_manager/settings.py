@@ -76,6 +76,12 @@ class ManagerInterface(BaseInterface):
         self.quota_button = self.menu_action(actions, '同类备用数量', self.set_quota)
         self.observation_button = self.menu_action(actions, '上次单盘读数', lambda:self.open_disc_detail(probe=True))
         self.probe_note = BodyLabel(); self.probe_note.setWordWrap(True); box.addWidget(self.probe_note)
+        self.recent_table = self.grid(['驱动盘', '建议', '主属性', '副属性'])
+        self.recent_table.setWordWrap(False)
+        for col, width in enumerate((175, 130, 120)):
+            self.recent_table.setColumnWidth(col, width)
+        self.recent_table.hide()
+        box.addWidget(self.recent_table)
         self.probe_finished.connect(self.finish_probe, Qt.ConnectionType.QueuedConnection)
         self.table = self.grid(['套装','号位','主属性','等级','建议','原因'])
         for col, width in enumerate((150, 70, 130, 84, 110)):
@@ -1174,6 +1180,7 @@ class ManagerInterface(BaseInterface):
             raise ValueError('请在当前账号的一条龙空闲时读盘')
         self.probe_button.setEnabled(False)
         self.recent_button.setEnabled(False)
+        self.clear_recent_table()
         self.probe_note.setText('正在按获得顺序读盘…' if recent_count else '正在读取这张盘…'); self.probe_note.show()
         def worker():
             try:
@@ -1189,6 +1196,7 @@ class ManagerInterface(BaseInterface):
         if str(self.root) == root and self.root.name == str(self.ctx.current_instance_idx):
             if record.get('recent'):
                 if record.get('status') != 'verified':
+                    self.clear_recent_table()
                     self.probe_note.setText(record.get('error', '读取中断')); self.probe_note.show()
                     return
                 self.recent_result.setEnabled(True)
@@ -1211,13 +1219,25 @@ class ManagerInterface(BaseInterface):
         if rows is None:
             rows = describe(self.root, record, read(wiki_path(), {}))
         stamp = datetime.fromtimestamp(record['finished']).strftime('%m-%d %H:%M')
-        lines = [f"{r['name']} {r['slot']} 号 +{r['level']}　{r['main']}　｜　{r['subs']}　｜　{r['suggestion']}" for r in rows]
         basis = ' · 参考' + rows[0]['basis'] if rows and rows[0].get('basis') else ''
-        self.probe_note.setText(f'{stamp} · 当前筛选下最近获得的 {len(rows)} 张' + basis + ('\n' + '\n'.join(lines) if lines else ''))
-        self.probe_note.setToolTip('\n'.join(r['advice'] + ('\n' + r['reference'] if r.get('reference') else '') for r in rows))
+        self.probe_note.setText(f'{stamp} · 当前筛选下最近获得的 {len(rows)} 张' + basis)
         self.probe_note.show()
+        table = self.recent_table
+        self.fill(table, [(f"{r['name']} {r['slot']} 号 +{r['level']}", r['suggestion'], r['main'], r['subs']) for r in rows])
+        for index, row in enumerate(rows):
+            reasons = [row['advice'], row.get('reference')]
+            table.item(index, 1).setToolTip('\n'.join(filter(None, reasons)))
+        table.setFixedHeight(table.horizontalHeader().sizeHint().height() +
+                             table.verticalHeader().defaultSectionSize() * min(len(rows), 3) + 2 * table.frameWidth())
+        table.scrollToTop()
+        table.setVisible(bool(rows))
+
+    def clear_recent_table(self):
+        self.recent_table.hide()
+        self.recent_table.setRowCount(0)
 
     def show_probe(self, record):
+        self.clear_recent_table()
         self.probe_record = record
         verified = record.get('status') == 'verified'
         self.observation_button.setEnabled(verified)
