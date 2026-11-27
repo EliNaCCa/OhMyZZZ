@@ -60,9 +60,13 @@ def assess_rules(row, cfg, fields, reverse, by_set, unresolved, excluded):
         row['review'].append('缺少明确规则')
 
 
-def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_owned=(),history=None,previous_preview=None,comparison=None):
+def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_owned=(),history=None,previous_preview=None,comparison=None,game_discards=()):
     ds, _ = inventory(z, preview_only=True)
     stats_only = z.get('networkPreview') is True and z.get('source') == 'zzz-drive-exporter'
+    if game_discards:
+        if not stats_only or not set(game_discards) <= {d['id'] for d in ds}:
+            raise ValueError('弃置盘与本次国服导出不符')
+        ds = [dict(d, trash=True, markState='marked') if d['id'] in game_discards else d for d in ds]
     showcase = z.get('showcase') or {}
     shown = showcase.get('owners', {}) if stats_only and showcase.get('uid') == cfg.get('showcaseUid') else {}
     if shown:
@@ -166,6 +170,8 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     pool = [disc for disc in inputs.values() if disc and not disc['discarded']]
     inventory_hash = digest(z)
     allocation_key = digest([PLUGIN_VERSION, 'full-crit', inventory_hash, enabled, bindings, optimizer_names, reader_owners, last_worn, shown, cfg['optimizer_url']]) if enabled else None
+    if allocation_key and game_discards:
+        allocation_key = digest([allocation_key, sorted(game_discards)])
     saved = reusable_assignments(previous_preview, allocation_key, groups, pool)
     for (_,group_name), members in groups.items():
         try:

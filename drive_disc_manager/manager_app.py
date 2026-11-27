@@ -167,6 +167,9 @@ class ManagerApp(ZApplication):
                 if not interactive:
                     from .dismantle import note_existing_marks
                     note_existing_marks(self, snapshot, scan_started)
+            if mark and cn_plan is not None:
+                from .service import reassign_discards
+                cn_plan = reassign_discards(self.root, wiki_path(), pinned, cn_plan, snapshot)
             from .store import snapshot_path
             if scanner is None and not snapshot_path(self.root, cfg).is_file():
                 return self.round_fail('请先在仓库页读取库存')

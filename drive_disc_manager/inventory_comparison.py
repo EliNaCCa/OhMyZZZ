@@ -150,6 +150,7 @@ def execution_plan(planned, inspected, snapshot, *, cfg, names, fielded=()):
                 row['review'].append('游戏内已解除锁定')
                 continue
             row['decision'] = '保留'
+            row['explanation'] = [note for note in row['explanation'] if note != '超出同类备用名额']
             if any(reason.startswith('配队 · ') for reason in reasons):
                 # The inspection pass omits the optimizer. The selected team is
                 # itself a keep rule, regardless of subscription coverage.

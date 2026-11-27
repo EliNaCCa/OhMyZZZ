@@ -23,11 +23,31 @@ def rule_snapshot(root, refresh=True):
         return config(root), read(root/'rules.json',{}), warnings
 
 
-def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=False, verified_game=False, cn_plan=None, field=None):
+def reassign_discards(root, wiki, pinned, planned, observed):
+    """Drop only UID-bound discards observed in this run, then reallocate every enabled group."""
+    if observed.get('source') != 'OhMyZZZ CN' or observed.get('exportInventory') != planned['inventory']:
+        raise ValueError('本轮读盘与国服库存不符')
+    fresh = set(observed['audit']['verifiedUids']) if observed['audit'].get('incremental') else None
+    discarded = {d['id'] for d in observed['discs'] if d.get('exportUid') == d['id']
+                 and d.get('trash') is True and d.get('markState') == 'marked'
+                 and (fresh is None or d['id'] in fresh)}
+    selected = {uid for result in planned['assignments'].values() for uid in result.get('ids', ())}
+    if selected.isdisjoint(discarded):
+        return planned
+    result = preview(root, wiki, snapshot=pinned, game_discards=discarded, expected_inventory=planned['inventory'])
+    if result['issues']:
+        raise ValueError('排除已弃置盘后配装未配齐 · ' + ' / '.join(result['issues']))
+    return result
+
+
+def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=False, verified_game=False,
+            cn_plan=None, field=None, game_discards=(), expected_inventory=None):
     cfg, rules, warnings = snapshot if snapshot is not None else rule_snapshot(root, refresh)
     warnings = list(warnings)
     inputs = dict(cfg, inventorySource='ocr') if verified_game else cfg
     z = read(snapshot_path(root, inputs))
+    if expected_inventory is not None and digest(z) != expected_inventory:
+        raise ValueError('国服库存已更新，请重新整理')
     dictionary = read(wiki) if wiki and Path(wiki).is_file() else {}
     names = equipment_names(dictionary)
     names.update(cfg.get('aliases',{}))
@@ -58,10 +78,12 @@ def preview(root, wiki=None, refresh=True, *, snapshot=None, reuse_allocations=F
             if not endpoint:
                 endpoint = stack.enter_context(managed(root))
             return candidate_pool(endpoint, profile, discs, current)
-        inspection_cfg = dict(cfg, profiles=[], reserve=0, reserve_rules=[]) if cn_plan is not None else cfg
+        # The UID plan applies each group's retain-all / quota setting. This pass adds game state.
+        inspection_cfg = dict(cfg, profiles=[], reserve=0, reserve_rules=[], trimRecommended=True) if cn_plan is not None else cfg
         report = plan(z,inspection_cfg,rules,names,candidates,
                       wiki=dictionary, known_owned=known_agents(root), history=history, comparison=comparison,
-                      previous_preview=read(preview_path(root, inputs), {}) if reuse_allocations else None)
+                      previous_preview=read(preview_path(root, inputs), {}) if reuse_allocations else None,
+                      game_discards=game_discards)
     report['configuration'] = digest(cfg)
     if cn_plan is not None:
         from .inventory_comparison import execution_plan
