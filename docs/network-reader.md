@@ -2,6 +2,8 @@
 
 ## 国服 Windows 3.3
 
+国服读取器 v0.2.1 对应 `CNPRODWin3.3.0`。国际服读取器 v3.3.1 对应 `OSPRODWin3.3.0`。两种导出共用套装和属性规则，副词条次数在导入时换算成同一口径。国服 ZOOD 带有盘的编号，穿戴者和弃置字段在此版本中都是占位值。国际服 ZOD 的穿戴者和弃置标记来自读取器，导出的顺序编号只在当次库存内使用。[国服导出格式](https://github.com/Treageer/zzz-drive-exporter/blob/v0.2.1/src/export_api.rs) · [国际服导出示例](https://github.com/pingwinekZ/zzz_packet_capture_0delay/blob/v3.3.1/rust/testdata/parity/zod_export.json)
+
 在 **OhMyZZZ → 设置 → 运行设置** 选择「国服 · 读取导出文件」。仓库页的「读取仓库」和日常整理会自动读取一条龙安装目录下 `plugin_data/drive_disc_manager/<账号编号>/exports/zzz-drives-zood-v1.json`。也可在「仓库 → 更多 → 选择其他导出文件」绑定已有的 ZOOD 文件。生成文件由国服读取器负责。
 
 仓库按每张盘的编号统计新增、减少和属性变化，包括强化后的等级和词条。国服文件提供驱动盘属性，可用于预览配装。装备者、弃置状态、角色和音擎养成需要其他数据来源。上游作者用国服 3.3.0 的一次历史登录数据导出了 2,335 张盘，其他账号的实时读取仍待验证。[国服读取器 v0.2.1](https://github.com/Treageer/zzz-drive-exporter/blob/v0.2.1/README.md)

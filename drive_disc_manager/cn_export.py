@@ -5,7 +5,7 @@ import re
 import time
 from pathlib import Path
 
-from .optimizer import STATS
+from .optimizer import STATS, exported_s_main
 from .store import fingerprint, inventory, read, save
 from .subscriptions import SLOT_MAIN
 
@@ -61,12 +61,7 @@ def normalize_disc(raw):
         from .reserve_policy import development
         if development(level, rolls) is None:
             raise ValueError('强化等级和副词条档数不符')
-        maximum = STATS[main][2]
-        # Integer main stats are displayed rounded down in game.
-        value = maximum * (5 + level) / 20
-        if main in ('hp', 'atk', 'def', 'anomProf'):
-            value = int(value)
-        disc['observedValues'] = dict(main={main: round(value, 4)},
+        disc['observedValues'] = dict(main={main: exported_s_main(main, level)},
                                       subs={k: round(STATS[k][1] * v, 4) for k, v in rolls.items()})
     return disc
 

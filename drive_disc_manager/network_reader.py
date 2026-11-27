@@ -39,7 +39,7 @@ def fetch_export(port=23313, *, identify=reader_process):
 
 
 def normalize(data):
-    from .optimizer import STATS
+    from .optimizer import STATS, exported_s_main
     if (not isinstance(data, dict) or (data.get('format'), data.get('version'), data.get('source')) !=
             ('ZOD', 1, 'ZZZ Packet Capture') or not all(isinstance(data.get(k), list) for k in ('characters', 'discs', 'wengines'))):
         raise ValueError('请在网络读取器导出角色、驱动盘和音擎，再登录游戏读取库存。')
@@ -64,8 +64,7 @@ def normalize(data):
         maximum = STATS.get(main, (None,None,None))[2]
         if (disc['rarity'] == 'S' and maximum and type(d['level']) is int and 0 <= d['level'] <= 15
                 and all(STATS.get(s['key'], (None,None))[1] for s in subs)):
-            # S mains grow from 25% to 100% of their +15 value in 15 equal steps.
-            value = round(maximum * (5+d['level']) / 20, 4)
+            value = exported_s_main(main, d['level'])
             disc['observedValues'] = dict(main={main:value}, subs={s['key']:round(STATS[s['key']][1]*(s['upgrades']+1),4) for s in subs})
         discs.append(disc)
     snapshot = dict(format='ZOD', version=1, dbVersion=2, source='ZZZ Packet Capture', discs=discs,

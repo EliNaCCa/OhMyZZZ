@@ -16,6 +16,14 @@ STATS = {'hp':('HP_FLAT',112,2200), 'atk':('ATK_FLAT',19,316), 'def':('DEF_FLAT'
          **{e+'_dmg_':(e.upper()+'_DMG',None,30) for e in ('physical','electric','fire','ice','ether','wind','lumiflux')}}
 
 
+def exported_s_main(key, level):
+    """Game display value for an S disc in either network export format."""
+    maximum = STATS[key][2]
+    if key in ('hp', 'atk', 'def', 'anomProf'):
+        return maximum * (5 + level) // 20
+    return round(maximum * (5 + level) / 20, 4)
+
+
 def as_disc(d, names, roll_base=0):
     from .reserve_policy import development
     from .stat_reading import valid_slot_main
