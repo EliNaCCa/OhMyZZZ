@@ -17,7 +17,7 @@ def smoke(home, sample, root):
     from drive_disc_manager.live import Marker
     from drive_disc_manager.manager_app import ManagerApp
     from drive_disc_manager.service import preview
-    from drive_disc_manager.store import config, equipment_names, read, save
+    from drive_disc_manager.store import config, equipment_names, fingerprint, read, save
 
     os_utils.set_work_dir(str(root.parent))
     path = root/'exports'/'zzz-drives-zood-v1.json'
@@ -51,6 +51,7 @@ def smoke(home, sample, root):
     app = NS(root=root, account=1, group='one_dragon', ctx=NS(current_instance_idx=1,
              controller=NS(game_win=NS(is_win_active=True)), run_context=NS(is_context_running=True, get_application=lambda *a:scanner)),
              round_success=lambda s:NS(ok=True, msg=s), round_fail=lambda s:NS(ok=False, msg=s))
+    app.recent_when_waiting = ManagerApp.recent_when_waiting.__get__(app)
     visited, scheduled = [], []
     def pages(scanner, total, guard, *, by_acquisition=False):
         assert by_acquisition
@@ -81,14 +82,21 @@ def smoke(home, sample, root):
         receipt = read(root/'dismantle-preview.json')
         assert [e['uid'] for e in receipt['entries']] == ['1005'] and len(receipt['beforeUids']) == 5
         assert read(root/'inventory.json') == view
-        again = ManagerApp.manage_inventory(app)
-        assert not again.ok and '刷新' in again.msg and len(visited) == 4, again.msg
+        assert read(root/delta.FILE)['checkedThisRun'] == 2
+        front_row = [dict(row, fingerprint=fingerprint(row)) for row in readings[:3]]
+        with (patch('drive_disc_manager.recent_discs.leave_disc_detail'),
+              patch('drive_disc_manager.recent_discs.read_front_row', return_value=front_row) as front):
+            again = ManagerApp.manage_inventory(app)
+        assert not again.ok and '还没有更新' in again.msg and len(visited) == 4, again.msg
+        front.assert_called_once()
+        assert [d['id'] for d in read(root/'recent-discs.json')['discs']] == [d['id'] for d in readings[:3]]
         # A newer export, same inventory. With no native task only the warehouse count is needed.
         export(raws)
         visited.clear()
         with patch('drive_disc_manager.task_order.following_native', return_value=None), patch('drive_disc_manager.dismantle.following_native', return_value=None):
             result = ManagerApp.manage_inventory(app)
             assert result.ok and not visited and not scheduled[-1]['mark'], (result.msg, visited)
+            assert read(root/delta.FILE)['checkedThisRun'] == 0
         # Old UID changes intent even when its inventory attributes and lock stay identical.
         cn = read(root/'cn-inventory.json')
         authoritative = preview(root, refresh=False)

@@ -62,8 +62,11 @@ def checkpoint(root, exported, planned, view, report, marker):
             facts[uid]['recheckWearer'] = True
     for disc in exported['discs']:
         facts[disc['id']]['attributes'] = digest([fingerprint(disc), disc.get('location'), disc.get('observedValues')])
-    save(root/FILE, dict(version=1, account=root.name, file=exported['exportFile'],
-                         stamp=exported['exportWrittenNs'], finished=time_ns(), facts=facts))
+    record = dict(version=1, account=root.name, file=exported['exportFile'],
+                  stamp=exported['exportWrittenNs'], finished=time_ns(), facts=facts)
+    if view['audit'].get('incremental'):
+        record['checkedThisRun'] = len(view['audit']['verifiedUids'])
+    save(root/FILE, record)
 
 
 def worklist(exported, planned, previous, names, native):

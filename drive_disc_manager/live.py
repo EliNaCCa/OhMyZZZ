@@ -309,6 +309,8 @@ class Marker:
         from .scan_copies import scroll_thumb
         before = scroll_thumb(self.frame())
         for _ in range(32):
+            if before and before[1] <= 7:
+                return
             self.guard()
             self.app.ctx.controller.scroll(-120, self.grid._scroll_list_center())
             time.sleep(.6)
@@ -332,15 +334,22 @@ class Marker:
             todo = self.phase_targets(phase)
             if not todo:
                 continue
-            # Re-enter the warehouse for each pass (the previous pass can leave a scrolled page).
-            from zzz_od.operation.back_to_normal_world import BackToNormalWorld
-            if not BackToNormalWorld(self.app.ctx).execute().success: raise ValueError('无法返回大世界')
             self.scanner._ensure_screen_areas()
-            if enter_warehouse(self.app, self.guard) != len(self.report['discs']):
+            total = len(self.report['discs'])
+            navigation = []
+            if self.scope is None:
+                # A full inventory scan can finish on an agent or W-Engine screen.
+                from zzz_od.operation.back_to_normal_world import BackToNormalWorld
+                if not BackToNormalWorld(self.app.ctx).execute().success:
+                    raise ValueError('无法返回大世界')
+            if enter_warehouse(self.app, self.guard, trace=navigation) != total:
                 raise ValueError('当前驱动仓库数量与计划不匹配')
             if self.scope is not None:
-                from .warehouse_sort import newest_first
-                newest_first(self.scanner, len(self.report['discs']), self.guard)
+                # Incremental inspection leaves the warehouse in acquisition order.
+                if navigation:
+                    from .warehouse_sort import newest_first
+                    newest_first(self.scanner, total, self.guard)
+                self.rewind()
             from .manual_equip import guarded_grid
             with guarded_grid(self.grid, self.guard):
                 if any(self.positions.get(fp) for fp in todo):
