@@ -59,6 +59,8 @@ class ManagerApp(ZApplication):
                         raise
                 self.guard_game = check_session
                 self.guard_game()
+            from .reader_region import align_source
+            align_source(self.ctx, self.root)
             pinned = rule_snapshot(self.root, refresh=not interactive)
             cfg = pinned[0]
             if self.group == MANUAL_GROUP:

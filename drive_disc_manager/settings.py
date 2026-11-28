@@ -1,7 +1,7 @@
 import json
 from copy import deepcopy
 from threading import Thread
-from PySide6.QtCore import Signal, Qt, QSignalBlocker
+from PySide6.QtCore import Signal, Qt, QSignalBlocker, QTimer
 from one_dragon_qt.widgets.base_interface import BaseInterface
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QWidget,
     QTableWidgetItem,QFileDialog,QInputDialog,QMessageBox,QAbstractItemView,QStackedWidget)
@@ -49,6 +49,10 @@ class ManagerInterface(BaseInterface):
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.preview_job = None
+        self.export_poll = QTimer(self)
+        self.export_poll.setInterval(2500)
+        self.export_poll.timeout.connect(self.refresh_new_export)
+        self.last_export_attempt = None
         self.scanning_game = False
         self.preview_refresh_accounts = set()
         self.preview_finished.connect(self.finish_preview, Qt.ConnectionType.QueuedConnection)
@@ -383,12 +387,14 @@ class ManagerInterface(BaseInterface):
             self.detail_recent_index = None
             self.tabs.setCurrentIndex(0)
         self.root = root
+        self.last_export_attempt = None
         self.sync_button.setEnabled(root not in self.rule_updates)
         self.show_preview_job()
         self.maintenance_dir = root.parent / '_maintenance'
         self.show_maintenance()
         self.reload()
         self.refresh_new_export()
+        self.export_poll.start()
         if self.preview_job is None and root in self.preview_refresh_accounts:
             self.preview_refresh_accounts.discard(root)
             if self.preview_stale:
@@ -446,15 +452,18 @@ class ManagerInterface(BaseInterface):
         self.refresh_new_export()
 
     def refresh_new_export(self):
-        if (self.cfg['inventorySource'] != 'cn_export' or self.preview_job is not None or self.equip_busy
+        if (self.cfg['inventorySource'] != 'cn_export' or self.root.name != str(self.ctx.current_instance_idx)
+                or self.preview_job is not None or self.equip_busy
                 or not self.ctx.run_context.is_context_stop):
             return
-        from .cn_export import same_export
+        from .cn_export import file_stamp, same_export
         try:
             stamp = self.cn_file.stat()
         except OSError:
             return  # The first export may not exist yet. Manual refresh reports the actual path.
-        if not same_export(self.cn_file, stamp, self.cn_last_export):
+        attempt = self.root, self.cn_file, file_stamp(stamp)
+        if attempt != self.last_export_attempt and not same_export(self.cn_file, stamp, self.cn_last_export):
+            self.last_export_attempt = attempt
             self.start_preview(from_game=True)
 
     def edit_showcase(self, *, from_roster=False):
@@ -478,6 +487,11 @@ class ManagerInterface(BaseInterface):
     def open_reader(self):
         import os
         from .reader_install import install
+        from .reader_region import cn_client
+        self.check_account(self.root)
+        if cn_client(self.ctx) or config(self.root)['inventorySource'] != 'network':
+            self.reload()
+            return
         exe = install(self.root.parent/'_reader')
         os.startfile(str(exe), 'runas', cwd=str(exe.parent))
 
@@ -571,8 +585,15 @@ class ManagerInterface(BaseInterface):
                 self.editor_drafts[self.editor_account] = (self.editor_base, text)
             else:
                 self.editor_drafts.pop(self.editor_account, None)
+        from .reader_region import align_source
+        cn = align_source(self.ctx, self.root)
         self.cfg=config(self.root); self.rules=read(self.root/'rules.json',{}); self.report=read(preview_path(self.root,self.cfg),{})
         with QSignalBlocker(self.reader):
+            overseas = self.reader.findData('network')
+            if cn and overseas >= 0:
+                self.reader.removeItem(overseas)
+            elif not cn and overseas < 0:
+                self.reader.addItem('国际服 · 网络读取', userData='network')
             self.reader.setCurrentIndex(self.reader.findData(self.cfg['inventorySource']))
         self.reader_help.setVisible(self.cfg['inventorySource'] in ('network', 'cn_export'))
         self.reader_open.setVisible(self.cfg['inventorySource'] == 'network')
@@ -1307,6 +1328,7 @@ class ManagerInterface(BaseInterface):
             self.optimizer_page.import_button.setText('导入方案')
 
     def on_interface_hidden(self):
+        self.export_poll.stop()
         if self.tabs.currentWidget() is self.optimizer_page:
             self.navigation.open('我的配队')
 
