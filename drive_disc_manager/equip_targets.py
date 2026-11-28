@@ -68,9 +68,10 @@ def warehouse_observations(scanner, total, guard, *, by_acquisition=False):
     observed_total = enter_warehouse(scanner, guard)
     if observed_total != total:
         raise InventoryUnavailable(f'游戏仓库有 {observed_total} 张，本轮库存有 {total} 张，请刷新库存')
+    ordered = False
     if by_acquisition:
         from .warehouse_sort import newest_first
-        newest_first(scanner, total, guard)
+        ordered = newest_first(scanner, total, guard)
     area = ctx.screen_loader.get_area('仓库-驱动仓库', '驱动盘属性')
     if area is None:
         raise ValueError('扫描器缺少驱动盘属性区域')
@@ -100,6 +101,8 @@ def warehouse_observations(scanner, total, guard, *, by_acquisition=False):
         frame()
         grid.ctx.controller.scroll(-120, grid._scroll_list_center())
         sleep(.5)
+        top = scroll_thumb(frame()) if ordered and total > 36 else None
+        ordered = ordered and (total <= 36 or (top is not None and top[1] <= 7))
         unchanged = 0
         for page in range(total + 1):
             screen = frame()
@@ -117,6 +120,10 @@ def warehouse_observations(scanner, total, guard, *, by_acquisition=False):
                     grid._stable_screenshot()
                     disc = read_disc(frame(), point, page)
                     if disc and disc.get('observedValues') and disc.get('observedGrade'):
+                        cell = disc.get('scanCell', ())
+                        if (ordered and len(cell) >= 3 and cell[1] == col and
+                                (page or abs(cell[2] - (275 + row * 174)) < 20)):
+                            disc['orderedCell'] = (page, row * 9 + col)
                         yield disc, lambda p=point, n=page: read_disc(frame(), p, n)
             before = frame()
             grid.ctx.controller.scroll(3, grid._scroll_list_center())

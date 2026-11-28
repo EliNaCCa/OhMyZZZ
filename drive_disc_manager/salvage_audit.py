@@ -72,13 +72,16 @@ def prepare_batch(z, report, observed, grade, *, include_marked=True, before_mar
         raise ValueError('请先刷新国服导出文件，再核对拆解清单')
     delta = cn and z['audit'].get('incremental') is True
     fresh = set(z['audit'].get('verifiedUids', ())) if delta else set()
+    cached_unlocked = []
     for disc in discs:
         fp = fingerprint(disc)
         cached = delta and disc['id'] not in fresh
         if cached and disc['lock'] is True:
             continue  # This run's CN export confirms that the native selector cannot take it.
-        if cached and include_marked:
-            raise ValueError('拆解前需核对未锁盘的弃置状态，请重新整理')
+        if cached and include_marked and disc['rarity'] not in ranks:
+            # The host selects using its current marks. A later export establishes which UIDs left.
+            cached_unlocked.append(disc['id'])
+            continue
         mark = observed.get(fp, disc.get('markState')) if counts[fp]==1 else disc.get('markState')
         if not cached:
             locked = disc.get('lockState') == 'locked' and disc.get('lock') is True
@@ -120,6 +123,8 @@ def prepare_batch(z, report, observed, grade, *, include_marked=True, before_mar
         receipt.update(existingOnly=True, unreadMarks=unread_marks)
     if cn:
         receipt.update(beforeUids={d['id']:uid_item(d) for d in discs}, exportFile=z['exportFile'], exportWrittenNs=z['exportWrittenNs'])
+        if cached_unlocked:
+            receipt['uninspectedUids'] = cached_unlocked
     return receipt
 
 
@@ -283,11 +288,13 @@ def reconcile_uids(root, receipt, fresh):
     batch = {entry['uid'] for entry in receipt['entries']}
     gone = old.keys() - current.keys()
     added = current.keys() - old.keys()
-    issues = bool(gone - batch or receipt.get('unreadMarks') or receipt.get('unresolvedGrades'))
+    uninspected = set(receipt.get('uninspectedUids', ()))
+    issues = bool(gone - batch - uninspected or receipt.get('unreadMarks') or receipt.get('unresolvedGrades'))
     issues |= len(old) != receipt['beforeTotal'] or not batch <= old.keys() or len(batch) != len(receipt['entries'])
     changes = []
     for uid in sorted(gone - batch):
-        changes.append(dict(old[uid], uid=uid, kind='missing', after='清单外少盘', issue=True))
+        cached = uid in uninspected
+        changes.append(dict(old[uid], uid=uid, kind='missing', after='旧盘已离库' if cached else '清单外少盘', issue=not cached))
     for uid in sorted(added):
         changes.append(dict(uid_item(current[uid]), uid=uid, kind='extra', after='新入库', issue=False))
     for uid in sorted(old.keys() & current.keys()):

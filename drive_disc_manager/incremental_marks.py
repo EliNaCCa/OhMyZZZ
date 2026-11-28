@@ -69,43 +69,61 @@ def checkpoint(root, exported, planned, view, report, marker):
     save(root/FILE, record)
 
 
-def worklist(exported, planned, previous, names, native):
+def needs_first_read(disc, row, native):
+    from .salvage_audit import GRADE_FILTERS
+    if native and (native.dismantle_abandon or disc['rarity'] in GRADE_FILTERS.get(native.dismantle_level, {'S', 'A', 'B'})):
+        return True
+    if row.get('review') or row.get('ambiguous'):
+        return False
+    if disc['rarity'] == 'S' and row['level'] == 15 and row.get('ownedUses'):
+        return True  # Even a locked incumbent may set the floor for a growing piece.
+    return (row.get('checkForDiscard') or row.get('upgrade') or
+            (row['decision'] == '保留' and (not disc['lock'] or row.get('managedSpareLock'))))
+
+
+def worklist(exported, planned, previous, names, native, *, first_pass=False):
     reverse = equipment_keys(names)
     groups = defaultdict(list)
     dirty = set()
-    goals = {r['exportUid']:intent(r) for r in planned['discs']}
+    plans = {r['exportUid']:r for r in planned['discs']}
     for disc in exported['discs']:
         uid = disc['id']
         groups[attribute_key(disc, 1, names, reverse)].append(uid)
         old = previous.get(uid, {})
-        attributes = digest([fingerprint(disc), disc.get('location'), disc.get('observedValues')])
-        if (old.get('attributes') != attributes or old.get('recheckWearer') or old.get('goal') != goals[uid]
-                or old['disc'].get('lock') != disc['lock']
-                or (native and native.dismantle_abandon and not disc['lock'])):
-            dirty.add(uid)
-    # When one copy leaves or is enhanced the remaining UID can become actionable.
-    for group in groups.values():
-        if len(group) == 1:
-            uid = group[0]
-            if previous.get(uid, {}).get('disc', {}).get('markState') == 'unknown':
+        if first_pass or old.get('disc', {}).get('markState') == 'unknown':
+            if needs_first_read(disc, plans[uid], native):
                 dirty.add(uid)
+            continue
+        attributes = digest([fingerprint(disc), disc.get('location'), disc.get('observedValues')])
+        if (old.get('attributes') != attributes or old.get('recheckWearer') or old.get('goal') != intent(plans[uid])
+                or old['disc'].get('lock') != disc['lock']):
+            dirty.add(uid)
     return groups, dirty
 
 
-def find_readings(exported, names, groups, wanted, observations):
+def find_readings(exported, names, groups, wanted, observations, *, order=None, record_first_order=False):
     """Order affects speed only. Stop as soon as every requested unique item matches."""
     from .equip_targets import reading_identity
     reverse = equipment_keys(names)
     catalogue = {d['id']:d for d in exported['discs']}
     waiting = {key:ids[0] for key, ids in groups.items() if len(ids) == 1 and ids[0] in wanted}
+    order_targets = {key for key,ids in groups.items() if len(ids) == 1 and catalogue[ids[0]]['rarity'] == 'S'} if record_first_order else set()
     found = {}
-    if not waiting:
+    if not waiting and not order_targets:
         return found
     for sample, repeat in observations:
         key = attribute_key(sample, 1, names, reverse)
         if key not in groups:
             raise InventoryUnavailable('游戏里有国服导出未收录的盘，请刷新仓库导出')
+        if order is not None and len(groups[key]) == 1:
+            uid = groups[key][0]
+            if (sample.get('observedGrade') == catalogue[uid]['rarity'] and sample.get('observedValues') and
+                    sample['observedValues'] == catalogue[uid].get('observedValues')):
+                order.see(sample, uid)
+                order_targets.discard(key)
         if key not in waiting:
+            if not waiting and not order_targets:
+                return found
             continue
         uid = waiting[key]
         row = bind_observations(catalogue[uid], [sample], 1, 1)
@@ -115,8 +133,10 @@ def find_readings(exported, names, groups, wanted, observations):
             raise ValueError('游戏里的锁定状态与国服导出不同，请刷新仓库导出')
         found[uid] = (row, sample)
         del waiting[key]
-        if not waiting:
+        if not waiting and not order_targets:
             return found
+    if not waiting:
+        return found
     raise ValueError(f'还有 {len(waiting)} 张盘没在仓库里对上，请刷新国服导出后再整理')
 
 
@@ -136,35 +156,43 @@ def daily(app, scanner, exported, planned, pinned, wiki, field):
     from time import time
 
     baseline = read(app.root/FILE, {})
-    if (baseline.get('version') != 1 or baseline.get('file') != exported['exportFile']
-            or baseline.get('account') != app.root.name or not baseline.get('facts')):
-        return None   # The normal full scan seeds the first checkpoint.
+    first_pass = (baseline.get('version') != 1 or baseline.get('file') != exported['exportFile']
+                  or baseline.get('account') != app.root.name or not baseline.get('facts'))
     started = time()
     observe_native(app.root, app.account, native_run(Path(os_utils.get_work_dir()), app.account), started)
-    if needs_review(read(app.root/'dismantle-result.json', {})):
-        return None   # The pending receipt may require a fresh full observation.
+    prior_batch = read(app.root/'dismantle-result.json', {})
+    if needs_review(prior_batch):
+        if first_pass:
+            return None
+        if prior_batch.get('afterInventory') and not prior_batch.get('firstUidObservation'):
+            raise ValueError('请在「库存记录」核对上次拆解')
+        if not prior_batch.get('afterInventory'):
+            raise InventoryUnavailable('等待拆解后的国服库存更新')
     if any(e.get('state') in ('pending', 'released') for e in read(app.root/'markers.json', {}).values()):
         return None
     check_file(exported)
-    if exported['exportWrittenNs'] <= baseline['finished']:
+    if not first_pass and exported['exportWrittenNs'] <= baseline['finished']:
         raise InventoryUnavailable('国服仓库导出还没有更新')
     cfg, rules, _warnings = pinned
     dictionary = read(wiki, {})
     names = equipment_names(dictionary) | cfg.get('aliases', {})
     upcoming = following_native(app.ctx, app.account, app.group)
     native = upcoming[0] if upcoming else None
-    previous = baseline['facts']
-    groups, dirty = worklist(exported, planned, previous, names, native)
+    previous = {} if first_pass else baseline['facts']
+    groups, dirty = worklist(exported, planned, previous, names, native, first_pass=first_pass)
     pending = pending_trial(app.root)
     if pending:
-        if pending.get('uid') not in {d['id'] for d in exported['discs']}:
+        if first_pass or pending.get('uid') not in {d['id'] for d in exported['discs']}:
             return None
         dirty.add(pending['uid'])
     assigned = {uid for result in planned['assignments'].values() for uid in result.get('ids', ())}
-    dirty.update(uid for uid in assigned if previous.get(uid, {}).get('disc', {}).get('markState') == 'marked')
+    dirty.update(uid for uid in assigned if previous.get(uid, {}).get('disc', {}).get('markState') != 'unmarked')
     copies = {uid for ids in groups.values() if len(ids) > 1 for uid in ids}
-    if native and native.dismantle_abandon and any(d['id'] in copies and not d['lock'] for d in exported['discs']):
-        return None   # Native may select a lookalike for which no UI control can be bound to a UID.
+    if prior_batch.get('firstUidObservation') and needs_review(prior_batch):
+        survivors = {e['uid'] for e in prior_batch['entries']} & {d['id'] for d in exported['discs']}
+        if survivors & copies:
+            raise ValueError('上批同属性盘仍在仓库，请在「库存记录」核对')
+        dirty.update(survivors)
     total = len(exported['discs'])
 
     def guard():
@@ -176,9 +204,13 @@ def daily(app, scanner, exported, planned, pinned, wiki, field):
 
     found = {}
 
-    def inspect(wanted):
+    def inspect(wanted, *, record_first_order=False):
+        from .disc_order import PageRanks, remember_ranks
+        order = PageRanks(total)
         with closing(warehouse_observations(scanner, total, guard, by_acquisition=True)) as observations:
-            found.update(find_readings(exported, names, groups, wanted, observations))
+            found.update(find_readings(exported, names, groups, wanted, observations, order=order, record_first_order=record_first_order))
+        guard()
+        remember_ranks(app.root, exported, order.ranks())
 
     def decision_view():
         discs = []
@@ -186,7 +218,7 @@ def daily(app, scanner, exported, planned, pinned, wiki, field):
             uid = disc['id']
             if uid in found:
                 discs.append(found[uid][0])
-            elif uid in copies:
+            elif uid in copies or previous.get(uid, {}).get('disc', {}).get('markState', 'unknown') == 'unknown':
                 discs.append(bind_observations(disc, (), 1, 1))
             else:
                 discs.append(previous[uid]['disc'])
@@ -205,7 +237,11 @@ def daily(app, scanner, exported, planned, pinned, wiki, field):
         scanner._ensure_screen_areas()
         if enter_warehouse(scanner, guard) != total:
             raise InventoryUnavailable('仓库盘数有变化，请刷新国服仓库导出')
-    inspect(dirty)
+    inspect(dirty, record_first_order=first_pass)
+    if needs_review(prior_batch) and prior_batch.get('firstUidObservation'):
+        reconcile(app.root, decision_view())
+        if needs_review(read(app.root/'dismantle-result.json')):
+            raise ValueError('请在「库存记录」核对上次拆解')
     recovered = None
     if pending:
         recovered = recover(app.root, pending, decision_view())
@@ -234,7 +270,9 @@ def daily(app, scanner, exported, planned, pinned, wiki, field):
         if report['issues']:
             raise ValueError('配装待复核 · '+' / '.join(report['issues']))
         # Live wearer/mark observations can change the spare ranking for an old disc.
-        extra = {r['exportUid'] for r in report['discs'] if intent(r) != previous.get(r['exportUid'], {}).get('action')}
+        extra = {r['exportUid'] for r in report['discs'] if r['exportUid'] in previous
+                 and previous[r['exportUid']]['disc']['markState'] != 'unknown'
+                 and intent(r) != previous[r['exportUid']]['action']}
         # Before giving up an old spare verify all replacement spares in its group, even old ones.
         retiring = {(r['set'], r['slot'], r['main']) for r in report['discs']
                     if cfg.get('rotateSpareLocks') and r['managedSpareLock'] and r['decision'] == '弃置候选'}
@@ -267,7 +305,10 @@ def daily(app, scanner, exported, planned, pinned, wiki, field):
             checkpoint(app.root, exported, planned, view, report, marker)
         return result
     checkpoint(app.root, exported, planned, view, report, marker)
-    message = f'增量整理完成 · 已核对 {len(found)} 张盘' if found else '驱动盘没有变化'
+    if first_pass:
+        message = f'首次整理完成 · 国服库存 {total} 张，游戏核对 {len(found)} 张'
+    else:
+        message = f'增量整理完成 · 已核对 {len(found)} 张盘' if found else '驱动盘没有变化'
     if recovered:
         message += ' / ' + recovered
     elif cfg.get('autoUpgrade'):

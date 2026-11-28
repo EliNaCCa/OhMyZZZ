@@ -181,6 +181,8 @@ def refresh(root, check_account, path=None, *, showcase_uid='', wiki=None):
         raise ValueError('读取器正在更新库存，请稍后刷新')
     if (before == after and same_export(path, original, previous)
             and previous.get('showcase') == snapshot.get('showcase')):
+        from .disc_order import sync
+        sync(root, previous)
         (root / FOLDER_FILE).unlink(missing_ok=True)
         audit_export(root, previous, started)
         return '驱动盘没有变化'
@@ -194,6 +196,10 @@ def refresh(root, check_account, path=None, *, showcase_uid='', wiki=None):
             message = change if message == '驱动盘没有变化' else message + '，' + change
     snapshot.update(exportFile=str(path), exportWrittenNs=written_ns, exportStamp=file_stamp(original), lastChange=message)
     save(root / FILE, snapshot)
+    from .disc_order import bind_scan, sync
+    from .store import config, equipment_names
+    sync(root, snapshot)
+    bind_scan(root, snapshot, equipment_names(wiki or {}) | config(root).get('aliases', {}))
     (root / FOLDER_FILE).unlink(missing_ok=True)
     audit_export(root, snapshot, started)
     return message

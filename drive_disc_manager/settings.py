@@ -75,6 +75,7 @@ class ManagerInterface(BaseInterface):
         self.probe_button = self.menu_action(actions, '读一张盘', self.start_probe)
         self.recent_button = self.menu_action(actions, '看最近获得的盘', lambda:self.start_probe(recent_count=3))
         self.recent_result = self.menu_action(actions, '上次读到的新盘', self.show_recent)
+        self.order_action = self.menu_action(actions, '驱动盘顺序', self.show_disc_order)
         actions.addSeparator()
         self.pin_button = self.menu_action(actions, '切换个人保护', self.pin)
         self.quota_button = self.menu_action(actions, '同类备用数量', self.set_quota)
@@ -414,6 +415,28 @@ class ManagerInterface(BaseInterface):
         table.horizontalHeader().setStretchLastSection(True)
         return table
 
+    def show_disc_order(self):
+        from .disc_order import FILE
+        state = read(self.root/FILE, {})
+        dialog = QDialog(self)
+        dialog.setWindowTitle('驱动盘顺序')
+        dialog.resize(650, 430)
+        layout = QVBoxLayout(dialog)
+        table = self.grid(['顺序号', '驱动盘', '号位', '等级', '库存'])
+        layout.addWidget(table)
+        rows = []
+        for uid, item in state.get('live', {}).items():
+            rows.append((uid, item, '在库'))
+        for item in state.get('removed', ()):
+            rank = item.get('lastRank')
+            rows.append((item['uid'], item, f'已离库 · 上次第 {rank} 张' if rank else '已离库'))
+        rows.sort(key=lambda r:(r[1]['end'], r[1].get('number', 0)), reverse=True)
+        self.fill(table, [(str(i.get('number', '待核对')), self.set_names.get(i['set'], i['set']), i['slot'],
+                           f"+{i['level']}", state_label) for _,i,state_label in rows])
+        for index, (uid, _, _) in enumerate(rows):
+            table.item(index, 0).setToolTip(f'游戏内编号 {uid}')
+        dialog.exec()
+
     def refresh_salvage(self, *_):
         if hasattr(self, 'root') and self.tabs.currentWidget() is self.salvage_page:
             from .salvage_page import latest_batch
@@ -599,6 +622,7 @@ class ManagerInterface(BaseInterface):
         self.reader_open.setVisible(self.cfg['inventorySource'] == 'network')
         source = self.cfg['inventorySource']
         cn_export = source == 'cn_export'
+        self.order_action.setVisible(cn_export)
         self.export_folder.setVisible(cn_export)
         self.export_folder.setEnabled(self.preview_job is None)
         self.showcase_button.setText('更改展柜 UID' if self.cfg.get('showcaseUid') else '绑定角色展柜')
