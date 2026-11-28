@@ -76,6 +76,29 @@ def label_maps(parser):
     return main, {compact(k):v for k,v in parser.SUB_STAT_MAP.items()}
 
 
+def main_stat_label(items, parser):
+    """The stat named on the game's own main-stat line, or None when that line cannot be read."""
+    main_map, _ = label_maps(parser)
+    entries = []
+    for item in items:
+        pos = item.get('position')
+        if not pos or len(pos) != 4:
+            return None
+        left, top, right, bottom = map(int, pos)
+        entries.append(((top+bottom)/2, left, right, compact(item['text']), item.get('confidence', 0)))
+    titles = [y for y, _, _, t, c in entries if t in ('主属性', 'mainstat') and c >= .85]
+    headers = [y for y, _, _, t, c in entries if t in ('副属性', 'sub-stats', 'substats') and c >= .85]
+    if len(titles) != 1 or len(headers) != 1 or titles[0] >= headers[0]:
+        return None
+    below = sorted(e for e in entries if titles[0] < e[0] < headers[0] and e[4] >= .85)
+    if not below:
+        return None
+    row = [e for e in below if e[0] - below[0][0] <= 12]
+    label = min(row, key=lambda e: e[1])
+    match = re.fullmatch(r'(.+?)(?:[+][1-5])?', label[3])
+    return main_map.get(match[1]) if match else None
+
+
 def measure(items, disc, parser):
     from .optimizer import STATS
     if not valid_slot_main(disc):

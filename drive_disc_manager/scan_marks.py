@@ -47,6 +47,15 @@ class MarkReader:
         result = self.parser.parse_ocr_result(parsed_items, None)
         if result is None:
             return None
+        from .stat_reading import main_stat_label, valid_slot_main
+        # The scanner's parser names a main stat by substring and falls back to HP% when nothing matches,
+        # so a stat it has no entry for (wind damage on slot 5) is reported as HP%. It then drops any substat
+        # equal to that main stat. Trust the game's own main-stat line when it clearly names a stat that fits
+        # the slot, and read the substats again under the corrected name. The value check below still applies.
+        shown = main_stat_label(items, self.parser)
+        if shown and shown != result['mainStatKey'] and valid_slot_main(dict(result, mainStatKey=shown)):
+            result['mainStatKey'] = shown
+            result['substats'] = self.parser._parse_substats(parsed_items, shown)
         from .disc_owner import read_owner
         result['ownerState'], result['location'] = read_owner(image, getattr(self.parser, 'icon_matcher', None))
         mark, lock = read_controls(self.ocr, self.footer, self.controls)
