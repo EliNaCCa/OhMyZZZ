@@ -9,9 +9,7 @@ from .reserve_policy import development, matching_rules, normalized_rule, upgrad
 from .stat_reading import checked_values, format_stats
 from .potential import verdict
 from .store import config, digest, equipment_keys, fingerprint, read, save
-
-
-RECEIPT = 'upgrade-result.json'
+from .trial_history import RECEIPT, submit_trial
 
 
 def same_family(d, before):
@@ -133,7 +131,8 @@ def finalize(root, receipt, after, *, copy_verified=False):
     else:
         change = '新增' + format_stats({stat:new_subs[stat]})
     note = f"{label} +{before['level']} → +{after['level']} · {change} · {decision}"
-    save(root/RECEIPT, dict(receipt, status='verified', after=after, nextUpgrade=advice, outgrown=reason, note=note))
+    save(root/RECEIPT, dict(receipt, status='verified', after=after, rollChange=change,
+                            nextUpgrade=advice, outgrown=reason, decision=decision, note=note))
     return note
 
 
@@ -196,7 +195,7 @@ def pending_trial(root):
     return receipt if receipt.get('status') == 'pending' else None
 
 
-def execute(root, ui, row, before, snapshot, cfg, names, batch=None):
+def execute(root, ui, row, before, snapshot, cfg, names, batch=None, *, run_started_ns=None):
     target = row['upgrade']['target']
     if (not eligible(row) or not bag_disc(before) or before['level'] >= 15 or fingerprint(before) != row['fp']
             or before['observedValues'] != row['observedValues'] or target != 3 * (before['level'] // 3 + 1)):
@@ -219,7 +218,8 @@ def execute(root, ui, row, before, snapshot, cfg, names, batch=None):
         receipt.update(exportFile=snapshot['exportFile'], exportWrittenNs=snapshot['exportWrittenNs'])
     def record_submission():
         receipt['submittedNs'] = time_ns()
-        save(root/RECEIPT, receipt)
+        receipt['runStartedNs'] = run_started_ns or receipt['submittedNs']
+        submit_trial(root, receipt)
     ui.confirm(current, goal, before_click=record_submission)
     return finalize(root, receipt, ui.read_after())
 
@@ -303,6 +303,7 @@ def run_trials(app, scanner, report, snapshot, cfg, names, *, guard_export=None,
         excluded = {e['fp'] for e in batch['entries']}
     touched = Counter()
     notes = []
+    run_started_ns = time_ns()
     reverse = equipment_keys(names)
     limits = dict(cfg, reserve_rules=[normalized_rule(rule, reverse) for rule in cfg['reserve_rules']])
     for _ in range(limit):
@@ -342,7 +343,7 @@ def run_trials(app, scanner, report, snapshot, cfg, names, *, guard_export=None,
         ident = picked['id']
         view = dict(snapshot, discs=list(discs.values()))
         ui = UpgradeUI(scanner, guard, len(discs), names)
-        execute(app.root, ui, picked, before, view, cfg, names, batch_id)
+        execute(app.root, ui, picked, before, view, cfg, names, batch_id, run_started_ns=run_started_ns)
         receipt = read(app.root/RECEIPT)
         if cfg['applyMarkers'] and receipt.get('outgrown'):
             mark_outgrown(app, scanner, dict(report, discs=list(rows.values())), rows[ident], receipt, guard, batch_id)

@@ -29,6 +29,10 @@ class SalvagePage(QWidget):
         layout.addWidget(self.grid, 1)
         self.close_batch = PushButton('我已在游戏中核对'); layout.addWidget(self.close_batch, 0, Qt.AlignmentFlag.AlignRight)
         self.close_batch.clicked.connect(self.finish)
+        self.trials_label = SubtitleLabel('上次试强化'); layout.addWidget(self.trials_label)
+        self.trials = table(['驱动盘', '等级', '词条变化', '结果']); layout.addWidget(self.trials)
+        self.trials_label.hide()
+        self.trials.hide()
 
     def present(self, account, names, last):
         batch = last.get('batch')
@@ -38,6 +42,32 @@ class SalvagePage(QWidget):
         self.account, self.batch = account, batch
         self.names, self.last = names, last
         self.render()
+        from .trial_history import latest_trials
+        rows = latest_trials(account)
+        self.title.setVisible(bool(last) or not rows)
+        self.show_trials(rows)
+
+    def show_trials(self, rows):
+        self.trials_label.setVisible(bool(rows))
+        self.trials.setVisible(bool(rows))
+        formatted = []
+        for row in rows:
+            level = f"+{row['before']}"
+            if row['status'] == 'pending':
+                result = f"待核对是否升到 +{row['target']}"
+            elif row['status'] == 'unchanged':
+                result = '仍是原等级'
+            else:
+                level += f" → +{row['level']}"
+                result = '已标记弃置' if row['marked'] else row['decision'] or row['note']
+            formatted.append((row['disc'], level, row['change'] or '—', result))
+        self.fill(self.trials, formatted)
+        if rows:
+            stamp = datetime.fromtimestamp(rows[0]['submittedNs'] / 1e9).strftime('%m-%d %H:%M')
+            self.trials_label.setText('上次试强化 · ' + stamp)
+            self.trials.resizeColumnsToContents()
+            height = self.trials.horizontalHeader().height() + min(4, len(rows)) * self.trials.verticalHeader().defaultSectionSize()
+            self.trials.setFixedHeight(height + 5)
 
     def finish(self):
         if needs_review(self.last) and self.last.get('afterInventory'):

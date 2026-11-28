@@ -257,6 +257,10 @@ with TemporaryDirectory() as tmp:
         assert batch['beforeCounts'] == {fingerprint(d):1 for d in bag.values()}
         assert batch['beforeUids'] == {k:uid_item(d) for k,d in bag.items()} and len(batch['upgradeMoves'])==3
         last = read(root/RECEIPT); upgrade.finalize(root, last, last['after'])
+        from drive_disc_manager.trial_history import latest_trials
+        history = latest_trials(root)
+        assert [(step['before'], step['level']) for step in history] == [(0,3), (0,3), (3,6)]
+        assert [step['change'] for step in history] == ['新增暴击伤害 4.8%', '新增暴击率 2.4%', '暴击伤害 4.8% → 9.6%']
         assert '暴击伤害 4.8% → 9.6%' in last['note']
         assert read(root/'dismantle-preview.json') == batch
     print('PASS two trials, updated spare floors, three-tier budget, hand lock and replayable UID ledger')
