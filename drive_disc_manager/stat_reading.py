@@ -65,10 +65,14 @@ def valid_slot_main(disc):
     return disc['mainStatKey'] in SLOT_MAIN.get(str(disc['slotKey']), ())
 
 
+ELEMENT_LABELS = [('物理','physical'),('火','fire'),('冰','ice'),('电','electric'),('以太','ether'),('风','wind'),('流光','lumiflux')]
+
+
 def label_maps(parser):
     main = {compact(k):v for k,v in parser.MAIN_STAT_MAP.items()}
-    main.update({k+'属性伤害加成':v+'_dmg_' for k,v in
-                 [('物理','physical'),('火','fire'),('冰','ice'),('电','electric'),('以太','ether'),('风','wind')]})
+    # The game prints "以太伤害加成" on slot 5. The scanner's own parser only
+    # substring-matches these labels, so it recognises a disc this check must also accept.
+    main.update({k+s:v+'_dmg_' for k, v in ELEMENT_LABELS for s in ('属性伤害加成', '伤害加成')})
     return main, {compact(k):v for k,v in parser.SUB_STAT_MAP.items()}
 
 
@@ -110,8 +114,11 @@ def measure(items, disc, parser):
             maximum = STATS[key][2]
             if main or upgrade or key != disc['mainStatKey'] or maximum is None or qty > maximum:
                 return None
-            if disc['level'] == 15 and disc['rarity'] == 'S' and qty != maximum:
-                return None
+            if disc['rarity'] == 'S':
+                # Levels are not always multiples of three: a disc may be raised one level at a time.
+                from .optimizer import exported_s_main
+                if qty != Decimal(str(exported_s_main(key, disc['level']))):
+                    return None
             main[key] = float(qty)
         else:
             rolls = 1 + upgrade
