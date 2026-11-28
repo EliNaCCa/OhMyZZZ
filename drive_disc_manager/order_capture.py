@@ -88,7 +88,10 @@ def capture(scanner, total, guard, run, root, seed):
     if scanner.ctx.screen_loader.get_area('仓库-驱动仓库', '驱动盘属性') is None:
         raise ValueError('扫描器缺少驱动盘属性区域')
     rows = dict(seed)
-    holes = set(range(1, total+1)) - set(rows)
+    # A position is a hole until a reading of it has checked values. One filed by its lines alone, because a
+    # value could not be read with enough confidence, is tried again on every pass: the order record is
+    # complete as far as placing discs goes, but the disc itself is not verified.
+    holes = {rank for rank in range(1, total+1) if rank not in rows or not usable(rows[rank])}
     images = run/'panels'
     images.mkdir(exist_ok=True)
     unread = set()
@@ -151,6 +154,9 @@ def capture(scanner, total, guard, run, root, seed):
                 # The list did not move, yet this screen was not the end of the warehouse.
                 raise ValueError(f'仓库列表已不再滚动，还有 {len(holes)} 张没读到')
             previous = start
+            # Which holes this screen shows. If reading them again settles none of them, another pass over this
+            # screen would do no better, so the pass ends and reports what is still unverified.
+            on_screen = [offset for offset, _point in cells if start + offset + 1 in holes and 1 <= start + offset + 1 <= total]
             for offset, point in cells:
                 rank = start + offset + 1
                 if not 1 <= rank <= total or rank not in holes:
@@ -173,14 +179,27 @@ def capture(scanner, total, guard, run, root, seed):
                     # Every stat is named, so the disc can be matched against the network inventory by its lines;
                     # only a value was read with too little confidence to check against the game's legal values.
                     # File it with that value left unverified: later checks against the physical disc reject it.
+                    # It stays a hole, to be read again on the next pass until its values are checked.
                     rows[rank] = disc
-                    holes.discard(rank)
                     unread.add(rank)
                 else:
                     # Nothing usable was read from this slot. It stays a hole for the next pass, and is reported
                     # even when no panel could be saved (the card's selection was not confirmed).
                     unread.add(rank)
             persist(page)
+            if on_screen and all(start + offset + 1 in holes for offset in on_screen):
+                # Every hole this screen shows was read and none of them now has checked values, so going over
+                # this screen again would not help. Say what is still open: discs named in full but without a
+                # checked value, and slots that gave nothing readable.
+                still = [start + offset + 1 for offset in on_screen]
+                named = sum(1 for rank in still if rank in rows)
+                parts = []
+                if named:
+                    parts.append(f'{named} 张读出了词条但数值未核对')
+                if len(still) - named:
+                    parts.append(f'{len(still) - named} 张没有读出可用内容')
+                raise ValueError(f'第 {page+1} 屏再读也没有进展（{"，".join(parts)}），已停下；'
+                                 f'全仓还有 {len(holes)} 张待读')
             if start + 36 >= total or not holes:
                 frame()
                 return finish_scan(root, run, total, rows)

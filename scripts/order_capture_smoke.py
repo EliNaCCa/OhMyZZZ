@@ -80,6 +80,9 @@ def resume(total, discs, seed, unreadable=(), blanks=(), stuck_after=None, invis
     with TemporaryDirectory() as tmp:
         run_dir, root = Path(tmp)/'run', Path(tmp)/'account'/'1'
         run_dir.mkdir()                     # the launcher creates the run folder before the pass starts
+        def filed_so_far():
+            saved = run_dir/'progress.json'  # what the pass had filed, whether it finished or stopped
+            return json.loads(saved.read_text('utf-8')) if saved.is_file() else {}
         with patch.object(order_capture, 'read_disc', read_disc), \
              patch('drive_disc_manager.order_capture.cv2.imwrite', lambda path, image: True), \
              patch('drive_disc_manager.warehouse_sort.newest_first', lambda scanner, total, guard: True), \
@@ -88,9 +91,12 @@ def resume(total, discs, seed, unreadable=(), blanks=(), stuck_after=None, invis
                    lambda frame: (8, 5, 5, 18) if state['top'] == 0 else (8, 60, 5, 18)), \
              patch('drive_disc_manager.manual_equip.guarded_grid',
                    lambda grid, guard: _identity(grid, scanner, controller=scanner.ctx.controller)):
-            result = order_capture.capture(scanner, total, lambda: None, run_dir, root, seed)
-        saved = run_dir/'progress.json'
-        progress = json.loads(saved.read_text('utf-8')) if saved.is_file() else {}
+            try:
+                result = order_capture.capture(scanner, total, lambda: None, run_dir, root, seed)
+            except ValueError as exc:
+                exc.filed = filed_so_far()    # let a test look at what a stopped pass had filed
+                raise
+        progress = filed_so_far()
     return result, state, progress
 
 
@@ -157,7 +163,7 @@ def distinct(discs):
     return len({fingerprint(d) for d in discs.values()}) == len(discs)
 
 
-def filed(rows, discs, total):
+def placed_right(rows, discs, total):
     """True when every position holds exactly the disc the simulated warehouse has there."""
     from drive_disc_manager.store import fingerprint
     return set(rows) == set(range(1, total + 1)) and all(fingerprint(rows[r]) == fingerprint(discs[r]) for r in range(1, total + 1))
@@ -174,7 +180,7 @@ assert result['status'] == 'complete' and len(rows) == total, result
 screens = state['turns'] + 1
 # One disc is enough to locate a screen whose discs are all distinct: the holes plus one reading per screen.
 assert len(state['clicks']) == len(holes) + screens, f'{len(state["clicks"])} clicks for {len(holes)} holes on {screens} screens'
-assert filed(rows, discs, total), 'a reading was filed under the wrong position'
+assert placed_right(rows, discs, total), 'a reading was filed under the wrong position'
 print(f'PASS  {len(holes)} holes read once each, {total} positions filed, {len(state["clicks"])} clicks on {screens} screens')
 
 # 1b) Two identical discs in the top row: one reading cannot place the screen, so a second is read.
@@ -185,31 +191,54 @@ for rank in (28, 32):                       # both on the top row of the second 
     discs[rank]['substats'] = [dict(s) for s in discs[29]['substats']]
 result, state, progress = resume(total, discs, {r: d for r, d in discs.items() if r != 40})
 rows = {int(k): v for k, v in progress['rows'].items()}
-assert result['status'] == 'complete' and filed(rows, discs, total), 'misplaced with duplicate discs'
+assert result['status'] == 'complete' and placed_right(rows, discs, total), 'misplaced with duplicate discs'
 print('PASS  duplicate discs in the top row are resolved by a second reading, nothing misplaced')
 
 # 2) A hole whose every line is named but whose values could not be checked is filed for the order record
-#    with its values left empty and reported, so it can be matched against the network inventory and is still
-#    refused by any later check against the physical disc.
+#    with its values left empty, so it can be matched against the network inventory. It does not count as read:
+#    it stays a hole, and when reading it again settles nothing the pass stops and says so instead of
+#    reporting the warehouse complete. Every later check against the physical disc refuses it.
 total = 40
 discs = fixture(total, REAL)
-result, state, progress = resume(total, discs, {r: d for r, d in discs.items() if r != 30}, unreadable={30})
-rows = {int(k): v for k, v in progress['rows'].items()}
-assert result['status'] == 'complete' and len(rows) == total, (result, len(rows))
-assert 30 in rows and rows[30]['observedValues'] is None and progress['unread'] == [30], (progress.get('unread'), rows.get(30))
+try:
+    resume(total, discs, {r: d for r, d in discs.items() if r != 30}, unreadable={30})
+except ValueError as exc:
+    assert '数值未核对' in str(exc) and '1 张' in str(exc) and '待读 1' not in str(exc), exc
+    saved = exc.filed
+    print('PASS  a disc named in full whose value stays unchecked stops the pass and is reported · ' + str(exc))
+else:
+    raise AssertionError('a disc with an unchecked value was reported as read')
+rows = {int(k): v for k, v in saved['rows'].items()}
+assert len(rows) == total and 30 in rows and rows[30]['observedValues'] is None and saved['unread'] == [30], (len(rows), saved.get('unread'))
 assert all(rows[r].get('observedValues') for r in rows if r != 30), 'a checked reading lost its values'
 assert [s['key'] for s in rows[30]['substats']] == [s['key'] for s in discs[30]['substats']]
 from drive_disc_manager.stat_reading import checked_values
 assert checked_values(rows[30], 1) is None, 'an unverified reading passed the value check'
-print('PASS  a hole named in full but with an unchecked value is filed for the order, its value left empty')
+print('PASS  before stopping it filed that disc by its lines at its position, values empty')
+
+# 2c) A disc filed unchecked by an earlier pass is tried again, and once its values read the pass completes.
+total = 40
+discs = fixture(total, REAL)
+seed = dict(discs)
+seed[30] = dict(discs[30], observedValues=None)            # filed unchecked by an earlier pass
+result, state, progress = resume(total, discs, seed)
+rows = {int(k): v for k, v in progress['rows'].items()}
+assert result['status'] == 'complete' and placed_right(rows, discs, total) and rows[30].get('observedValues'), result
+print('PASS  a disc filed unchecked by an earlier pass is read again and completed once its values come')
 
 # 2b) A hole whose lines themselves cannot be read is never filed.
 total = 40
 discs = fixture(total, REAL)
-result, state, progress = resume(total, discs, {r: d for r, d in discs.items() if r != 30}, invisible={30})
-rows = {int(k): v for k, v in progress['rows'].items()}
-assert result['status'] == 'partial' and 30 not in rows and progress['unread'] == [30], (result, progress.get('unread'))
-print('PASS  a hole whose lines cannot be read is reported and is not filed')
+try:
+    resume(total, discs, {r: d for r, d in discs.items() if r != 30}, invisible={30})
+except ValueError as exc:
+    assert '1 张没有读出可用内容' in str(exc) and '数值未核对' not in str(exc), exc
+    saved = exc.filed
+    print('PASS  a slot that gives nothing readable stops the pass and is reported as such · ' + str(exc))
+else:
+    raise AssertionError('a slot that gave nothing readable was reported as read')
+assert 30 not in {int(k) for k in saved['rows']} and saved['unread'] == [30], saved.get('unread')
+print('PASS  nothing is filed for a slot whose lines could not be read')
 
 # 3) A screen where no disc can be matched: stop, do not guess. Nothing on the top row of the very first
 #    screen gives a reading, so there is nothing known to place it by.
@@ -218,12 +247,10 @@ discs = fixture(total, REAL)
 expect_stop('a screen with nothing to place it by stops the pass', '没有对上已知的盘', total, discs,
             {r: d for r, d in discs.items() if r > 9}, invisible=set(range(1, 10)))
 
-# 3b) The same on a later screen. Screens overlap by one row, and a hole read on one screen can place the next,
-#     so the screen that must stop is one whose every position gives no reading at all.
-total = 120
-discs = fixture(total, REAL)
-expect_stop('a later screen with nothing known stops the pass', '没有对上已知的盘', total, discs,
-            {r: d for r, d in discs.items() if not 28 <= r <= 91}, invisible=set(range(28, 92)))
+# (No separate case for a later screen that cannot be placed. Screens overlap by one row, so whatever the
+#  previous screen read at its bottom is the next screen's top row and places it. A later screen can only fail
+#  to be placed when its top row gave nothing readable on the previous screen too, and case 2b already stops
+#  the pass there, one screen earlier.)
 
 # 3c) A disc named in full but unchecked still places a screen. Screens overlap by one row: the last row of
 #     one screen is the first row of the next. Positions 28-36 are filed unchecked (every line named, no value),
@@ -235,9 +262,9 @@ seed = {r: d for r, d in discs.items() if r <= 9 or 37 <= r <= 63}
 seed.update(unchecked)
 result, state, progress = resume(total, discs, seed)
 rows = {int(k): v for k, v in progress['rows'].items()}
-assert result['status'] == 'complete' and filed(rows, discs, total), 'a screen was not placed by unchecked discs'
-assert all(rows[r]['observedValues'] is None for r in range(28, 37)), 'an unchecked seed disc gained a value it never read'
-print('PASS  discs named in full but unchecked still place the next screen')
+assert result['status'] == 'complete' and placed_right(rows, discs, total), 'a screen was not placed by unchecked discs'
+assert all(rows[r].get('observedValues') for r in range(28, 37)), 'an unchecked disc was not read again'
+print('PASS  discs named in full but unchecked place the next screen, and are read again until their values come')
 
 # 4) The list stops moving before the last hole: stop, do not loop.
 total = 200
@@ -245,33 +272,52 @@ discs = fixture(total, REAL)
 expect_stop('a list that stops moving ends the pass', '不再滚动', total, discs,
             {r: d for r, d in discs.items() if r != 200}, stuck_after=3)
 
-# 5) Empty cells on screen are skipped: nothing is filed for the positions behind them, and they are reported
-#    as unread even though no panel could be saved for them.
+# 5) Empty cells on screen are skipped: nothing is filed for the positions behind them. Reading them again
+#    cannot help, so the pass stops on that screen and reports them, with no panel saved for them.
 total = 40
 discs = fixture(total, REAL)
-result, state, progress = resume(total, discs, {r: d for r, d in discs.items() if r not in (10, 11)}, blanks=(9, 10))
-rows = {int(k): v for k, v in progress['rows'].items()}
-assert result['status'] == 'partial' and sorted(progress['unread']) == [10, 11] and not {10, 11} & set(rows), progress.get('unread')
-print('PASS  empty cells are skipped; the holes they hide stay unread, are reported and are not filed')
+try:
+    resume(total, discs, {r: d for r, d in discs.items() if r not in (10, 11)}, blanks=(9, 10))
+except ValueError as exc:
+    assert '2 张没有读出可用内容' in str(exc), exc
+    saved = exc.filed
+    print('PASS  empty cells are skipped and reported · ' + str(exc))
+else:
+    raise AssertionError('empty cells were reported as read')
+assert not {10, 11} & {int(k) for k in saved['rows']} and sorted(saved['unread']) == [10, 11], saved.get('unread')
+print('PASS  nothing is filed for the positions behind empty cells')
 
-# 6) The real warehouse: the readings filed so far are the known discs, the positions still missing are holes.
-#    Each hole is filled with a disc unlike any other in the warehouse, built from a real reading.
-real_holes = sorted(set(range(1, REAL_TOTAL + 1)) - set(REAL))
-filled = dict(REAL)
-if real_holes:
-    from drive_disc_manager.store import fingerprint
-    fillers = fixture(len(real_holes) + len(real_holes), REAL)
+# 6) The real warehouse, replayed against itself: the filed readings are the seed. Positions with no reading at
+#    all get a disc unlike any other in the warehouse; positions filed without checked values keep their own disc
+#    and read it again, as a live pass would. Everything must end up placed right with values everywhere.
+from drive_disc_manager.order_capture import usable
+from drive_disc_manager.store import fingerprint
+missing = sorted(r for r in range(1, REAL_TOTAL + 1) if r not in REAL)
+unchecked = sorted(r for r, d in REAL.items() if not usable(d))
+truth = dict(REAL)
+if missing:
+    # The value of a disc filed unchecked is not known here, so the simulated warehouse shows it with values.
+    fillers = fixture(len(missing) + len(missing), REAL)
     taken = {fingerprint(d) for d in REAL.values()}
     spare = [d for d in fillers.values() if fingerprint(d) not in taken]
-    assert len(spare) >= len(real_holes), 'not enough distinct discs to fill the real holes'
-    for rank, disc in zip(real_holes, spare):
-        filled[rank] = disc
-    result, state, progress = resume(REAL_TOTAL, filled, REAL)
-    rows = {int(k): v for k, v in progress['rows'].items()}
-    assert result['status'] == 'complete' and filed(rows, filled, REAL_TOTAL), 'a real hole was filed with the wrong disc'
-    screens = state['turns'] + 1
-    print(f'PASS  real warehouse: {len(REAL)} known discs, {len(real_holes)} holes filled, '
-          f'{len(state["clicks"])} clicks on {screens} screens')
-else:
-    print(f'INFO  real warehouse: all {len(REAL)} positions already read; nothing to fill')
+    assert len(spare) >= len(missing), 'not enough distinct discs to fill the real holes'
+    for rank, disc in zip(missing, spare):
+        truth[rank] = disc
+for rank in unchecked:
+    # Give the simulated warehouse well-formed values for that disc. It must be a copy: the seed keeps the
+    # disc as filed, without values, or there would be nothing left for the pass to read.
+    source = REAL[rank]
+    from drive_disc_manager.optimizer import STATS, exported_s_main
+    truth[rank] = dict(source, observedValues=dict(
+        main={source['mainStatKey']: float(exported_s_main(source['mainStatKey'], source['level']))},
+        subs={line['key']: float(STATS[line['key']][1] * line['upgrades']) for line in source['substats']}))
+assert [r for r, d in REAL.items() if not usable(d)] == unchecked, 'the seed was altered'
+result, state, progress = resume(REAL_TOTAL, truth, REAL)
+rows = {int(k): v for k, v in progress['rows'].items()}
+assert result['status'] == 'complete' and placed_right(rows, truth, REAL_TOTAL), 'a real disc was filed under the wrong position'
+assert all(usable(r) for r in rows.values()), 'a position is still without checked values'
+assert not progress.get('unread'), progress.get('unread')
+screens = state['turns'] + 1
+print(f'PASS  real warehouse: {len(REAL)} filed readings as the seed, {len(missing)} positions without a reading, '
+      f'{len(unchecked)} filed without checked values, all {REAL_TOTAL} placed with values, {len(state["clicks"])} clicks on {screens} screens')
 print('resume pass OK')
