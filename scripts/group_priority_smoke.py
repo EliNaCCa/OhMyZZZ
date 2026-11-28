@@ -65,7 +65,8 @@ def smoke():
         assert not report['issues'] and result[a['name']]['ids']==expected_a['ids'] and result[b['name']]['ids']==expected_b['ids']
         both = [t['fp'] for t in target_loadout(cfg, report, z, a['name'])]
         solo = [t['fp'] for t in target_loadout(cfg, report, z, burst['name'])]
-        assert len(set(both))==12 and solo==burst_option['ids'] and len(set(both)&set(solo))==5
+        assert len(set(both))==12 and set(both)==set(expected_a['ids']+expected_b['ids'])
+        assert solo==burst_option['ids'] and set(solo)&set(both)
         expected = set(both) | set(solo)
         assert all(r['decision']=='保留' for r in report['discs'] if r['fp'] in expected)
         return result
@@ -80,6 +81,17 @@ def smoke():
     cfg['reserve'] = 0
     assert result[b['name']]['relativeLossPct']==0.1 and 'A 常态 占用 1 号位' in result[b['name']]['reason']
     assert result[b['name']]['rawAvailableBestOutput'] == '99.9' and result[b['name']]['availableLossPct'] == 0
+    # A holds B's best disc. B compares full crit to its available 99.9,
+    # even though its unrestricted best would put full crit outside tolerance.
+    b_options[0]['critRate'] = b_options[1]['critRate'] = 98
+    b_options[2]['outputScore'] = 99.45
+    assert check(a_options[0],b_options[2])[b['name']]['availableLossPct'] < .5
+    b['tolerancePct'] = 0
+    changed = calculate(previous=baseline)
+    assert not changed['reusedAssignments'] and changed['assignments'][b['name']]['ids'] == b_options[1]['ids']
+    b.pop('tolerancePct')
+    b_options[0]['critRate'] = b_options[1]['critRate'] = 100
+    b_options[2]['outputScore'] = 90
     # Equal priority-C scores: choose the physical copy that leaves the strongest
     # complete lineup, even if fingerprint sorting happens to prefer the other.
     a_options[1]['outputScore'] = 100
@@ -105,7 +117,7 @@ def smoke():
     check(a_options[1],b_options[0])
     cfg['profiles'][1] = dict(burst, simultaneous='同场')
     report = calculate()
-    assert '同一角色' in report['issues'][0] and not any(r['decision']=='弃置候选' for r in report['discs'])
+    assert '同一出场组里有两套Alpha的配装' in report['issues'][0] and report['counts'] == {'待复核':13}
     print('PASS higher-ranked remaining build, reorder, twelve unique simultaneous discs, alternate build retains its thirteenth disc')
 
 

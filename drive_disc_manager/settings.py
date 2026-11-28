@@ -18,7 +18,7 @@ from .drive_disc_manager_const import APP_ID, APP_NAME, PLUGIN_VERSION
 from .reserve_policy import matching_rules, normalized_rule, SELECTORS
 from .roster import roster_catalog
 from .disc_owner import owner_label, preview_owner
-from .optimizer import effective_crit_rate
+from .optimizer import BUILD_RANKING, effective_crit_rate
 
 
 def pretty(value):
@@ -617,7 +617,7 @@ class ManagerInterface(BaseInterface):
                     changed_inputs.append('游戏扫描记录')
             if self.report.get('managerVersion') != PLUGIN_VERSION:
                 changed_inputs.append('插件版本')
-            if self.report.get('assignments') and not self.report.get('fullCritPriority'):
+            if self.report.get('assignments') and self.report.get('buildRanking') != BUILD_RANKING:
                 changed_inputs.append('配装排序')
             if self.report.get('configuration') != self.config_hash:
                 changed_inputs.append('配置')

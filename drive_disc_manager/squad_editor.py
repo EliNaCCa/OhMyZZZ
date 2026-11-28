@@ -1,7 +1,10 @@
 """Edit the selected profile's party inside the OneDragon settings page."""
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel, ComboBox, PrimaryPushButton, PushButton, SpinBox, StrongBodyLabel
+from qfluentwidgets import BodyLabel, ComboBox, DoubleSpinBox, PrimaryPushButton, PushButton, SpinBox, StrongBodyLabel
+
+from .combat_windows import DIRECT_ROLES
+from .optimizer import DEFAULT_TOLERANCE_PCT, output_tolerance
 
 
 class SquadEditor(QWidget):
@@ -34,6 +37,15 @@ class SquadEditor(QWidget):
                     spin.setValue(self.account_rank(combo.currentText()) if index > 0 else 0)
                 actor.currentIndexChanged.connect(change_actor)
         grid.setColumnStretch(3, 1)
+        self.tolerance_label = BodyLabel('为满暴最多接受的输出差距')
+        self.tolerance = DoubleSpinBox()
+        self.tolerance.setDecimals(4)
+        self.tolerance.setRange(0, 100)
+        self.tolerance.setSingleStep(0.1)
+        self.tolerance.setSuffix('%')
+        self.tolerance.setAccessibleName(self.tolerance_label.text())
+        grid.addWidget(self.tolerance_label, 4, 0, 1, 2)
+        grid.addWidget(self.tolerance, 4, 2)
         bar = QHBoxLayout()
         box.addLayout(bar)
         for title, button_type, signal in [('保存', PrimaryPushButton, self.saved), ('取消', PushButton, self.canceled)]:
@@ -47,6 +59,11 @@ class SquadEditor(QWidget):
         self.account_rank = lambda name: ranks.get(canonical(name), 0)
         self.heading.setText(profile['name'] + ' · 队伍成员')
         self.lead.setText(current)
+        direct = profile['request'].get('roleSystem', '').upper() in DIRECT_ROLES
+        self.tolerance_label.setVisible(direct)
+        self.tolerance.setVisible(direct)
+        if direct:
+            self.tolerance.setValue(float(output_tolerance(profile.get('tolerancePct', DEFAULT_TOLERANCE_PCT))))
         self.ranks[0].setValue(profile.get('mindscape', self.account_rank(current)))
         members = profile.get('squad', [])
         by_agent = {canonical(name): name for name in choices}
@@ -64,6 +81,9 @@ class SquadEditor(QWidget):
             self.ranks[index+1].setEnabled(actor.currentIndex() > 0)
 
     def values(self):
-        return dict(mindscape=self.ranks[0].value(), squad=[
+        values = dict(mindscape=self.ranks[0].value(), squad=[
             dict(agent=actor.currentText(), mindscape=rank.value())
             for actor, rank in zip(self.actors[1:], self.ranks[1:]) if actor.currentIndex() > 0])
+        if not self.tolerance.isHidden():
+            values['tolerancePct'] = self.tolerance.value()
+        return values

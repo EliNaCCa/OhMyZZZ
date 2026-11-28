@@ -153,22 +153,44 @@ def number(v):
 
 
 OPTIMIZER_PANEL_MARGIN = Decimal('2.4')
+DEFAULT_TOLERANCE_PCT = 0.5
+BUILD_RANKING = 'full-crit-output-tolerance-v1'
+
+
+def output_tolerance(value):
+    try:
+        percent = number(value)
+        if 0 <= percent <= 100:
+            return percent
+    except ValueError:
+        pass
+    raise ValueError('为满暴最多接受的输出差距可填 0% 到 100%')
 
 
 def effective_crit_rate(candidate):
     return min(Decimal(100), number(candidate.get('rawCritRate', candidate['critRate'])))
 
 
-def prefer(candidates, current):
+def prefer(candidates, current, tolerance_pct=DEFAULT_TOLERANCE_PCT):
     candidates = tuple(candidates)
+    tolerance = output_tolerance(tolerance_pct)
     def key(c):
         return number(c.get('rawOutput', c['outputScore'])), sum(i in current for i in c['ids']), tuple(c['ids'])
     best = max(candidates, key=key)
     if key(best)[0] <= 0:
         raise ValueError('缺少正的预期输出')
     full = max((c for c in candidates if effective_crit_rate(c) == 100), key=key, default=None)
-    chosen = full or best
-    reason = '满暴方案中输出最高' if full else '本轮没有满暴方案，选输出最高的一套'
+    best_score = key(best)[0]
+    chosen = best
+    if full is None:
+        reason = '本轮没有满暴方案，选输出最高的一套'
+    else:
+        gap = best_score - key(full)[0]
+        if 100 * gap <= tolerance * best_score:
+            chosen = full
+            reason = '满暴且输出最高' if not gap else f'输出差距在 {tolerance:g}% 以内，优先满暴'
+        else:
+            reason = f'满暴会损失超过 {tolerance:g}% 输出，选输出最高的一套'
     return dict(chosen, bestOutput=best['outputScore'], rawBestOutput=str(key(best)[0]), relativeLossPct=float(100*(key(best)[0]-key(chosen)[0])/key(best)[0]),
                 reason=reason, effectiveCritRate=float(effective_crit_rate(chosen)),
                 bestFullOutput=full['outputScore'] if full else None)
@@ -396,7 +418,7 @@ def _profile_candidates(url, profile, discs, current, request):
 
 def select_candidate(pool, profile, current):
     if 'outputScore' in pool[0]:
-        return prefer(pool, current)
+        return prefer(pool, current, profile.get('tolerancePct', DEFAULT_TOLERANCE_PCT))
     if 'roleOrder' in pool[0]:
         from .role_panel import compare_order
         best = pool[0]

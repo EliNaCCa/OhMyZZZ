@@ -1,6 +1,6 @@
 """Produce a read-only plan from one pinned inventory, configuration and rule revision."""
 from collections import Counter, defaultdict
-from .optimizer import as_disc, candidate_pool, STATS
+from .optimizer import as_disc, candidate_pool, STATS, BUILD_RANKING
 from .allocation import assign_group, group_conflict, reusable_assignments
 from .drive_disc_manager_const import PLUGIN_VERSION
 from .store import digest, equipment_keys, fingerprint, inventory, is_pinned, pin_keys, roll_base
@@ -169,7 +169,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         groups[group].append((dict(p, agentKey=owner), current))
     pool = [disc for disc in inputs.values() if disc and not disc['discarded']]
     inventory_hash = digest(z)
-    allocation_key = digest([PLUGIN_VERSION, 'full-crit', inventory_hash, enabled, bindings, optimizer_names, reader_owners, last_worn, shown, cfg['optimizer_url']]) if enabled else None
+    allocation_key = digest([PLUGIN_VERSION, BUILD_RANKING, inventory_hash, enabled, bindings, optimizer_names, reader_owners, last_worn, shown, cfg['optimizer_url']]) if enabled else None
     if allocation_key and game_discards:
         allocation_key = digest([allocation_key, sorted(game_discards)])
     saved = reusable_assignments(previous_preview, allocation_key, groups, pool)
@@ -307,7 +307,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     evidence = rule_book(rows, rules, cfg['overrides'], current_conflicts(rules, cfg['overrides']))
     teams = {p['name']:dict(agent=(p.get('request') or {}).get('characterName') or p.get('agentKey'),
                             group=p.get('simultaneous') or '') for p in enabled}
-    return dict(managerVersion=PLUGIN_VERSION, fullCritPriority=True, networkPreview=z.get('networkPreview') is True, readerOwners=reader_owners,
+    return dict(managerVersion=PLUGIN_VERSION, buildRanking=BUILD_RANKING, networkPreview=z.get('networkPreview') is True, readerOwners=reader_owners,
                 inventory=inventory_hash, rules=rules.get('version'), configuration=digest(cfg), assignments=assignments,
                 previewBindings=bindings, allocationKey=allocation_key, reusedAssignments=saved is not None,
                 traceRules=evidence, traceTeams=teams,

@@ -3,6 +3,7 @@ from one_dragon.base.operation.operation_node import operation_node
 from one_dragon.utils import os_utils
 from zzz_od.application.zzz_application import ZApplication
 from .drive_disc_manager_const import APP_ID, APP_NAME
+from .optimizer import BUILD_RANKING
 from .service import preview, rule_snapshot
 from .store import InventoryUnavailable, import_inventory, read
 from .manual_equip import MANUAL_GROUP, SCAN_GROUP, SelectionChanged, checked_scan, manual_request, verify_selection
@@ -105,7 +106,7 @@ class ManagerApp(ZApplication):
                         from .store import preview_path
                         cn_inventory = read(self.root/'cn-inventory.json')
                         saved = read(preview_path(self.root, cfg), {})
-                        if (not saved.get('triageOnly') and saved.get('fullCritPriority') and saved.get('networkPreview') and saved.get('inventory') == digest(cn_inventory)
+                        if (not saved.get('triageOnly') and saved.get('buildRanking') == BUILD_RANKING and saved.get('networkPreview') and saved.get('inventory') == digest(cn_inventory)
                                 and saved.get('configuration') == request['configuration'] and saved.get('rules') == request['rules']):
                             cn_plan = saved
                     network_plan = cn_plan or preview(self.root, wiki_path(), snapshot=pinned, reuse_allocations=manual_cn,

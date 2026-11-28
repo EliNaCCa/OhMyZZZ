@@ -1,5 +1,5 @@
 from .reserve_policy import quota, SELECTORS
-from .optimizer import STATS
+from .optimizer import STATS, output_tolerance
 from .store import defaults
 
 
@@ -40,6 +40,8 @@ def validate(value):
         if not p['name'] or p['name'] in names or not isinstance(p['request'],dict):
             raise ValueError('配队名重复或参数缺失')
         names.add(p['name'])
+        if 'tolerancePct' in p:
+            output_tolerance(p['tolerancePct'])
         if p.get('needsTarget') and (p.get('enabled') is not False or set(p['request']) != {'characterName'}
                                      or not p['request']['characterName']):
             raise ValueError('请先为这位代理人选择配装目标')

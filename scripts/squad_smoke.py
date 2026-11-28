@@ -41,6 +41,8 @@ def smoke(host, temp):
     assert widget.team_views.currentWidget() is editor and editor.actors[1].findText('配装角色') == -1
     assert editor.actors[1].findText('未拥有') == -1
     assert editor.ranks[0].value() == 6
+    assert editor.tolerance.isVisible() and editor.tolerance.value() == .5
+    editor.tolerance.setValue(.25)
     editor.actors[1].setCurrentText('新队友')
     assert editor.ranks[1].value() == 4
     editor.actors[1].setCurrentText('队友甲')
@@ -70,10 +72,13 @@ def smoke(host, temp):
         actions['复制为另一配队'].trigger()
     actions['队伍成员'].trigger()
     assert editor.ranks[1].value() == 6
+    assert editor.tolerance.value() == .25
+    editor.tolerance.setValue(0)
     editor.actors[1].setCurrentText('队友乙')
     assert editor.ranks[1].value() == 2
     editor.findChild(PrimaryPushButton).click()
     original_again, other = config(account)['profiles']
+    assert original_again['tolerancePct'] == .25 and other['tolerancePct'] == 0
     assert original == original_again and other['squad'] == [dict(agent='队友乙', mindscape=2)]
     assert window_requests(other)[0][2]['combatExtraStats'] == {}
     assert '队友乙 2影' in widget.team_score.text()
