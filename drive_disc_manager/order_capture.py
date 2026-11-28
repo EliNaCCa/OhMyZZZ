@@ -50,7 +50,7 @@ def read_disc(scanner, screen, point, page):
     from one_dragon.utils import cv2_utils
     from .scan_cell import selected_card
     from .scan_copies import scroll_thumb, viewport_stamp
-    from .scan_marks import MarkReader
+    from .scan_marks import MarkReader, reread
     selected = selected_card(screen, point)
     if selected is None:
         return None, None
@@ -63,7 +63,12 @@ def read_disc(scanner, screen, point, page):
     thumb = scroll_thumb(screen)
     if thumb:
         cell += (viewport_stamp(screen, selected[0], thumb), thumb)
-    disc = MarkReader(scanner.drive_disk_scanner.parser, ocr, screen[985:1070, 1050:1920], cell).parse_ocr_result(items, crop)
+    reader = MarkReader(scanner.drive_disk_scanner.parser, ocr, screen[985:1070, 1050:1920], cell)
+    disc = reader.parse_ocr_result(items, crop)
+    if disc and not usable(disc) and placed(disc):
+        # The lines are all named but a value was read with too little confidence. Read the panel again
+        # enlarged and keep the result only when it names the same lines and passes the same value check.
+        disc = reread(reader, ocr, crop, disc) or disc
     return disc, crop
 
 

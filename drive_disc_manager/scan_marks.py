@@ -77,6 +77,31 @@ class MarkReader:
         return result
 
 
+def reread(reader, ocr, crop, disc, scale=2):
+    """Read a panel again at twice the size when a value came back with too little confidence.
+
+    The game draws some digits (a thin "19") small enough that the model is unsure of them at the panel's
+    native size and certain at twice the size. Returns the new reading only when it names exactly the same
+    set, slot, level, grade, main stat and substat lines as the first one and passes the same value check;
+    otherwise None, and the caller keeps what it had.
+    """
+    import cv2
+    big = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    items = []
+    for text, boxes in (ocr.run_ocr(big) or {}).items():
+        for b in boxes:
+            items.append(dict(text=text, confidence=b.confidence,
+                              position=(b.x/scale, b.y/scale, (b.x+b.w)/scale, (b.y+b.h)/scale)))
+    if not items:
+        return None
+    again = reader.parse_ocr_result(items, crop)
+    if not again or not again.get('observedValues') or not again.get('observedGrade'):
+        return None
+    if any(again.get(k) != disc.get(k) for k in ('setKey', 'slotKey', 'level', 'rarity', 'mainStatKey', 'substats')):
+        return None
+    return again
+
+
 def read_controls(ocr, footer, recent=None):
     # These are actions offered by the game: an Unlock button means the disc IS locked.
     if recent is not None:

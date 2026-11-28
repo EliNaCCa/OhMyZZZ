@@ -95,7 +95,14 @@ def warehouse_observations(scanner, total, guard, *, by_acquisition=False):
         thumb = scroll_thumb(screen)
         if thumb:
             cell += (viewport_stamp(screen, selected[0], thumb), thumb)
-        return MarkReader(scanner.drive_disk_scanner.parser, ctx.ocr, screen[985:1070,1050:1920], cell).parse_ocr_result(items, crop)
+        from .order_capture import placed, usable
+        from .scan_marks import reread
+        reader = MarkReader(scanner.drive_disk_scanner.parser, ctx.ocr, screen[985:1070,1050:1920], cell)
+        disc = reader.parse_ocr_result(items, crop)
+        if disc and not usable(disc) and placed(disc):
+            # Every line is named but a value was read with too little confidence: read the panel again enlarged.
+            disc = reread(reader, ctx.ocr, crop, disc) or disc
+        return disc
 
     with guarded_grid(scanner.drive_disk_scanner, guard) as grid:
         frame()
