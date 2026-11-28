@@ -79,3 +79,16 @@ ether = read(items_of('ether_slot5_panel.png'))
 assert ether['mainStatKey'] == 'ether_dmg_' and ether['observedValues'] == {
     'main': {'ether_dmg_': 7.5}, 'subs': {'atk_': 3.0, 'pen': 9.0, 'anomProf': 9.0}}, ether
 print('PASS a correctly parsed disc is unchanged')
+
+# Two substat lines with the same name (攻击力 3% and 攻击力 19). OCR lists both labels before both values, so
+# reading the substats again needs the scanner's own reading-order sort first; without it both lines come out
+# as flat attack and the disc is rejected.
+two = items_of('wind_slot5_two_attack_lines_panel.png')
+labels = [i['text'] for i in two]
+assert labels.index('攻击力') < labels.index('防御力') and [t for t in labels if t == '攻击力'] == ['攻击力', '攻击力'], labels
+first = parser.parse_ocr_result([dict(i) for i in two], None)
+assert [s['key'] for s in first['substats']] == ['atk_', 'atk', 'def_'], first['substats']
+disc = read(two)
+assert disc['mainStatKey'] == 'wind_dmg_' and [s['key'] for s in disc['substats']] == ['atk_', 'atk', 'def_'], disc
+assert disc['observedValues'] == {'main': {'wind_dmg_': 7.5}, 'subs': {'atk_': 3.0, 'atk': 19.0, 'def_': 4.8}}, disc['observedValues']
+print('PASS two same-named substat lines are read as attack% and flat attack')

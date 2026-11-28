@@ -55,7 +55,9 @@ class MarkReader:
         shown = main_stat_label(items, self.parser)
         if shown and shown != result['mainStatKey'] and valid_slot_main(dict(result, mainStatKey=shown)):
             result['mainStatKey'] = shown
-            result['substats'] = self.parser._parse_substats(parsed_items, shown)
+            # The parser sorts OCR items into reading order before its first pass but not inside _parse_substats,
+            # and OCR can list both labels of two same-named lines before their values. Sort the same way first.
+            result['substats'] = self.parser._parse_substats(self.parser._sort_ocr_items(parsed_items), shown)
         from .disc_owner import read_owner
         result['ownerState'], result['location'] = read_owner(image, getattr(self.parser, 'icon_matcher', None))
         mark, lock = read_controls(self.ocr, self.footer, self.controls)
