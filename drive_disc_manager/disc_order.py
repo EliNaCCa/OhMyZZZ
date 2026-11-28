@@ -64,7 +64,7 @@ def bind_scan(root, snapshot, names):
     remember_ranks(root, snapshot, ranks)
 
 
-def finish_scan(root, run, total):
+def observed_ranks(run, total):
     from .store import fingerprint
     pages = defaultdict(dict)
     with (run/'rows.jsonl').open(encoding='utf-8') as stream:
@@ -96,9 +96,14 @@ def finish_scan(root, run, total):
                fingerprint(rows[start+off]) != fingerprint(d)) for off,d in cells.items()):
             continue
         rows.update({start+off:d for off,d in cells.items()})
-    done = len(rows) == total
+    return rows
+
+
+def finish_scan(root, run, total, rows=None):
+    rows = observed_ranks(run, total) if rows is None else rows
+    done = set(rows) == set(range(1, total+1))
     metadata = dict(account=root.name, total=total, ordered=len(rows), status='complete' if done else 'partial')
-    record = dict(metadata, rows=rows)
+    record = dict(metadata, rows={rank:dict(d, orderNumber=total-rank+1) for rank,d in rows.items()})
     save(run/'ordered.json',record)
     if done:
         save(root/SCAN, record)

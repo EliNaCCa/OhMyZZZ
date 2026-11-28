@@ -416,12 +416,25 @@ class ManagerInterface(BaseInterface):
         return table
 
     def show_disc_order(self):
-        from .disc_order import FILE
+        from .disc_order import FILE, SCAN
         state = read(self.root/FILE, {})
         dialog = QDialog(self)
         dialog.setWindowTitle('驱动盘顺序')
         dialog.resize(650, 430)
         layout = QVBoxLayout(dialog)
+        if not state.get('live'):
+            baseline = read(self.root/SCAN, {})
+            if baseline.get('status') == 'complete' and baseline.get('account') == self.root.name:
+                layout.addWidget(BodyLabel(f"游戏内已读 {baseline['total']} 张 · 等待国服库存"))
+                table = self.grid(['顺序号', '驱动盘', '号位', '等级'])
+                self.fill(table, [(baseline['total']-int(rank)+1, self.set_names.get(d['setKey'], d['setKey']),
+                                   d['slotKey'], f"+{d['level']}")
+                                  for rank,d in sorted(baseline['rows'].items(),key=lambda pair:int(pair[0]))])
+                layout.addWidget(table)
+            else:
+                layout.addWidget(BodyLabel('等待首次全仓扫描'))
+            dialog.exec()
+            return
         table = self.grid(['顺序号', '驱动盘', '号位', '等级', '库存'])
         layout.addWidget(table)
         rows = []

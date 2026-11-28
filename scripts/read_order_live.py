@@ -13,12 +13,13 @@ os.chdir(host)
 sys.path[:0] = [str(host/'plugins'), str(host/'src')]
 os.environ['VGAMEPAD_SKIP_VIGEMBUS_INSTALL'] = 'true'
 ctypes.windll.user32.SetProcessDPIAware()
-from drive_disc_manager.store import fingerprint, save
+from drive_disc_manager.store import read, save
 
 
 def main():
     from drive_disc_manager.disc_probe import game_guard, interactive_slot
-    from drive_disc_manager.equip_targets import warehouse_observations
+    from drive_disc_manager.disc_order import observed_ranks
+    from drive_disc_manager.order_capture import capture
     from drive_disc_manager.maintenance import exclusive
     from drive_disc_manager.warehouse import enter_warehouse, warehouse_header
     from one_dragon.base.screen.screen_utils import is_target_screen
@@ -54,16 +55,16 @@ def main():
             time.sleep(1.5)
         total = enter_warehouse(scanner,guard)
         save(run/'status.json', dict(status='reading', total=total, readings=0))
-        count = 0
-        with (run/'rows.jsonl').open('x', encoding='utf-8', buffering=1) as stream:
-            for sample,_ in warehouse_observations(scanner,total,guard,by_acquisition=True):
-                stream.write(json.dumps(sample, ensure_ascii=False)+'\n')
-                count += 1
-                if count == 1 or count % 9 == 0:
-                    save(run/'status.json', dict(status='reading', total=total, readings=count, page=sample['scanCell'][0]))
-        guard()
-        from drive_disc_manager.disc_order import finish_scan
-        return finish_scan(root, run, total)
+        seed = {}
+        if len(sys.argv) == 4:
+            previous = Path(sys.argv[3]).resolve()
+            if previous.parent != run.resolve().parent or read(previous/'status.json').get('total') != total:
+                raise ValueError('上次扫描的账号或仓库盘数不同')
+            if (previous/'progress.json').is_file():
+                seed = {int(k):v for k,v in read(previous/'progress.json')['rows'].items()}
+            else:
+                seed = observed_ranks(previous,total)
+        return capture(scanner,total,guard,run,root,seed)
 
 
 try:
