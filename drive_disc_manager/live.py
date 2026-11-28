@@ -166,6 +166,8 @@ class Marker:
                 self.remember(fp, 'manual-unlock')
                 raise ValueError('扫描后发现保留盘被解锁，请重新计算')
             spare = bool(row['reasons']) and all(r.startswith('备用 · ') for r in row['reasons'])
+            if row.get('ownedUses') and '试强化' in row['reasons'] and not row.get('baseReasons'):
+                spare = True
             if self.cfg.get('autoUpgrade'):
                 from .upgrade import eligible
                 # A natural four-line double-crit disc can be worth upgrading even when

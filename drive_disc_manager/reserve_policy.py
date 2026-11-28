@@ -225,6 +225,9 @@ def kept_coverage(coverage, rows):
 def plan_reserves(rows, cfg, reverse, *, stats_only):
     """Apply spare quotas and trial potential to rows with their independent keep reasons."""
     cfg = dict(cfg, reserve_rules=[normalized_rule(rule, reverse) for rule in cfg['reserve_rules']])
+    if any('ownedUses' in row for row in rows):
+        from .owned_stock import apply_stock
+        return apply_stock(rows, cfg, stats_only=stats_only)
     coverage = apply_reserves(rows, cfg)
     limits_by_group = {}
     for row in rows:
@@ -257,7 +260,9 @@ def plan_reserves(rows, cfg, reverse, *, stats_only):
 def quota_impact(report, scope, cfg, reverse):
     """Replay the same quota and potential decisions over the matching groups."""
     scope = rule_selectors(scope)
-    rows = [row for row in report['discs'] if not row['marked'] and all(row[k] == v for k,v in scope.items())]
+    def matches(row):
+        return all(row[k] == v for k,v in scope.items())
+    rows = [row for row in report['discs'] if not row['marked'] and (report.get('ownedStock') or matches(row))]
     if any('keptBeforeReserves' not in row for row in rows):
         return None
     prepared = []
@@ -266,14 +271,17 @@ def quota_impact(report, scope, cfg, reverse):
         if row['keptBeforeReserves']:
             generated = {'插件备用锁', '试强化', '+3 胚子留作备用', *row['recommendations']}
             reasons = [reason for reason in row['reasons'] if reason not in generated and not reason.startswith('备用 · ')]
-        updated = dict(row, reasons=reasons, explanation=[])
+        updated = dict(row, reasons=list(row.get('baseReasons', reasons)), explanation=[])
         for previous in ('upgrade', 'upgradeFloor', 'outgrown', 'checkForDiscard'):
             updated.pop(previous, None)
         prepared.append(updated)
     coverage = plan_reserves(prepared, cfg, reverse, stats_only=any('buildId' in row for row in rows))
+    rows = [row for row in rows if matches(row)]
+    prepared = [row for row in prepared if matches(row)]
+    coverage = [group for group in coverage if matches(group)]
     before = sum(row['decision'] == '保留' for row in rows)
     after = sum(row['decision'] == '保留' for row in prepared)
-    potential = sum(row['reasons'] in (['试强化'], ['+3 胚子留作备用']) for row in prepared)
+    potential = sum(row['reasons'] in (['试强化'], ['+3 胚子留作备用'], ['备用 · 未强化胚子']) for row in prepared)
     new_candidates = new_game_checks = 0
     for old, new in zip(rows, prepared, strict=True):
         if new.get('checkForDiscard') and not old.get('checkForDiscard'):

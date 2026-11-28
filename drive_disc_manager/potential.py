@@ -61,6 +61,7 @@ def saved_comparison(root, cfg, rules):
     snapshot = read(source, {})
     report = read(preview_path(root, cfg), {})
     if (not snapshot or not report.get('generated') or report.get('issues') or
+            (cfg.get('includeOwned', True) and report.get('stockRevision') != 1) or
             report.get('inventory') != digest(snapshot) or report.get('configuration') != digest(cfg) or
             report.get('rules') != rules.get('version')):
         return None
@@ -78,7 +79,10 @@ def saved_comparison(root, cfg, rules):
         return None
     groups = defaultdict(list)
     for row in rows:
-        if comparable(row) and row['decision'] == '保留':
+        if report.get('ownedStock'):
+            if row['level'] == 15 and not row['review'] and not row['marked'] and row.get('development'):
+                groups[group_key(row)].append(row)
+        elif comparable(row) and row['decision'] == '保留':
             groups[group_key(row)].append(row)
     # Recalculating the preview doesn't change the age of its inventory.
     written = snapshot.get('exportWrittenNs')

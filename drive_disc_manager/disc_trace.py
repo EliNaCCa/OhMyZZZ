@@ -70,7 +70,7 @@ def probe_trace(record, cfg, rules, wiki, known_owned, *, comparison=None):
     reasons = []
     if disc['lockState'] == 'locked':
         reasons.append('读取时游戏内已锁定')
-    if cfg['protect15'] and disc['level'] == 15:
+    if not cfg.get('includeOwned', True) and cfg['protect15'] and disc['level'] == 15:
         reasons.append('满级盘（+15）')
     rolls = {}
     if disc['rarity'] == 'S':
@@ -103,8 +103,40 @@ def probe_trace(record, cfg, rules, wiki, known_owned, *, comparison=None):
             assess_growth(row, cfg)
         fields = rules.get('fields', {})
         catalog = roster_catalog({'discs':[disc]}, fields, cfg, wiki, known_owned)
+        if cfg.get('includeOwned', True):
+            row['ownedUses'] = {}
         assess_rules(row, cfg, fields, reverse, *compile_roster(catalog, fields, cfg['overrides'], reverse))
-        if (disc.get('ownerState') == 'bag' and disc['lockState'] == 'unlocked' and not disc.get('location')
+        if cfg.get('includeOwned', True):
+            from .owned_stock import BLANKET, apply_stock, describe_stock
+            from .potential import group_key
+            from .reserve_policy import normalized_rule
+            all_sets, _, _ = compile_roster([dict(item, selected=True) for item in catalog], fields, cfg['overrides'], reverse)
+            describe_stock(row, [item for item in catalog if item['selected'] and item['owned'] and not item['excluded']], all_sets)
+            row['reasons'] = [r for r in row['reasons'] if r not in BLANKET]
+            if not row['review'] and not row['reasons'] and row.get('development'):
+                if not row['ownedUses']:
+                    row['probeAdvice'] = ('+0 候选胚子，等全仓比较' if row.get('embryoScore', 0) >= 2 else '当前代理人用不上')
+                elif not comparison:
+                    row['probeAdvice'] = '等完整库存比较同类成品'
+                    from .reserve_policy import max_useful_rolls, usable_stats
+                    for role in row['ownedUses'].values():
+                        keys = usable_stats(row, role['stats'])
+                        ceiling = max_useful_rolls(row['level'], rolls, keys)
+                        row['explanation'].append(f"按{role['label']}的副词条，升满最多 {ceiling} 档")
+                elif row['level'] < 15:
+                    # Only completed peers set a trial's threshold. A single observation cannot set the global +0 budget.
+                    peers = comparison[0].get(group_key(row), ())
+                    candidates = [dict(peer) for peer in peers]
+                    trial = dict(row, id='probe', ambiguous=False)
+                    limits = dict(cfg, reserve_rules=[normalized_rule(r, reverse) for r in cfg['reserve_rules']])
+                    apply_stock([trial, *candidates], limits)
+                    row['explanation'] = trial['explanation']
+                    if trial.get('upgrade'):
+                        row['trialUse'] = trial['upgrade']
+                        row['probeAdvice'] = f"可试到 +{trial['upgrade']['target']}"
+                    else:
+                        row['probeAdvice'] = '建议弃置'
+        elif (disc.get('ownerState') == 'bag' and disc['lockState'] == 'unlocked' and not disc.get('location')
                 and disc.get('markState') == 'unmarked' and not row['review']
                 and all(reason == '四词条双暴胚子' for reason in row['reasons'])):
             from .reserve_policy import matching_rules, normalized_rule, upgrade_advice

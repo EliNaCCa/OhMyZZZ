@@ -87,6 +87,7 @@ class ReservePresets(QWidget):
         reverse = equipment_keys(names)
         self.rules = [normalized_rule(rule, reverse) for rule in cfg['reserve_rules']]
         self.cfg = dict(cfg, reserve_rules=self.rules)
+        self.grid.setColumnHidden(3, cfg.get('includeOwned', True))
         sets = set(names)
         for key in fields:
             parts = key.split('/')
@@ -122,7 +123,10 @@ class ReservePresets(QWidget):
             return
         limits, trim = matching_rules(self.scope(), self.cfg)
         uses = '、'.join(purpose+' '+amount(count) for purpose, (_, count, _) in limits.items())
-        self.current.setText('每类留盘 · '+uses+'　｜　推荐盘'+('按名额筛选' if trim else '全部保留'))
+        if self.cfg.get('includeOwned', True):
+            self.current.setText('基础名额 · '+uses+'　｜　每多一位适用代理人多留 50%')
+        else:
+            self.current.setText('每类留盘 · '+uses+'　｜　推荐盘'+('按名额筛选' if trim else '全部保留'))
 
     def edit_row(self, index, _column):
         if 0 <= index < len(self.rules):

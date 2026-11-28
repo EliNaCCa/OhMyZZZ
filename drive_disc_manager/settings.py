@@ -18,7 +18,7 @@ from .drive_disc_manager_const import APP_ID, APP_NAME, PLUGIN_VERSION
 from .reserve_policy import matching_rules, normalized_rule, SELECTORS
 from .roster import roster_catalog
 from .disc_owner import owner_label, preview_owner
-from .optimizer import BUILD_RANKING, effective_crit_rate
+from .optimizer import effective_crit_rate
 
 
 def pretty(value):
@@ -213,7 +213,7 @@ class ManagerInterface(BaseInterface):
         for key, icon, title, hint in [
             ('run_scanner', FluentIcon.SEARCH, '整理前刷新驱动仓库', '关闭后用上次读取的库存生成筛选结果。'),
             ('applyMarkers', FluentIcon.FILTER, '自动标记驱动盘', '要留的锁定，要拆的标记为弃置。'),
-            ('autoUpgrade', FluentIcon.UP, '试强化潜力盘', '先试三词条胚子，每升一档都用新词条比较。'),
+            ('autoUpgrade', FluentIcon.UP, '试强化潜力盘', '每升 3 级比较一次，还能超过同类成品就继续升。'),
             ('protect15', FluentIcon.ACCEPT, '保留满级盘（+15）', None),
             ('protectNaturalCrit', FluentIcon.TILES, '保留四词条双暴胚子', '掉落时就有四条副属性，同时带暴击率和暴击伤害。强化后也保留。'),
             ('rotateSpareLocks', FluentIcon.SYNC, '优先留更好的备用盘', '同类盘按你的备用规则比较。先锁新盘，再解开旧备用盘。你手动锁的盘会保留。'),
@@ -617,7 +617,9 @@ class ManagerInterface(BaseInterface):
                     changed_inputs.append('游戏扫描记录')
             if self.report.get('managerVersion') != PLUGIN_VERSION:
                 changed_inputs.append('插件版本')
-            if self.report.get('assignments') and self.report.get('buildRanking') != BUILD_RANKING:
+            if self.cfg.get('includeOwned') and self.report.get('stockRevision') != 1:
+                changed_inputs.append('驱动盘留盘规则')
+            if self.report.get('assignments') and not self.report.get('fullCritPriority'):
                 changed_inputs.append('配装排序')
             if self.report.get('configuration') != self.config_hash:
                 changed_inputs.append('配置')
@@ -641,6 +643,8 @@ class ManagerInterface(BaseInterface):
         self.last_seen_title, can_recount = show_observations(self.last_seen, self.fill, self.root, not self.rows and not self.report, self.agent_labels)
         self.recount_account = self.root if can_recount else None
         for key,toggle in self.flags.items(): toggle.setValue(bool(self.cfg.get(key)), emit_signal=False)
+        for key in ('protect15', 'protectNaturalCrit'):
+            self.flags[key].setVisible(not self.cfg.get('includeOwned', True))
         self.auto_sync.setChecked(self.cfg['auto_sync'])
         from datetime import datetime
         updated = self.rules.get('updated')

@@ -156,7 +156,10 @@ class DiscDetails(QWidget):
                           for name, team, result in teams]); self.select_team()
         lines = []
         if coverage:
-            lines.append('订阅推荐盘参与备用排序' if coverage['trimRecommended'] else '订阅推荐盘直接保留')
+            if 'agents' in coverage:
+                lines.append('适用代理人：'+'、'.join(coverage['agents']) if coverage['agents'] else '当前代理人用不上')
+            else:
+                lines.append('订阅推荐盘参与备用排序' if coverage['trimRecommended'] else '订阅推荐盘直接保留')
             for use in coverage['purposes']:
                 count = '不限' if use['count'] is None else str(use['count'])
                 picked = ' · 这张已入选' if '备用 · '+use['purpose'] in reasons else ''

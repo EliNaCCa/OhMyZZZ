@@ -81,14 +81,13 @@ def smoke():
     cfg['reserve'] = 0
     assert result[b['name']]['relativeLossPct']==0.1 and 'A 常态 占用 1 号位' in result[b['name']]['reason']
     assert result[b['name']]['rawAvailableBestOutput'] == '99.9' and result[b['name']]['availableLossPct'] == 0
-    # A holds B's best disc. B compares full crit to its available 99.9,
-    # even though its unrestricted best would put full crit outside tolerance.
+    # A holds B's best disc. B uses the available full-crit option even if
+    # an older saved profile still contains an output tolerance.
     b_options[0]['critRate'] = b_options[1]['critRate'] = 98
-    b_options[2]['outputScore'] = 99.45
-    assert check(a_options[0],b_options[2])[b['name']]['availableLossPct'] < .5
+    b_options[2]['outputScore'] = 90
     b['tolerancePct'] = 0
     changed = calculate(previous=baseline)
-    assert not changed['reusedAssignments'] and changed['assignments'][b['name']]['ids'] == b_options[1]['ids']
+    assert changed['assignments'][b['name']]['ids'] == b_options[2]['ids']
     b.pop('tolerancePct')
     b_options[0]['critRate'] = b_options[1]['critRate'] = 100
     b_options[2]['outputScore'] = 90

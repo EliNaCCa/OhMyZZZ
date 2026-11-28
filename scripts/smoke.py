@@ -124,9 +124,7 @@ with TemporaryDirectory() as tmp:
     assert selected['ids']==['c'] and selected['effectiveCritRate']==100
     best=dict(ids=['98crit'],critRate=98,outputScore=100)
     full=dict(ids=['full'],critRate=100,outputScore=99.5)
-    for full_output, expected in [('99.8',full), ('99.5',full), ('99.4999999999',best), ('98',best)]:
-        assert prefer([best,dict(full,rawOutput=full_output)],set())['ids']==expected['ids']
-    assert prefer([best,full],set(),0)['ids']==best['ids']
+    assert prefer([best,full],set())['ids']==full['ids']
     assert prefer([best,dict(full,rawCritRate='99.999999999')],set())['ids']==best['ids']
     assert prefer([full, dict(overflow,outputScore=99.5)],set(full['ids']))['ids']==full['ids']
     # A build missing from the other window's shortlist must still be rescored

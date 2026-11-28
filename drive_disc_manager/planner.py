@@ -1,6 +1,6 @@
 """Produce a read-only plan from one pinned inventory, configuration and rule revision."""
 from collections import Counter, defaultdict
-from .optimizer import as_disc, candidate_pool, STATS, BUILD_RANKING
+from .optimizer import as_disc, candidate_pool, STATS
 from .allocation import assign_group, group_conflict, reusable_assignments
 from .drive_disc_manager_const import PLUGIN_VERSION
 from .store import digest, equipment_keys, fingerprint, inventory, is_pinned, pin_keys, roll_base
@@ -94,6 +94,11 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     fields = rules.get('fields',{})
     catalog = roster_catalog(z, fields, cfg, wiki or {}, known_owned)
     by_set, unresolved, excluded = compile_roster(catalog, fields, cfg['overrides'], reverse)
+    stock = cfg.get('includeOwned', True)
+    owned = [item for item in catalog if item['owned'] and item['selected'] and not item['excluded']]
+    if stock:
+        # An unused disc may still have a known build on a character outside the account.
+        all_sets, _, _ = compile_roster([dict(item, selected=True) for item in catalog], fields, cfg['overrides'], reverse)
     if stats_only:
         slots = Counter((d['location'], d['slotKey']) for d in ds if d.get('location') and d.get('ownerSource') != 'showcase')
         if any(count > 1 for count in slots.values()):
@@ -169,7 +174,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
         groups[group].append((dict(p, agentKey=owner), current))
     pool = [disc for disc in inputs.values() if disc and not disc['discarded']]
     inventory_hash = digest(z)
-    allocation_key = digest([PLUGIN_VERSION, BUILD_RANKING, inventory_hash, enabled, bindings, optimizer_names, reader_owners, last_worn, shown, cfg['optimizer_url']]) if enabled else None
+    allocation_key = digest([PLUGIN_VERSION, 'full-crit', inventory_hash, enabled, bindings, optimizer_names, reader_owners, last_worn, shown, cfg['optimizer_url']]) if enabled else None
     if allocation_key and game_discards:
         allocation_key = digest([allocation_key, sorted(game_discards)])
     saved = reusable_assignments(previous_preview, allocation_key, groups, pool)
@@ -293,7 +298,12 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
                 row.update(decision='已弃置',reasons=['游戏已标记弃置'],review=[])
             continue
         checks = len(row['review'])
+        if stock:
+            row['ownedUses'] = {}
         assess_rules(row, cfg, fields, reverse, by_set, unresolved, excluded)
+        if stock:
+            from .owned_stock import describe_stock
+            describe_stock(row, owned, all_sets)
         rule_checks = row['review'][checks:]
         if rule_checks:
             row['ruleReview'] = rule_checks
@@ -307,7 +317,7 @@ def plan(z,cfg,rules,names,fetch_candidates=candidate_pool,*,wiki=None,known_own
     evidence = rule_book(rows, rules, cfg['overrides'], current_conflicts(rules, cfg['overrides']))
     teams = {p['name']:dict(agent=(p.get('request') or {}).get('characterName') or p.get('agentKey'),
                             group=p.get('simultaneous') or '') for p in enabled}
-    return dict(managerVersion=PLUGIN_VERSION, buildRanking=BUILD_RANKING, networkPreview=z.get('networkPreview') is True, readerOwners=reader_owners,
+    return dict(managerVersion=PLUGIN_VERSION, stockRevision=1, ownedStock=stock, fullCritPriority=True, networkPreview=z.get('networkPreview') is True, readerOwners=reader_owners,
                 inventory=inventory_hash, rules=rules.get('version'), configuration=digest(cfg), assignments=assignments,
                 previewBindings=bindings, allocationKey=allocation_key, reusedAssignments=saved is not None,
                 traceRules=evidence, traceTeams=teams,

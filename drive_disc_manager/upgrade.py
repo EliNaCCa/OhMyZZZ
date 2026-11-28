@@ -54,6 +54,9 @@ def revised_stats(row, after):
 
 def after_advice(row, after, cfg, names):
     revised = revised_stats(row, after)
+    if 'ownedUses' in row:
+        from .owned_stock import trial_result
+        return trial_result(revised, row['upgradeFloor'])[0]
     reverse = equipment_keys(names)
     limits, _ = matching_rules(revised, dict(cfg, reserve_rules=[normalized_rule(r, reverse) for r in cfg['reserve_rules']]))
     return upgrade_advice(revised, limits, row.get('spendingFloors', row.get('upgradeFloor', ())))
@@ -111,10 +114,15 @@ def finalize(root, receipt, after, *, copy_verified=False):
         save(root/'markers.json', history)
     advice = after_advice(receipt['row'], after, receipt['limits'], receipt['names'])
     reason = verdict(after['level'], rolls(after), receipt['row'].get('upgradeFloor', ()))
-    if (after['level'] == 15 and receipt['limits'].get('protect15', True)) or duplicate:
+    if 'ownedUses' in receipt['row']:
+        from .owned_stock import trial_result
+        advice, reason = trial_result(revised_stats(receipt['row'], after), receipt['row']['upgradeFloor'])
+    elif (after['level'] == 15 and receipt['limits'].get('protect15', True)) or duplicate:
         reason = ''
-    if (receipt['limits'].get('protectNaturalCrit', True) and development(after['level'], rolls(after))['initial'] == 4
+    elif (receipt['limits'].get('protectNaturalCrit', True) and development(after['level'], rolls(after))['initial'] == 4
             and {'crit_', 'crit_dmg_'} <= rolls(after).keys()):
+        reason = ''
+    if duplicate:
         reason = ''
     if reason or duplicate:
         advice = None
@@ -308,12 +316,27 @@ def run_trials(app, scanner, report, snapshot, cfg, names, *, guard_export=None,
     limits = dict(cfg, reserve_rules=[normalized_rule(rule, reverse) for rule in cfg['reserve_rules']])
     for _ in range(limit):
         guard()
-        floors = benchmarks(rows.values(), limits)
-        remote_floors = benchmarks(remote_rows.values(), limits) if peers is not None else {}
+        owned_stock = report.get('ownedStock', False)
+        if owned_stock and notes:
+            from .owned_stock import apply_stock
+            apply_stock(rows.values(), limits)
+            if remote_rows is not None:
+                apply_stock(remote_rows.values(), limits, stats_only=True)
+        floors = {} if owned_stock else benchmarks(rows.values(), limits)
+        remote_floors = benchmarks(remote_rows.values(), limits) if peers is not None and not owned_stock else {}
         counts = Counter(r['fp'] for r in rows.values())
         candidates = []
         for ident, row in rows.items():
             if row['fp'] in excluded or counts[row['fp']] != 1 or not eligible(row):
+                continue
+            if owned_stock:
+                if peers is not None:
+                    peer = peers.get(ident)
+                    if not peer or not permit(peer, export=True):
+                        continue
+                    if peer.get('upgradeFloor') != row.get('upgradeFloor'):
+                        continue
+                candidates.append(row)
                 continue
             floor = floors.get(row['fp'], []) if 'upgradeFloor' in row else []
             spending_floors = floor

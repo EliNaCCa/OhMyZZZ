@@ -46,7 +46,7 @@ def smoke(endpoint):
         assert abs(Decimal(found[ids]['rawOutput']) - score) < Decimal('0.00000001'), (ids, found[ids]['rawOutput'], score)
         assert Decimal(found[ids]['rawCritRate']) == crit
     best = max(score for score, _ in reference.values())
-    eligible = [ids for ids, (score, crit) in reference.items() if crit == 100 and score >= best * Decimal('.995')]
+    eligible = [ids for ids, (score, crit) in reference.items() if crit == 100]
     expected = max(eligible or reference, key=lambda ids: reference[ids][0])
     selected = select_candidate(list(found.values()), profile, set())
     assert tuple(selected['ids']) == expected
@@ -60,10 +60,10 @@ def smoke(endpoint):
     team = dict(request=dict(request, baseCritRate=98, baseCritDmg=50))
     candidates = candidate_pool(endpoint, team, pair, set())
     assert {row['ids'][2]: Decimal(row['rawCritRate']) for row in candidates} == {'flat':98, 'cap':100}
-    for tolerance, wanted in [(0, 'flat'), (.5, 'cap')]:
-        picked = select_candidate(candidates, dict(team, critGapPoints=2.4, tolerancePct=tolerance), set())
+    for gap, wanted in [(0, 'cap'), (2.4, 'cap')]:
+        picked = select_candidate(candidates, dict(team, critGapPoints=gap), set())
         assert picked['ids'][2] == wanted
-    print('PASS 7 fixture discs; full crit for 0.5% output tolerance, highest output for zero tolerance')
+    print('PASS 7 fixture discs; full crit preferred, including profiles with the old 2.4 setting')
 
     buff = dict(member='队友', requiredMindscape=6, source='爆发增益', stat='CRIT_RATE', value=15, mode='additional')
     team = dict(request=dict(request, baseCritRate=65, combatExtraStats={'CRIT_RATE':20}),

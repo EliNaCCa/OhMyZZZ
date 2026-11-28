@@ -263,7 +263,7 @@ def compile_roster(catalog, fields, overrides, set_aliases=None):
         if not unclear_fields and not sets and not (has_set_fields and all_set_fields_excluded):
             unresolved.append(item['label'])
         for key, set_fields in sets.items():
-            by_set[key].append((item['label'],set_fields,slot_rules,preferred,sub_fields,unknown_substats))
+            by_set[key].append((item,set_fields,slot_rules,preferred,sub_fields,unknown_substats))
     return by_set, unresolved, excluded
 
 
@@ -273,13 +273,16 @@ def explain(row, by_set, unresolved, excluded):
     key = identifier(row['set'])
     for label, field in excluded.get(key, ()):
         rules.append((field, label, '个人规则排除了这套盘'))
-    for label, set_fields, slots, preferred, sub_fields, unknown_substats in by_set.get(key, ()):
+    for item, set_fields, slots, preferred, sub_fields, unknown_substats in by_set.get(key, ()):
+        label = item['label']
         matched = [field for field, stats, _ in slots.get(row['slot'], ()) if row['main'] in stats]
         rules.extend((field, label, '角色使用此套装') for field in set_fields)
         for field, stats, uncertain in slots.get(row['slot'], ()):
             outcome = '主属性符合' if row['main'] in stats else ('主属性待核' if uncertain else '主属性不符')
             rules.append((field, label, outcome))
         if fixed or matched:
+            if 'ownedUses' in row and item['owned'] and not item.get('excluded'):
+                row['ownedUses'][item['key']] = dict(label=label, stats=sorted(preferred))
             row['recommendations'].append('适合'+label)
             for field, terms in unknown_substats.items():
                 note = '角色副词条待核 · '+label+' · '+'、'.join(terms)

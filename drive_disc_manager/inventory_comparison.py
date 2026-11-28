@@ -63,6 +63,8 @@ def network_marking_plan(inspected, snapshot, planned, exported, names):
         elif peer['decision'] == '保留':
             row['decision'] = '保留'
             row['reasons'] = list(dict.fromkeys([*peer['reasons'], *row['reasons']]))
+            if 'ownedUses' in peer:
+                row['baseReasons'] = list(dict.fromkeys([*peer.get('baseReasons', ()), *row.get('baseReasons', ())]))
             for flag in ('manualUnlock', 'manualKeep', 'keptBeforeReserves'):
                 row[flag] = bool(row.get(flag) or peer.get(flag))
             row.pop('outgrown', None)
@@ -242,6 +244,36 @@ def execution_plan(planned, inspected, snapshot, *, cfg, names, fielded=()):
                                    or r['review'] for r in pieces):
             raise ValueError(f'「{name}」的方案用盘还缺穿戴或实物核对')
         assignments[name] = dict(result, ids=[r['fp'] for r in pieces])
+    if planned.get('ownedStock'):
+        from .owned_stock import apply_stock
+        from .reserve_policy import normalized_rule
+        for uid, row in rows.items():
+            if row['marked']:
+                continue
+            wanted = targets[uid]
+            if wanted['marked']:
+                row['review'].append('游戏与库存的弃置标记不同')
+            row['ownedUses'] = wanted.get('ownedUses', {})
+            row['embryoScore'] = wanted.get('embryoScore', 0)
+            row['baseReasons'] = list(dict.fromkeys([*row.get('baseReasons', ()),
+                *(r for r in wanted.get('baseReasons', ()) if r != '游戏内已锁定' or row['scannedLock'] == 'locked')]))
+            row['review'] = list(dict.fromkeys([*row['review'], *wanted['review']]))
+        reverse = equipment_keys(names)
+        limits = dict(cfg, reserve_rules=[normalized_rule(rule, reverse) for rule in cfg['reserve_rules']])
+        coverage = apply_stock(rows.values(), limits)
+        for uid, row in rows.items():
+            if row['decision'] == '弃置候选' and not targets[uid].get('checkForDiscard'):
+                row['decision'] = '待复核'
+                row['review'].append('等网络库存更新后重新比较')
+            if row.get('upgrade') and not targets[uid].get('upgrade'):
+                row.pop('upgrade')
+        inspected.update(ownedStock=True, assignments=assignments, traceTeams=planned['traceTeams'],
+                         previewBindings=planned['previewBindings'], reserveCoverage=coverage,
+                         counts=dict(Counter(r['decision'] for r in rows.values())),
+                         issues=list(dict.fromkeys([*planned['issues'], *inspected['issues']])))
+        if planned.get('keptBuildDiscs'):
+            inspected['keptBuildDiscs'] = planned['keptBuildDiscs']
+        return inspected
     coverage = fill_spare_gaps(planned, rows, cfg, names)
     from .reserve_policy import kept_coverage, normalized_rule, refresh_upgrade
     reverse = equipment_keys(names)
