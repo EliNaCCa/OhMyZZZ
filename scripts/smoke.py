@@ -17,7 +17,9 @@ with TemporaryDirectory() as tmp:
     discs[1]['substats'][0]['key']='crit_dmg_'
     z=dict(format='ZOD',dbVersion=2,version=1,discs=discs,characters=[],wengines=[],audit=dict(game_total=2,exported=2,delta=0))
     src=root/'sample.json'; save(src,z); import_inventory(root,src)
-    cfg=defaults(); cfg.update(auto_sync=False,reserve=1); save(root/'config.json',cfg)
+    # This fixture has no registered agents. Exercise the set rule plus general
+    # spare quota; owned-agent stocking is covered by owned_stock_smoke.py.
+    cfg=defaults(); cfg.update(auto_sync=False,reserve=1,includeOwned=False); save(root/'config.json',cfg)
     key='matrix/SwingJazz/4'; fields={key:['atk_'],key+'/known':['atk_','def_']}
     save(root/'rules.json',merge({},fields,{},{}))
     assert preview(root)['counts']=={'保留':1,'弃置候选':1}

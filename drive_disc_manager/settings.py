@@ -1,5 +1,6 @@
 import json
 from copy import deepcopy
+from pathlib import Path
 from threading import Thread
 from PySide6.QtCore import Signal, Qt, QSignalBlocker, QTimer
 from one_dragon_qt.widgets.base_interface import BaseInterface
@@ -52,6 +53,7 @@ class ManagerInterface(BaseInterface):
         self.export_poll = QTimer(self)
         self.export_poll.setInterval(2500)
         self.export_poll.timeout.connect(self.refresh_new_export)
+        self.export_poll.timeout.connect(self.refresh_cn_reader)
         self.last_export_attempt = None
         self.scanning_game = False
         self.preview_refresh_accounts = set()
@@ -522,14 +524,37 @@ class ManagerInterface(BaseInterface):
 
     def open_reader(self):
         import os
+        from . import cn_reader
         from .reader_install import install
         from .reader_region import cn_client
         self.check_account(self.root)
-        if cn_client(self.ctx) or config(self.root)['inventorySource'] != 'network':
+        if self.cfg['inventorySource'] == 'cn_export':
+            cn_reader.start(self.root, lambda: cn_client(self.ctx))
+            self.set_status(cn_reader.hint())
+            return
+        if cn_client(self.ctx) or self.cfg['inventorySource'] != 'network':
             self.reload()
             return
         exe = install(self.root.parent/'_reader')
         os.startfile(str(exe), 'runas', cwd=str(exe.parent))
+
+    def refresh_cn_reader(self):
+        """While this account's exporter is waiting, report when it exports or stops."""
+        from . import cn_reader
+        if self.cfg.get('inventorySource') != 'cn_export':
+            return
+        record = cn_reader.saved(self.root)
+        if (record.get('account') != self.root.name or record.get('status') != 'waiting' or not record.get('pid')
+                or self.preview_job is not None):
+            return
+        output, _ = cn_reader.arguments(self.root, Path(''))
+        if not output.is_file():
+            # Not exported yet. Only an exporter that has stopped needs explaining.
+            if cn_reader.waiting(self.root, record['pid']):
+                return
+        result = cn_reader.close(self.root, record['pid'])
+        if result and result != '已导出库存':
+            self.set_status(result)
 
     def acknowledge_salvage(self, root, batch, inventory):
         from .salvage_audit import close_reviewed
@@ -632,7 +657,8 @@ class ManagerInterface(BaseInterface):
                 self.reader.addItem('国际服 · 网络读取', userData='network')
             self.reader.setCurrentIndex(self.reader.findData(self.cfg['inventorySource']))
         self.reader_help.setVisible(self.cfg['inventorySource'] in ('network', 'cn_export'))
-        self.reader_open.setVisible(self.cfg['inventorySource'] == 'network')
+        self.reader_open.setVisible(self.cfg['inventorySource'] in ('network', 'cn_export'))
+        self.reader_open.setEnabled(self.cfg['inventorySource'] != 'cn_export' or self.preview_job is None)
         source = self.cfg['inventorySource']
         cn_export = source == 'cn_export'
         self.order_action.setVisible(cn_export)
