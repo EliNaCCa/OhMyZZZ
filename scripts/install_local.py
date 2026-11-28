@@ -76,7 +76,7 @@ def install(home, base):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--home', type=Path, default=Path('F:/OneDragon'))
+    parser.add_argument('--home', required=True, type=Path, help='一条龙安装目录')
     parser.add_argument('--base', default='HEAD^', help='已安装的本地提交，默认上一个提交')
     args = parser.parse_args()
     install(args.home.resolve(), args.base)

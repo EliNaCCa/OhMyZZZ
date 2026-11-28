@@ -1,3 +1,8 @@
 
 __pycache__/
 dist/
+
+# Launcher scripts for one specific machine: they call tools outside this repository.
+scripts/Read-DiscOrder.ps1
+scripts/read_order_live.py
+scripts/live_one_disc.py
