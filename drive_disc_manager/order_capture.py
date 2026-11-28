@@ -18,6 +18,33 @@ class ScreenUnlocated(ValueError):
     """No disc on the screen could be matched to a known position."""
 
 
+def usable(disc):
+    """A reading whose stat values were checked against what the game can show for that disc."""
+    return bool(disc and disc.get('observedValues') and disc.get('observedGrade'))
+
+
+def placed(disc):
+    """A reading that names every stat of the disc, whether or not a value could be checked.
+
+    The order record only needs set, slot, level, main stat and the substat lines with their roll counts to
+    match a disc against the network inventory; the stat values play no part there. A reading taken in this
+    way keeps an empty observedValues, so every later check against a physical disc still rejects it.
+    """
+    if not disc or not disc.get('observedGrade') or disc.get('setKey') in (None, '', 'Unknown'):
+        return False
+    if str(disc.get('slotKey')) not in ('1', '2', '3', '4', '5', '6') or type(disc.get('level')) is not int:
+        return False
+    from .stat_reading import valid_slot_main
+    from .optimizer import STATS
+    subs = disc.get('substats')
+    if not isinstance(subs, list) or len(subs) not in (3, 4) or not valid_slot_main(disc):
+        return False
+    keys = [s.get('key') for s in subs]
+    if len(set(keys)) != len(keys) or disc['mainStatKey'] in keys:
+        return False
+    return all(k in STATS and type(s.get('upgrades')) is int and 1 <= s['upgrades'] <= 6 for k, s in zip(keys, subs))
+
+
 def read_disc(scanner, screen, point, page):
     """Parse the disc whose card is selected at point. The same reading warehouse_observations makes."""
     from one_dragon.utils import cv2_utils
@@ -73,9 +100,6 @@ def capture(scanner, total, guard, run, root, seed):
         save(run/'status.json', dict(status='reading', total=total, page=page, ordered=len(rows),
                                      remaining=len(holes), missingStats=sorted(unread)))
 
-    def usable(disc):
-        return bool(disc and disc.get('observedValues') and disc.get('observedGrade'))
-
     with guarded_grid(scanner.drive_disk_scanner, guard) as grid:
         center = Point(700, 540)
         for _ in range(6):
@@ -130,16 +154,26 @@ def capture(scanner, total, guard, run, root, seed):
                 if disc is None and open_cell(point, offset):
                     grid._stable_screenshot()
                     disc, crop = read_disc(scanner, frame(), point, page)
-                if usable(disc):
-                    rows[rank] = disc
-                    holes.discard(rank)
-                    unread.discard(rank)
-                elif crop is not None:
-                    # Keep what is needed to read the slot offline without another warehouse pass.
+                if crop is not None:
+                    # Keep the panel, so a slot that gave no usable reading can be looked at without another pass.
                     image = cv2.cvtColor(crop, cv2.COLOR_RGB2BGR)
                     if not cv2.imwrite(str(images/f'{rank}.png'), image):
                         raise OSError('驱动盘详情图保存失败')
                     save(images/f'{rank}.json', dict(rank=rank, parsed=disc))
+                if usable(disc):
+                    rows[rank] = disc
+                    holes.discard(rank)
+                    unread.discard(rank)
+                elif placed(disc):
+                    # Every stat is named, so the disc can be matched against the network inventory by its lines;
+                    # only a value was read with too little confidence to check against the game's legal values.
+                    # File it with that value left unverified: later checks against the physical disc reject it.
+                    rows[rank] = disc
+                    holes.discard(rank)
+                    unread.add(rank)
+                else:
+                    # Nothing usable was read from this slot. It stays a hole for the next pass, and is reported
+                    # even when no panel could be saved (the card's selection was not confirmed).
                     unread.add(rank)
             persist(page)
             if start + 36 >= total or not holes:
